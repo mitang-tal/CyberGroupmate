@@ -45,9 +45,11 @@ persona:
 telegram:
   # 连接模式: "bot" | "userbot"
   mode: bot
-  # Bot Token (也可通过 TG_BOT_TOKEN 环境变量设置)
+  # Bot Token (bot 模式下使用，也可通过 TG_BOT_TOKEN 环境变量设置)
   bot_token: ""
-  # API ID (也可通过 TG_API_ID 环境变量设置)
+  # API ID (userbot 模式下使用，也可通过 TG_API_ID 环境变量设置)
   api_id: ""
-  # API Hash (也可通过 TG_API_HASH 环境变量设置)
+  # API Hash (userbot 模式下使用，也可通过 TG_API_HASH 环境变量设置)
   api_hash: ""
+  # 手机号 (userbot 模式下使用，也可通过 TG_PHONE 环境变量设置)
+  phone: ""

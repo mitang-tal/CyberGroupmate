@@ -61,28 +61,17 @@ const tg = new TelegramClient({
 
 const self = await tg.start({
   phone: () => process.env.TG_PHONE,
-  code: () => {
-    // 需要从人类获取验证码
-    return new Promise((resolve) => {
-      runtime.notify({
-        type: "system.auth_code_needed",
-        message: "请输入 Telegram 发送的验证码",
-      });
-      ctx._resolveAuthCode = resolve;
-    });
+  code: async () => {
+    // runtime.input() 会在 CLI 中提问并等待用户输入
+    const code = await runtime.input("请输入 Telegram 验证码: ");
+    return code;
   },
-  password: () => {
-    // 2FA 密码（如果设置了的话）
-    return new Promise((resolve) => {
-      runtime.notify({
-        type: "system.auth_2fa_needed",
-        message: "请输入两步验证密码",
-      });
-      ctx._resolve2FA = resolve;
-    });
+  password: async () => {
+    const pwd = await runtime.input("请输入两步验证密码: ");
+    return pwd;
   },
   codeSentCallback: (sentCode) => {
-    console.log("验证码已发送: type=" + sentCode.type);
+    runtime.print("📱 验证码已发送 (type: " + sentCode.type + "), 请查看你的 Telegram 应用");
   },
 });
 console.log("Logged in as: " + self.displayName + " (ID: " + self.id + ")");
@@ -90,9 +79,14 @@ ctx.tg = tg;
 ctx.self = self;
 ```
 
+**关键 API**：
+- `runtime.input(prompt)` — 在 CLI 中显示提示并等待用户输入（适合验证码、密码等交互场景）
+- `runtime.print(msg)` — 直接打印到 CLI（不被 console.log 捕获，适合提醒用户）
+- `runtime.notify(event)` — 推送事件到通知中心
+
 ## 会话恢复
 
-**首次登录后，session 自动保存。** 重启时：
+**首次登录后，session 自动保存。** 重启时 `tg.start()` 会直接恢复，不会再要求验证码。
 
 ```typescript
 const { TelegramClient } = await import("@mtcute/node");
@@ -103,10 +97,10 @@ const tg = new TelegramClient({
   storage: "data/tg-session/account",
 });
 
-// 如果已有 session，start() 会直接恢复，不会再要求登录
+// session 已存在时直接恢复
 const self = await tg.start({
   phone: () => process.env.TG_PHONE,
-  code: () => { /* 正常不会触发 */ },
+  code: async () => await runtime.input("请输入验证码: "),
 });
 ```
 

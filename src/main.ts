@@ -245,7 +245,8 @@ async function runBootstrap(
         sandbox,
         nc,
         llmConfig,
-        SESSIONS_DIR
+        SESSIONS_DIR,
+        5 * 60 * 1000  // 5 分钟超时（等验证码可能需要更长时间）
     );
 
     // 提取所有成功执行的代码块
@@ -438,7 +439,7 @@ async function main(): Promise<void> {
 
     log.info("组件初始化完成");
 
-    // ─── 连接 sandbox notify 事件到 NC ───
+    // ─── 连接 sandbox 事件 ───
     sandbox.on("notify", (event: Record<string, unknown>) => {
         nc.push(event as { type: string;[key: string]: unknown });
     });
@@ -447,6 +448,23 @@ async function main(): Promise<void> {
         if (data.trim()) {
             log.warn("Sandbox stderr", { output: data.trim() });
         }
+    });
+
+    // Agent 直接打印到 CLI
+    sandbox.on("print", (message: string) => {
+        console.log(`🤖 ${message}`);
+    });
+
+    // 创建 stdin readline 用于处理 Agent 的 runtime.input() 请求
+    const { createInterface: createRL } = await import("node:readline");
+    const hostRL = createRL({ input: process.stdin, output: process.stdout });
+
+    // Agent 请求用户输入
+    sandbox.on("input_request", ({ id, prompt }: { id: string; prompt: string }) => {
+        log.info("Agent 请求输入", { prompt });
+        hostRL.question(`🤖 ${prompt}`, (answer: string) => {
+            sandbox.sendInputResponse(id, answer.trim());
+        });
     });
 
     // ─── 启动 sandbox ───

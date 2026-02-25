@@ -4,12 +4,9 @@
  * 运行在子进程中，通过 stdin/stdout JSON 行协议与 Host 通信。
  * 维护持久化的 ctx 命名空间，执行 agent 写的 TypeScript/JavaScript 代码。
  *
- * 在整体架构中的位置：
- * - 由 sandbox.ts (Host 侧) 通过 child_process.spawn 启动
- * - 预注入 runtime, memory, scene 到 globalThis
- * - Agent 代码通过 new Function() + async wrapper 执行
- * - console.log 被劫持，输出作为执行结果返回给 Host
- * - 错误 stack trace 作为输出返回（自动错误反馈）
+ * IPC 协议：
+ * - Host → Worker: execute, input_response
+ * - Worker → Host: result, notify, input_request, print
  */
 
 import { createInterface } from "node:readline";
@@ -23,6 +20,13 @@ interface ExecuteMessage {
     type: "execute";
     id: string;
     code: string;
+}
+
+/** Host → Worker: 用户输入响应 */
+interface InputResponseMessage {
+    type: "input_response";
+    id: string;
+    value: string;
 }
 
 /** Worker → Host: 代码执行结果 */
@@ -39,17 +43,28 @@ interface NotifyMessage {
     event: Record<string, unknown>;
 }
 
-type IncomingMessage = ExecuteMessage;
-type OutgoingMessage = ResultMessage | NotifyMessage;
+/** Worker → Host: 请求用户输入 */
+interface InputRequestMessage {
+    type: "input_request";
+    id: string;
+    prompt: string;
+}
+
+/** Worker → Host: 直接打印到 CLI */
+interface PrintMessage {
+    type: "print";
+    message: string;
+}
+
+type IncomingMessage = ExecuteMessage | InputResponseMessage;
+type OutgoingMessage = ResultMessage | NotifyMessage | InputRequestMessage | PrintMessage;
 
 // ─── 全局上下文 ───
 
-/** 跨代码块的持久化命名空间 */
 const ctx: Record<string, unknown> = {};
 
 // ─── Docs 系统 ───
 
-/** 预加载的文档内容（worker 启动时读取 docs/ 目录） */
 interface DocEntry { slug: string; title: string; content: string }
 
 function loadAllDocs(): DocEntry[] {
@@ -70,7 +85,6 @@ const allDocs = loadAllDocs();
 const docs = {
     list: () => allDocs.map(d => ({ slug: d.slug, title: d.title })),
     read: (slug: string): string => {
-        // 尝试精确匹配和模糊匹配
         const exact = allDocs.find(d => d.slug === slug);
         if (exact) return exact.content;
         const fuzzy = allDocs.find(d => d.slug.includes(slug) || slug.includes(d.slug));
@@ -82,33 +96,46 @@ const docs = {
 
 // ─── IPC 通信 ───
 
-/**
- * 向 Host 发送消息
- */
 function sendToHost(msg: OutgoingMessage): void {
     process.stdout.write(JSON.stringify(msg) + "\n");
 }
 
-/**
- * runtime.notify() — 从 worker 内部推送事件到 Host 的 NotificationCenter
- */
 function notifyHost(event: Record<string, unknown>): void {
     sendToHost({ type: "notify", event });
 }
 
-// ─── 代码执行 ───
+/**
+ * 直接打印消息到 Host CLI（不被 console.log 捕获）
+ */
+function printToHost(message: string): void {
+    sendToHost({ type: "print", message });
+}
+
+// ─── 输入请求管理 ───
+
+/** 等待中的 input 请求 */
+const pendingInputs = new Map<string, (value: string) => void>();
+let inputCounter = 0;
 
 /**
- * 在持久化命名空间中执行一段 agent 代码
+ * 向 Host 请求用户输入（阻塞当前代码执行直到用户响应）
  *
- * 使用 new Function() 构造函数来执行代码，支持 top-level await。
- * console.log 被劫持，所有输出收集后作为执行结果返回。
- * 错误通过 try/catch 捕获，stack trace 作为输出返回。
+ * @param prompt - 显示给用户的提示文本
+ * @returns 用户输入的文本
  */
+function requestInput(prompt: string): Promise<string> {
+    return new Promise((resolve) => {
+        const id = `input_${++inputCounter}`;
+        pendingInputs.set(id, resolve);
+        sendToHost({ type: "input_request", id, prompt });
+    });
+}
+
+// ─── 代码执行 ───
+
 async function executeCode(id: string, code: string): Promise<void> {
     const outputLines: string[] = [];
 
-    // 劫持 console 方法
     const originalConsole = {
         log: console.log,
         warn: console.warn,
@@ -141,14 +168,21 @@ async function executeCode(id: string, code: string): Promise<void> {
             `return (async () => { ${code} })()`
         );
 
-        // runtime 对象 — 注入到 agent 代码中
-        // spawn/kill/ps/cron 是占位符，将由 Host 侧的 BackgroundManager 接管
+        // runtime 对象
         const runtime = {
             notify: notifyHost,
-            // spawn, kill, ps, cron 将在 Host 完成 BackgroundManager 后注入
+            /**
+             * 请求用户输入（阻塞直到用户响应）
+             * @example const code = await runtime.input("请输入验证码: ");
+             */
+            input: requestInput,
+            /**
+             * 直接打印到 CLI（不被 console.log 捕获）
+             * @example runtime.print("⚠ 需要你的帮助！");
+             */
+            print: printToHost,
         };
 
-        // memory 和 scene 是占位符，后续 Task 中实现
         const memory = {};
         const scene = {
             current: "home",
@@ -187,7 +221,6 @@ async function executeCode(id: string, code: string): Promise<void> {
             error: true,
         });
     } finally {
-        // 恢复 console
         console.log = originalConsole.log;
         console.warn = originalConsole.warn;
         console.error = originalConsole.error;
@@ -208,9 +241,15 @@ rl.on("line", async (line: string) => {
 
         if (msg.type === "execute") {
             await executeCode(msg.id, msg.code);
+        } else if (msg.type === "input_response") {
+            // 用户输入响应 — 唤醒等待中的 runtime.input()
+            const resolver = pendingInputs.get(msg.id);
+            if (resolver) {
+                pendingInputs.delete(msg.id);
+                resolver(msg.value);
+            }
         }
     } catch (err: unknown) {
-        // JSON 解析错误 — 发送错误结果（使用 "unknown" id）
         const errorMsg =
             err instanceof Error ? err.message : String(err);
         sendToHost({

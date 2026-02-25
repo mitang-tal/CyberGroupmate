@@ -2,12 +2,11 @@
  * sandbox.ts — Sandbox Host 侧管理
  *
  * 管理 sandbox worker 子进程的生命周期。通过 stdin/stdout JSON 行协议
- * 与 worker 通信，提供代码执行和崩溃检测能力。
+ * 与 worker 通信，提供代码执行、交互式输入和崩溃检测能力。
  *
- * 在整体架构中的位置：
- * - Orchestrator (main.ts) 创建 Sandbox 实例
- * - Agent 的 CodeAct session 通过 sandbox.execute() 提交代码
- * - Worker 通过 notify 消息将事件转发到 NotificationCenter
+ * IPC 协议：
+ * - Host → Worker: execute, input_response
+ * - Worker → Host: result, notify, input_request, print
  */
 
 import { spawn, ChildProcess } from "node:child_process";
@@ -29,25 +28,38 @@ export interface ExecutionResult {
 
 /** Worker → Host 消息 */
 interface WorkerMessage {
-    type: "result" | "notify";
+    type: "result" | "notify" | "input_request" | "print";
     id?: string;
     output?: string;
     error?: boolean;
     event?: Record<string, unknown>;
+    prompt?: string;
+    message?: string;
 }
 
 /**
  * Sandbox — 代码执行沙箱的 Host 侧管理器
  *
- * 通过 child_process.spawn 启动 worker 子进程，通过 JSON 行协议通信。
- * 支持代码执行、超时控制和崩溃检测。
+ * Events:
+ * - "notify" — 来自 agent 的 runtime.notify() 事件
+ * - "print" — 来自 agent 的 runtime.print() 直接输出
+ * - "input_request" — 来自 agent 的 runtime.input() 请求（含 id 和 prompt）
+ * - "stderr" — worker 子进程的 stderr 输出
+ * - "exit" — worker 子进程退出
+ * - "error" — worker 子进程错误
  *
  * @example
  * ```ts
  * const sandbox = new Sandbox();
  * await sandbox.start();
+ *
+ * // 处理 agent 的输入请求
+ * sandbox.on("input_request", ({ id, prompt }) => {
+ *   // ... 获取用户输入
+ *   sandbox.sendInputResponse(id, userInput);
+ * });
+ *
  * const result = await sandbox.execute('console.log("hello")', 5000);
- * console.log(result.output); // "hello"
  * ```
  */
 export class Sandbox extends EventEmitter {
@@ -64,10 +76,6 @@ export class Sandbox extends EventEmitter {
     private requestCounter = 0;
     private projectRoot: string;
 
-    /**
-     * 创建 Sandbox 实例
-     * @param projectRoot - 项目根目录，用于定位 sandbox-worker.ts
-     */
     constructor(projectRoot?: string) {
         super();
         this.projectRoot = projectRoot ?? join(__dirname, "..");
@@ -75,8 +83,6 @@ export class Sandbox extends EventEmitter {
 
     /**
      * 启动 worker 子进程
-     *
-     * 返回的 Promise 在 worker 发送 ready 信号后 resolve。
      */
     async start(): Promise<void> {
         if (this.child) {
@@ -91,15 +97,12 @@ export class Sandbox extends EventEmitter {
             env: { ...process.env },
         });
 
-        // 读取 stderr 用于调试（不阻塞）
         this.child.stderr?.on("data", (data: Buffer) => {
             this.emit("stderr", data.toString());
         });
 
-        // 监听子进程退出
         this.child.on("exit", (code, signal) => {
             this.emit("exit", code, signal);
-            // 拒绝所有 pending 请求
             for (const [id, req] of this.pendingRequests) {
                 req.reject(
                     new Error(
@@ -117,7 +120,6 @@ export class Sandbox extends EventEmitter {
             this.emit("error", err);
         });
 
-        // 按行读取 stdout
         this.rl = createInterface({
             input: this.child.stdout!,
             terminal: false,
@@ -154,7 +156,6 @@ export class Sandbox extends EventEmitter {
         try {
             msg = JSON.parse(line);
         } catch {
-            // 忽略非 JSON 输出
             return;
         }
 
@@ -169,18 +170,18 @@ export class Sandbox extends EventEmitter {
                 });
             }
         } else if (msg.type === "notify" && msg.event) {
-            // 转发事件，由 Orchestrator 接入 NotificationCenter
             this.emit("notify", msg.event);
+        } else if (msg.type === "input_request" && msg.id && msg.prompt) {
+            // Agent 请求用户输入
+            this.emit("input_request", { id: msg.id, prompt: msg.prompt });
+        } else if (msg.type === "print" && msg.message) {
+            // Agent 直接打印
+            this.emit("print", msg.message);
         }
     }
 
     /**
      * 在 sandbox 中执行代码
-     *
-     * @param code - 要执行的 TypeScript/JavaScript 代码
-     * @param timeout - 超时时间（毫秒），默认 30000
-     * @returns 执行结果（含输出和错误标志）
-     * @throws 如果超时或 worker 已退出
      */
     async execute(code: string, timeout: number = 30000): Promise<ExecutionResult> {
         if (!this.child || !this.child.stdin) {
@@ -203,15 +204,24 @@ export class Sandbox extends EventEmitter {
     }
 
     /**
-     * 检查 worker 子进程是否存活
+     * 发送用户输入响应到 worker（回应 runtime.input()）
+     *
+     * @param id - 输入请求的 ID
+     * @param value - 用户输入的值
      */
+    sendInputResponse(id: string, value: string): void {
+        if (!this.child || !this.child.stdin) {
+            throw new Error("Sandbox worker is not running");
+        }
+
+        const msg = JSON.stringify({ type: "input_response", id, value });
+        this.child.stdin.write(msg + "\n");
+    }
+
     isAlive(): boolean {
         return this.child !== null && this.child.exitCode === null;
     }
 
-    /**
-     * 停止 worker 子进程
-     */
     async stop(): Promise<void> {
         if (!this.child) return;
 
@@ -223,7 +233,6 @@ export class Sandbox extends EventEmitter {
             });
             this.child!.kill("SIGTERM");
 
-            // 强制 kill 超时
             setTimeout(() => {
                 if (this.child) {
                     this.child.kill("SIGKILL");

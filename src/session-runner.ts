@@ -131,7 +131,9 @@ export async function runCodeActSession(
     sandbox: Sandbox,
     nc: NotificationCenter,
     llmConfig: LLMConfig,
-    sessionsDir: string = "data/sessions"
+    sessionsDir: string = "data/sessions",
+    /** 每段代码的执行超时（毫秒），默认 30s，bootstrap 可设 5min */
+    executeTimeout: number = 30000
 ): Promise<SessionResult> {
     const sessionId = ulid();
     const messages: ChatMessage[] = [...initialMessages];
@@ -199,7 +201,7 @@ export async function runCodeActSession(
 
         for (const code of codeBlocks) {
             try {
-                const result = await sandbox.execute(code);
+                const result = await sandbox.execute(code, executeTimeout);
                 turn.executionResults.push(result);
 
                 // Debug: 输出执行结果
