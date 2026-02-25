@@ -17,7 +17,9 @@ import { SceneManager } from "./scene-manager.js";
 import { registerBuiltinScenes } from "./scenes/index.js";
 import { runCodeActSession, SessionResult } from "./session-runner.js";
 import { runCompaction } from "./compaction.js";
-import { loadLLMConfig, LLMConfig, ChatMessage } from "./llm.js";
+import { loadConfig, AppConfig } from "./config.js";
+import { callLLM, ChatMessage } from "./llm.js";
+import type { LLMConfig } from "./config.js";
 import {
     readFileSync,
     writeFileSync,
@@ -27,6 +29,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "./logger.js";
+import { getDocsInjectionCode } from "./docs.js";
 
 const log = createLogger("main");
 
@@ -80,7 +83,7 @@ function ensureDataDirs(): void {
 /**
  * 读取 system prompt 模板并注入 persona 配置
  */
-function loadSystemPrompt(configPath?: string): string {
+function loadSystemPrompt(appConfig: AppConfig): string {
     const promptPath = "system-prompt.md";
     if (!existsSync(promptPath)) {
         return "You are a helpful AI assistant running in a CodeAct environment.";
@@ -88,30 +91,9 @@ function loadSystemPrompt(configPath?: string): string {
 
     let prompt = readFileSync(promptPath, "utf-8");
 
-    // 尝试从配置文件读取 persona
-    const cfgPath = configPath ?? "config.yaml";
-    if (existsSync(cfgPath)) {
-        try {
-            const config = readFileSync(cfgPath, "utf-8");
-            // 简单提取 persona.description
-            const descMatch = config.match(
-                /persona:\s*\n\s+description:\s*\|?\s*\n((?:\s{4,}.+\n?)*)/
-            );
-            if (descMatch) {
-                const persona = descMatch[1]
-                    .split("\n")
-                    .map((l) => l.trim())
-                    .filter(Boolean)
-                    .join("\n");
-                prompt = prompt.replace("{{PERSONA}}", persona);
-            }
-        } catch {
-            // 配置文件解析失败
-        }
-    }
-
-    // 如果没有替换成功，移除占位符
-    prompt = prompt.replace("{{PERSONA}}", "");
+    // 从配置中注入 persona
+    const persona = appConfig.persona.description || "";
+    prompt = prompt.replace("{{PERSONA}}", persona);
 
     return prompt;
 }
@@ -171,24 +153,98 @@ function loadBootstrapCode(): string[] | null {
 /**
  * Bootstrap prompt — 告诉 agent 需要初始化什么
  */
-function buildBootstrapPrompt(homeTypeDefs: string): string {
+function buildBootstrapPrompt(homeTypeDefs: string, appConfig: AppConfig): string {
+    const tgMode = appConfig.telegram.mode;
+
+    const botExample = `
+// Bot 模式登录
+const { TelegramClient } = require("@mtcute/node");
+
+const tg = new TelegramClient({
+  apiId: Number(process.env.TG_API_ID),
+  apiHash: process.env.TG_API_HASH,
+  storage: "data/tg-session/account",
+});
+
+const self = await tg.start({
+  botToken: process.env.TG_BOT_TOKEN,
+});
+console.log("Logged in as: " + self.displayName + " (ID: " + self.id + ")");
+ctx.tg = tg;
+ctx.self = self;
+`;
+
+    const userbotExample = `
+// Userbot 模式登录——需要人类协助输入验证码
+const { TelegramClient } = require("@mtcute/node");
+
+const tg = new TelegramClient({
+  apiId: Number(process.env.TG_API_ID),
+  apiHash: process.env.TG_API_HASH,
+  storage: "data/tg-session/account",
+});
+
+const self = await tg.start({
+  phone: () => process.env.TG_PHONE || "+86...",
+  code: () => new Promise((resolve) => {
+    runtime.notify({
+      type: "system.auth_code_needed",
+      message: "请在 Telegram 应用中查看验证码，然后通过 notify 发送给我: { type: 'auth.code', code: '12345' }",
+    });
+    ctx._resolveAuthCode = resolve;
+  }),
+  password: () => new Promise((resolve) => {
+    runtime.notify({
+      type: "system.auth_2fa_needed",
+      message: "请提供两步验证密码",
+    });
+    ctx._resolve2FA = resolve;
+  }),
+  codeSentCallback: (sentCode) => {
+    console.log("验证码已发送，类型: " + sentCode.type);
+  },
+});
+console.log("Logged in as: " + self.displayName + " (ID: " + self.id + ")");
+ctx.tg = tg;
+ctx.self = self;
+`;
+
+    const loginExample = tgMode === "userbot" ? userbotExample : botExample;
+
     return `# Bootstrap 初始化
 
-你刚被启动。你需要完成以下初始化步骤：
+你刚被启动。以下是你需要完成的初始化。
 
-1. **连接 Telegram**：使用环境变量中的配置创建 TelegramClient 并连接
-   - Bot 模式：使用 \`process.env.TG_BOT_TOKEN\`
-   - API ID/Hash：\`process.env.TG_API_ID\`, \`process.env.TG_API_HASH\`
-   - 将 client 保存到 \`ctx.tg\`
+## 可用工具
 
-2. **设置消息监听**：使用 \`runtime.spawn()\` 创建后台任务监听新消息
-   - 监听对你的 @mention 和私聊消息
-   - 通过 \`runtime.notify()\` 将收到的消息推送到通知中心
-   - 事件格式：\`{ type: "telegram.message", chatId, chatTitle, fromUser, text, messageId, mentioned, isPrivate }\`
+- \`ctx\` — 持久化变量容器（跨代码块保存）
+- \`runtime.notify(event)\` — 推送事件到通知中心
+- \`runtime.spawn(name, fn)\` — 启动后台任务
+- \`docs.list()\` — 查看可用参考文档
+- \`docs.read("mtcute")\` — 读取 mtcute 使用指南
 
-3. **确认自身信息**：调用 \`getMe()\` 确认你的身份
+如果你不确定某个库怎么用，**先读文档**：\`console.log(docs.read("mtcute"))\`
 
-完成所有步骤后，输出 "BOOTSTRAP_COMPLETE" 表示初始化完成。
+## 步骤 1：连接 Telegram
+
+当前配置的连接模式：**${tgMode}**
+
+以下是参考代码（可以直接使用，也可以根据情况修改）：
+
+\`\`\`typescript${loginExample}\`\`\`
+
+**重要**：
+- \`storage: "data/tg-session/account"\` 保证 session 持久化，重启后不需要重新登录
+- 如果 \`tg.start()\` 发现已有保存的 session，它会直接恢复登录状态
+- 环境变量 \`TG_API_ID\`, \`TG_API_HASH\`${tgMode === "bot" ? ", `TG_BOT_TOKEN`" : ", `TG_PHONE`"} 必须已设置
+
+## 步骤 2：确认自身信息
+
+登录成功后，\`self\` 就是你的 User 对象。请确认并输出你的名字和 ID。
+
+## 步骤 3：完成
+
+登录成功后输出 "BOOTSTRAP_COMPLETE"。
 
 ---
 
@@ -198,7 +254,7 @@ function buildBootstrapPrompt(homeTypeDefs: string): string {
 ${homeTypeDefs}
 \`\`\`
 
-开始吧。先进入 telegram 场景查看可用的 API。`;
+开始吧。如果不确定 mtcute 用法，先读文档：\`console.log(docs.read("mtcute"))\``;
 }
 
 /**
@@ -211,7 +267,8 @@ async function runBootstrap(
     nc: NotificationCenter,
     sceneManager: SceneManager,
     llmConfig: LLMConfig,
-    systemPrompt: string
+    systemPrompt: string,
+    appConfig: AppConfig
 ): Promise<void> {
     // 尝试重放保存的 bootstrap 代码
     const savedCodes = loadBootstrapCode();
@@ -243,7 +300,7 @@ async function runBootstrap(
 
     const bootstrapMessages: ChatMessage[] = [
         { role: "system", content: systemPrompt },
-        { role: "user", content: buildBootstrapPrompt(homeTypeDefs) },
+        { role: "user", content: buildBootstrapPrompt(homeTypeDefs, appConfig) },
     ];
 
     const result = await runCodeActSession(
@@ -285,7 +342,8 @@ async function mainEventLoop(
     sceneManager: SceneManager,
     memory: MemoryStore,
     llmConfig: LLMConfig,
-    systemPrompt: string
+    systemPrompt: string,
+    appConfig: AppConfig
 ): Promise<void> {
     log.info("进入主事件循环");
 
@@ -310,7 +368,8 @@ async function mainEventLoop(
                     nc,
                     sceneManager,
                     llmConfig,
-                    systemPrompt
+                    systemPrompt,
+                    appConfig
                 );
                 log.info("Sandbox 重启完成");
             } catch (err: unknown) {
@@ -408,14 +467,21 @@ async function main(): Promise<void> {
     // ─── 初始化 ───
     ensureDataDirs();
 
-    const llmConfig = loadLLMConfig();
+    const appConfig = loadConfig();
+    const llmConfig = appConfig.llm;
     log.info("LLM 配置加载完成", {
         provider: llmConfig.provider,
         model: llmConfig.model,
         baseUrl: llmConfig.baseUrl,
     });
+    log.info("Telegram 配置", {
+        mode: appConfig.telegram.mode,
+        apiId: appConfig.telegram.apiId ? "✓" : "✗",
+        apiHash: appConfig.telegram.apiHash ? "✓" : "✗",
+        botToken: appConfig.telegram.botToken ? "✓" : "✗",
+    });
 
-    const systemPrompt = loadSystemPrompt();
+    const systemPrompt = loadSystemPrompt(appConfig);
     const nc = new NotificationCenter(EVENTS_PATH);
     const sandbox = new Sandbox();
     const memory = new MemoryStore(join(DATA_DIR, "memory.db"));
@@ -438,7 +504,11 @@ async function main(): Promise<void> {
     // ─── 启动 sandbox ───
     log.info("启动 Sandbox...");
     await sandbox.start();
-    log.info("Sandbox 就绪");
+
+    // 注入 docs 到 sandbox
+    const docsCode = getDocsInjectionCode();
+    await sandbox.execute(docsCode);
+    log.info("Sandbox 就绪（docs 已注入）");
 
     // ─── Bootstrap ───
     await runBootstrap(
@@ -446,7 +516,8 @@ async function main(): Promise<void> {
         nc,
         sceneManager,
         llmConfig,
-        systemPrompt
+        systemPrompt,
+        appConfig
     );
 
     // ─── 主循环 ───
@@ -456,7 +527,8 @@ async function main(): Promise<void> {
         sceneManager,
         memory,
         llmConfig,
-        systemPrompt
+        systemPrompt,
+        appConfig
     );
 }
 

@@ -4,13 +4,13 @@
  * 统一的 LLM 调用接口，支持 Anthropic Claude API 和 OpenAI 兼容 API。
  * 处理 rate limiting、重试和错误恢复。
  *
- * 在整体架构中的位置：
- * - Orchestrator (main.ts) 通过 callLLM 调用 LLM
- * - CodeAct session runner 使用此模块进行多轮对话
- * - Compaction 使用此模块生成对话摘要
+ * 配置加载已迁移到 config.ts。
  */
 
-import { readFileSync, existsSync } from "node:fs";
+// 从 config.ts 重新导出，保持向后兼容
+export { type LLMConfig, loadLLMConfig } from "./config.js";
+
+import type { LLMConfig } from "./config.js";
 
 // ─── 类型定义 ───
 
@@ -18,22 +18,6 @@ import { readFileSync, existsSync } from "node:fs";
 export interface ChatMessage {
     role: "system" | "user" | "assistant";
     content: string;
-}
-
-/** LLM 配置 */
-export interface LLMConfig {
-    /** API 提供商: "anthropic" | "openai" */
-    provider: "anthropic" | "openai";
-    /** API base URL */
-    baseUrl: string;
-    /** API key（从环境变量或配置文件读取） */
-    apiKey: string;
-    /** 模型名称 */
-    model: string;
-    /** 温度参数，默认 0.7 */
-    temperature: number;
-    /** 最大输出 token 数，默认 4096 */
-    maxTokens: number;
 }
 
 /** LLM 调用选项（可覆盖默认配置） */
@@ -58,127 +42,6 @@ export interface LLMResponse {
     };
 }
 
-// ─── 配置加载 ───
-
-/**
- * 从 config.yaml 或环境变量加载 LLM 配置
- *
- * 优先级：环境变量 > config.yaml > 默认值
- *
- * 环境变量：
- * - LLM_PROVIDER: "anthropic" | "openai"
- * - LLM_BASE_URL: API base URL
- * - LLM_API_KEY: API key
- * - LLM_MODEL: model name
- * - LLM_TEMPERATURE: temperature
- * - LLM_MAX_TOKENS: max tokens
- */
-export function loadLLMConfig(configPath?: string): LLMConfig {
-    let fileConfig: Record<string, unknown> = {};
-
-    // 尝试从 config.yaml 读取 LLM 配置
-    const path = configPath ?? "config.yaml";
-    if (existsSync(path)) {
-        try {
-            const content = readFileSync(path, "utf-8");
-            fileConfig = parseSimpleYaml(content);
-        } catch {
-            // 配置文件解析失败，使用环境变量和默认值
-        }
-    }
-
-    const llmSection =
-        (fileConfig.llm as Record<string, unknown>) ?? {};
-
-    return {
-        provider:
-            (process.env.LLM_PROVIDER as "anthropic" | "openai") ??
-            (llmSection.provider as string) ??
-            "openai",
-        baseUrl:
-            process.env.LLM_BASE_URL ??
-            (llmSection.baseUrl as string) ??
-            (llmSection.base_url as string) ??
-            "https://api.openai.com/v1",
-        apiKey:
-            process.env.LLM_API_KEY ??
-            (llmSection.apiKey as string) ??
-            (llmSection.api_key as string) ??
-            "",
-        model:
-            process.env.LLM_MODEL ??
-            (llmSection.model as string) ??
-            "gpt-4o",
-        temperature: Number(
-            process.env.LLM_TEMPERATURE ??
-            llmSection.temperature ??
-            0.7
-        ),
-        maxTokens: Number(
-            process.env.LLM_MAX_TOKENS ??
-            llmSection.maxTokens ??
-            llmSection.max_tokens ??
-            4096
-        ),
-    };
-}
-
-/**
- * 简单的 YAML 解析器
- *
- * 只支持一层嵌套的 key: value 格式，不引入 yaml 依赖。
- * 支持的格式：
- * ```yaml
- * llm:
- *   provider: openai
- *   model: gpt-4o
- * persona:
- *   name: 赛博群友
- * ```
- */
-function parseSimpleYaml(content: string): Record<string, unknown> {
-    const result: Record<string, Record<string, unknown>> = {};
-    let currentSection: string | null = null;
-
-    for (const line of content.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith("#")) continue;
-
-        // 顶层 key（无缩进，以 : 结尾）
-        if (!line.startsWith(" ") && !line.startsWith("\t") && trimmed.endsWith(":")) {
-            currentSection = trimmed.slice(0, -1).trim();
-            result[currentSection] = {};
-            continue;
-        }
-
-        // 嵌套 key: value（有缩进）
-        if (currentSection && (line.startsWith("  ") || line.startsWith("\t"))) {
-            const colonIdx = trimmed.indexOf(":");
-            if (colonIdx > 0) {
-                const key = trimmed.slice(0, colonIdx).trim();
-                let value: string | number | boolean = trimmed.slice(colonIdx + 1).trim();
-
-                // 去掉引号
-                if (
-                    (value.startsWith('"') && value.endsWith('"')) ||
-                    (value.startsWith("'") && value.endsWith("'"))
-                ) {
-                    value = value.slice(1, -1);
-                }
-
-                // 尝试解析数字和布尔
-                if (value === "true") value = true as unknown as string;
-                else if (value === "false") value = false as unknown as string;
-                else if (/^\d+(\.\d+)?$/.test(value as string)) value = Number(value);
-
-                result[currentSection][key] = value;
-            }
-        }
-    }
-
-    return result;
-}
-
 // ─── LLM 调用 ───
 
 const MAX_RETRIES = 3;
@@ -194,16 +57,6 @@ const RETRY_DELAYS = [1000, 2000, 4000]; // 指数退避
  * @param config - LLM 配置
  * @param options - 可选的调用参数覆盖
  * @returns LLM 响应（含生成文本和 token 用量）
- *
- * @example
- * ```ts
- * const config = loadLLMConfig();
- * const response = await callLLM([
- *   { role: "system", content: "You are a helpful assistant." },
- *   { role: "user", content: "Hello!" }
- * ], config);
- * console.log(response.content);
- * ```
  */
 export async function callLLM(
     messages: ChatMessage[],
@@ -244,7 +97,6 @@ export async function callLLM(
         }
     }
 
-    // 不应到达这里
     throw new Error("LLM call failed after all retries");
 }
 
@@ -318,7 +170,6 @@ async function callAnthropic(
 ): Promise<LLMResponse> {
     const url = `${config.baseUrl.replace(/\/$/, "")}/messages`;
 
-    // 提取 system message
     const systemMsg = messages.find((m) => m.role === "system");
     const nonSystemMsgs = messages.filter((m) => m.role !== "system");
 

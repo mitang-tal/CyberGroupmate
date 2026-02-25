@@ -15,7 +15,7 @@ import { createInterface } from "node:readline";
 import { Sandbox } from "./sandbox.js";
 import { NotificationCenter } from "./notification-center.js";
 import { MemoryStore } from "./memory.js";
-import { loadLLMConfig } from "./llm.js";
+import { loadConfig } from "./config.js";
 import { createLogger } from "./logger.js";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -317,20 +317,26 @@ async function cmdMemory(args: string[]): Promise<void> {
 async function cmdConfig(): Promise<void> {
     log.info("加载配置...");
 
-    const config = loadLLMConfig();
-    console.log("\n\x1b[1mLLM 配置：\x1b[0m");
-    console.log(`  Provider:    ${config.provider}`);
-    console.log(`  Base URL:    ${config.baseUrl}`);
-    console.log(`  Model:       ${config.model}`);
-    console.log(`  Temperature: ${config.temperature}`);
-    console.log(`  Max Tokens:  ${config.maxTokens}`);
-    console.log(`  API Key:     ${config.apiKey ? "***" + config.apiKey.slice(-4) : "(未设置)"}`);
+    const config = loadConfig(undefined, true);
 
-    // 检查环境变量
-    console.log("\n\x1b[1mTelegram 环境变量：\x1b[0m");
-    console.log(`  TG_API_ID:    ${process.env.TG_API_ID ?? "(未设置)"}`);
-    console.log(`  TG_API_HASH:  ${process.env.TG_API_HASH ? "***" + process.env.TG_API_HASH.slice(-4) : "(未设置)"}`);
-    console.log(`  TG_BOT_TOKEN: ${process.env.TG_BOT_TOKEN ? "***" + process.env.TG_BOT_TOKEN.slice(-4) : "(未设置)"}`);
+    console.log("\n\x1b[1mLLM 配置：\x1b[0m");
+    console.log(`  Provider:    ${config.llm.provider}`);
+    console.log(`  Base URL:    ${config.llm.baseUrl}`);
+    console.log(`  Model:       ${config.llm.model}`);
+    console.log(`  Temperature: ${config.llm.temperature}`);
+    console.log(`  Max Tokens:  ${config.llm.maxTokens}`);
+    console.log(`  API Key:     ${config.llm.apiKey ? "***" + config.llm.apiKey.slice(-4) : "(未设置)"}`);
+
+    console.log("\n\x1b[1mPersona：\x1b[0m");
+    console.log(`  Name:        ${config.persona.name}`);
+    console.log(`  Description: ${config.persona.description ? config.persona.description.slice(0, 60) + "..." : "(未设置)"}`);
+
+    console.log("\n\x1b[1mTelegram 配置：\x1b[0m");
+    console.log(`  Mode:        ${config.telegram.mode}`);
+    console.log(`  API ID:      ${config.telegram.apiId || "(未设置)"}`);
+    console.log(`  API Hash:    ${config.telegram.apiHash ? "***" + config.telegram.apiHash.slice(-4) : "(未设置)"}`);
+    console.log(`  Bot Token:   ${config.telegram.botToken ? "***" + config.telegram.botToken.slice(-4) : "(未设置)"}`);
+    console.log(`  Phone:       ${config.telegram.phone || "(未设置)"}`);
 
     // 检查文件
     console.log("\n\x1b[1m文件检查：\x1b[0m");

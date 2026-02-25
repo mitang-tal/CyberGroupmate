@@ -14,12 +14,13 @@
   "dependencies": {
     "@mtcute/node": "latest",
     "better-sqlite3": "^11.0.0",
-    "ulid": "^2.3.0"
+    "ulid": "^2.3.0",
+    "yaml": "^2.8.2"
   },
   "devDependencies": {
-    "tsx": "^4.0.0",
     "@types/better-sqlite3": "^7.0.0",
     "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
     "typescript": "^5.5.0"
   }
 }
