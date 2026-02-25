@@ -230,27 +230,6 @@ export async function runCodeActSession(
                 });
                 outputParts.push(`[⚠ Sandbox Error]\n${errorMsg}`);
             }
-
-            // --- 检查是否发生了场景切换 ---
-            const lastResult = turn.executionResults[turn.executionResults.length - 1];
-            if (lastResult?.sceneState && lastResult.sceneState !== currentScene) {
-                // 如果是本轮的最后一块代码导致切换，或者中途发生切换，我们都要记录结果并结束 session
-                outputParts.push(`\n[系统] 已成功跳转至新场景: ${lastResult.sceneState}`);
-                let observation = outputParts.join("\n\n");
-                if (observation.trim()) {
-                    messages.push({ role: "user", content: observation });
-                }
-                turns.push(turn);
-                appendTranscript(transcriptPath, turn);
-
-                return {
-                    sessionId,
-                    turns,
-                    messages,
-                    endReason: "scene_changed",
-                    nextScene: lastResult.sceneState
-                };
-            }
         }
 
         turns.push(turn);
@@ -275,6 +254,22 @@ export async function runCodeActSession(
                     .join("\n");
                 observation += `\n\n[📬 新通知到达 (${newEvents.length} 条)]\n${eventSummary}`;
             }
+        }
+
+        // --- 根据最终的 sceneState 决定是否结束 Session 交给新 Scene ---
+        const lastResult = turn.executionResults[turn.executionResults.length - 1];
+        if (lastResult?.sceneState && lastResult.sceneState !== currentScene) {
+            observation += `\n\n[系统] 已控制权转移至新场景: ${lastResult.sceneState}`;
+            if (observation.trim()) {
+                messages.push({ role: "user", content: observation });
+            }
+            return {
+                sessionId,
+                turns,
+                messages,
+                endReason: "scene_changed",
+                nextScene: lastResult.sceneState
+            };
         }
 
         // 将 observation 作为 user 消息追加
