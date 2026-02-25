@@ -328,7 +328,11 @@ async function runBootstrap(
         log.info(`保存了 ${successfulCodes.length} 段 bootstrap 代码`);
     }
 
-    log.info("Bootstrap 完成", { turns: result.turns.length, reason: result.endReason });
+    if (result.endReason === "error") {
+        log.error("Bootstrap 失败", { error: result.error, turns: result.turns.length });
+    } else {
+        log.info("Bootstrap 完成", { turns: result.turns.length, reason: result.endReason });
+    }
 }
 
 // ─── Main Event Loop ───
@@ -426,10 +430,17 @@ ${eventText}
                 SESSIONS_DIR
             );
 
-            log.info(`Session ${result.sessionId} 完成`, {
-                turns: result.turns.length,
-                reason: result.endReason,
-            });
+            if (result.endReason === "error") {
+                log.error(`Session ${result.sessionId} 失败`, {
+                    error: result.error,
+                    turns: result.turns.length,
+                });
+            } else {
+                log.info(`Session ${result.sessionId} 完成`, {
+                    turns: result.turns.length,
+                    reason: result.endReason,
+                });
+            }
 
             // ─── Session Compaction ───
             try {
