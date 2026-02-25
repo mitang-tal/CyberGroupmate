@@ -153,25 +153,36 @@ async function executeAndPrint(sandbox: Sandbox, code: string): Promise<void> {
 
 /**
  * notify — 手动推送一条通知
+ *
+ * 用法：
+ *   notify [type] [text]        — 普通通知
+ *   notify --urgent [type] [text] — 加急通知（立即触发 drain）
  */
 async function cmdNotify(args: string[]): Promise<void> {
     const eventsPath = join(DATA_DIR, "events.jsonl");
-    const nc = new NotificationCenter(eventsPath);
+    const nc = new NotificationCenter(eventsPath, false);
 
-    const type = args[0] ?? "test.manual";
-    const text = args.slice(1).join(" ") || "手动测试通知";
+    // 解析 --urgent 标志
+    const urgent = args.includes("--urgent") || args.includes("-u");
+    const filteredArgs = args.filter((a) => a !== "--urgent" && a !== "-u");
+
+    const type = filteredArgs[0] ?? "test.manual";
+    const text = filteredArgs.slice(1).join(" ") || "手动测试通知";
 
     const event = nc.push({
         type,
         text,
         source: "cli",
+        _urgent: urgent || undefined,
     });
 
     log.info("事件已推送", {
         id: event._id,
         type: event.type,
+        urgent: urgent ? "✓" : undefined,
         pendingCount: nc.pendingCount,
     });
+    nc.dispose();
 }
 
 /**
@@ -179,7 +190,7 @@ async function cmdNotify(args: string[]): Promise<void> {
  */
 async function cmdDrain(): Promise<void> {
     const eventsPath = join(DATA_DIR, "events.jsonl");
-    const nc = new NotificationCenter(eventsPath);
+    const nc = new NotificationCenter(eventsPath, false);
 
     log.info("当前队列", { pending: nc.pendingCount });
 

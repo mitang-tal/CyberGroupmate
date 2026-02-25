@@ -20,7 +20,7 @@ describe("NotificationCenter", () => {
     function makeNC(): NotificationCenter {
         const p = createTempPath();
         tempPaths.push(p);
-        return new NotificationCenter(p);
+        return new NotificationCenter(p, false);
     }
 
     after(() => {
@@ -68,7 +68,7 @@ describe("NotificationCenter", () => {
         it("should append events to the JSONL file", () => {
             const p = createTempPath();
             tempPaths.push(p);
-            const nc = new NotificationCenter(p);
+            const nc = new NotificationCenter(p, false);
 
             nc.push({ type: "test.one", value: 1 });
             nc.push({ type: "test.two", value: 2 });

@@ -12,10 +12,14 @@
 
 import { Sandbox, ExecutionResult } from "./sandbox.js";
 import { NotificationCenter } from "./notification-center.js";
-import { callLLM, LLMConfig, ChatMessage, LLMResponse } from "./llm.js";
+import { callLLM, ChatMessage, LLMResponse } from "./llm.js";
+import type { LLMConfig } from "./config.js";
 import { appendFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { ulid } from "ulid";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("session");
 
 // ─── 常量 ───
 
@@ -171,8 +175,15 @@ export async function runCodeActSession(
             usage: llmResponse.usage,
         };
 
+        // ─── Debug: 输出本轮的思考和代码 ───
+        log.debug(`Turn ${turnNum}: thinking`, { text: thinking.slice(0, 200) });
+        for (let i = 0; i < codeBlocks.length; i++) {
+            log.debug(`Turn ${turnNum}: code[${i}]`, { code: codeBlocks[i].slice(0, 300) });
+        }
+
         // ─── 无代码块 → session 结束 ───
         if (codeBlocks.length === 0) {
+            log.debug(`Turn ${turnNum}: 无代码块，session 结束`);
             turns.push(turn);
             appendTranscript(transcriptPath, turn);
             return {
@@ -190,6 +201,12 @@ export async function runCodeActSession(
             try {
                 const result = await sandbox.execute(code);
                 turn.executionResults.push(result);
+
+                // Debug: 输出执行结果
+                log.debug(`Turn ${turnNum}: exec[${codeBlocks.indexOf(code)}]`, {
+                    error: result.error,
+                    output: result.output.slice(0, 300),
+                });
 
                 if (result.output) {
                     const truncated = truncateOutput(result.output);
