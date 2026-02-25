@@ -12,12 +12,12 @@
 
 | Phase | Task | 状态 | 实施笔记 |
 |-------|------|------|----------|
-| 1.1 | NotificationCenter | ⬜ 未开始 | |
-| 1.2 | Sandbox + Worker | ⬜ 未开始 | |
-| 1.3 | BackgroundManager | ⬜ 未开始 | |
-| 1.4 | Memory Store | ⬜ 未开始 | |
-| 1.5 | SceneManager + 类型定义文件 | ⬜ 未开始 | |
-| 1.6 | 项目脚手架（package.json, tsconfig, git 初始化） | ⬜ 未开始 | |
+| 1.1 | NotificationCenter | ✅ 完成 | monotonic ULID via monotonicFactory(); FTS5 JSONL append-only; async drain with waiter pattern |
+| 1.2 | Sandbox + Worker | ✅ 完成 | new Function() + async wrapper; JSON-line IPC; console hijack; persistent ctx namespace |
+| 1.3 | BackgroundManager | ✅ 完成 | AbortController cancellation; guardedRun auto-notifies system.background_error |
+| 1.4 | Memory Store | ✅ 完成 | FTS5 + LIKE fallback for CJK; merge-update person profiles; WAL mode |
+| 1.5 | SceneManager + 类型定义文件 | ✅ 完成 | L1/L2 type def system; home/telegram/memory scenes; scene-authoring.md |
+| 1.6 | 项目脚手架（package.json, tsconfig, git 初始化） | ✅ 完成 | ESM, Node ≥22, strict TS, 55 tests passing |
 | 2.1 | LLM 调用封装 | ⬜ 未开始 | |
 | 2.2 | CodeAct Session Runner | ⬜ 未开始 | |
 | 2.3 | Bootstrap 流程 | ⬜ 未开始 | |
@@ -875,4 +875,20 @@ Agent 在 bootstrap 时从 `process.env` 读取这些值。
 
 > Claude Code 在完成每个 Phase 后在此追加总结。
 
-（待填写）
+### Phase 1 总结 — 2026-02-25
+
+**完成情况**：所有 6 个 Task 完成，55 个单元测试全部通过。
+
+**关键决策与发现**：
+
+1. **ULID 单调性**：`ulid` 库的默认 `ulid()` 函数在同一毫秒内不保证单调递增。改用 `monotonicFactory()` 解决。`[REVISED @Phase-1.1]`
+
+2. **FTS5 CJK 支持**：SQLite FTS5 的 `unicode61` tokenizer 会将中文字符逐字拆分，导致多字词搜索（如"抹茶"）失败。实现了双重策略：先尝试 FTS5 搜索，无结果时回退到 `LIKE` 子串匹配。`[REVISED @Phase-1.4]`
+
+3. **Sandbox IPC 设计**：使用 JSON 行协议（每条消息一行 JSON）通过 stdin/stdout 通信，简单可靠。Worker 发送 `__ready__` 信号确认启动完成。
+
+4. **任务执行顺序调整**：实际按 1.6 → 1.1 → 1.2 → 1.3 → 1.4 → 1.5 顺序执行（先搭脚手架），与计划略有偏差但更合理。
+
+**对后续影响**：
+- Memory 的 FTS5 + LIKE 双重搜索对大数据量可能有性能问题，Phase 3 中需关注
+- BackgroundManager 的 cron 功能尚未实现，需在 Phase 2 补充

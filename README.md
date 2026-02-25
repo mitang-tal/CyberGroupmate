@@ -117,7 +117,7 @@ src/
 
 ## 开发状态
 
-- [ ] Phase 1：基础 Runtime
+- [x] Phase 1：基础 Runtime (v0.1.0)
 - [ ] Phase 2：Agent Loop + LLM 集成
 - [ ] Phase 3：记忆与人格
 - [ ] Phase 4：稳定性与工具
