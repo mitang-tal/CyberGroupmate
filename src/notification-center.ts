@@ -10,9 +10,11 @@
  * - 所有事件 append-only 写入 JSONL 文件，形成审计日志
  */
 
-import { ulid } from "ulid";
+import { monotonicFactory } from "ulid";
 import { appendFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
+
+const ulid = monotonicFactory();
 
 /** 通知事件的基础结构 */
 export interface NotificationEvent {
