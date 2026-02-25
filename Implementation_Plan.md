@@ -18,10 +18,10 @@
 | 1.4 | Memory Store | ✅ 完成 | FTS5 + LIKE fallback for CJK; merge-update person profiles; WAL mode |
 | 1.5 | SceneManager + 类型定义文件 | ✅ 完成 | L1/L2 type def system; home/telegram/memory scenes; scene-authoring.md |
 | 1.6 | 项目脚手架（package.json, tsconfig, git 初始化） | ✅ 完成 | ESM, Node ≥22, strict TS, 55 tests passing |
-| 2.1 | LLM 调用封装 | ⬜ 未开始 | |
-| 2.2 | CodeAct Session Runner | ⬜ 未开始 | |
-| 2.3 | Bootstrap 流程 | ⬜ 未开始 | |
-| 2.4 | Main Event Loop | ⬜ 未开始 | |
+| 2.1 | LLM 调用封装 | ✅ 完成 | 支持 Anthropic + OpenAI API；简易 YAML 解析器避免额外依赖；重试 + 指数退避 |
+| 2.2 | CodeAct Session Runner | ✅ 完成 | 多轮交互循环；parseResponse 解析 ts/js/typescript/javascript 围栏；输出截断 4000 字符；每 5 轮检查新通知 |
+| 2.3 | Bootstrap 流程 | ✅ 完成 | 代码保存+重放机制；重放失败回退到完整 LLM bootstrap |
+| 2.4 | Main Event Loop | ✅ 完成 | drain+context组装+session运行；sandbox 崩溃检测+自动重启；graceful shutdown |
 | 3.1 | Session Compaction | ⬜ 未开始 | |
 | 3.2 | Agent State 管理 | ⬜ 未开始 | |
 | 3.3 | System Prompt 调优 | ⬜ 未开始 | |
@@ -892,3 +892,23 @@ Agent 在 bootstrap 时从 `process.env` 读取这些值。
 **对后续影响**：
 - Memory 的 FTS5 + LIKE 双重搜索对大数据量可能有性能问题，Phase 3 中需关注
 - BackgroundManager 的 cron 功能尚未实现，需在 Phase 2 补充
+
+### Phase 2 总结 — 2026-02-25
+
+**完成情况**：所有 4 个 Task 完成，63 个测试全部通过。
+
+**关键决策与发现**：
+
+1. **YAML 解析**：为避免引入 `yaml` 依赖，手写了简单的 YAML 解析器（只支持一层嵌套 key-value）。足以满足 config.yaml 的需求。
+
+2. **代码块解析**：使用正则匹配 ` ```typescript ` / ` ```ts ` / ` ```js ` / ` ```javascript ` 围栏。忽略其他语言的代码块（如 python、json）。
+
+3. **Bootstrap 重放**：Bootstrap 成功后，所有成功执行的代码块保存到 `data/bootstrap-code.json`。Sandbox 重启后先尝试重放，失败才回退到完整 LLM bootstrap。
+
+4. **Main Loop 容错**：Sandbox 崩溃时自动重启并重放 bootstrap。事件不会丢失（推回 NC 队列）。
+
+5. **cron 功能推迟**：BackgroundManager 的 cron 尚未实现，计划在 Phase 4 补充。`[REVISED @Phase-2.3]`
+
+**对后续影响**：
+- Session compaction (Phase 3.1) 需要在 main loop 的 session 完成后调用
+- Agent state 文件 (Phase 3.2) 的读写逻辑已在 main.ts 中预留

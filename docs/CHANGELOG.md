@@ -18,3 +18,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Scene registry** (`src/scenes/index.ts`): Builtin scene registration from `.d.ts` files
 - **Documentation**: `docs/scene-authoring.md`, `docs/CHANGELOG.md`
 - **55 unit tests**, all passing
+
+## [0.2.0] — 2026-02-25 — Phase 2: Agent Loop + LLM 集成
+
+### Added
+
+- **LLM Wrapper** (`src/llm.ts`): Unified API for Anthropic Claude and OpenAI-compatible endpoints, retry with exponential backoff, config from env/yaml
+- **CodeAct Session Runner** (`src/session-runner.ts`): Multi-turn LLM→code→execute loop, response parsing, output truncation, notification checks, session transcripts
+- **Main Orchestrator** (`src/main.ts`): Full lifecycle (init → bootstrap → event loop), sandbox crash detection with auto-restart, context assembly
+- **System Prompt** (`system-prompt.md`): Agent instructions with CodeAct environment, behavioral principles, persona injection
+- **Config** (`config.example.yaml`): Sample configuration with documented options
+- **8 additional unit tests** (63 total)
