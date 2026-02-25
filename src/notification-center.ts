@@ -19,6 +19,9 @@ import {
     FSWatcher,
 } from "node:fs";
 import { dirname } from "node:path";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("nc");
 
 const ulidGen = monotonicFactory();
 
@@ -70,6 +73,9 @@ export class NotificationCenter {
 
     /** 文件监视器 */
     private watcher: FSWatcher | null = null;
+
+    /** 轮询计时器（fs.watch 的后备方案） */
+    private pollTimer: ReturnType<typeof setInterval> | null = null;
 
     /** 是否正在自己写文件（避免自触发） */
     private selfWriting = false;
@@ -180,6 +186,10 @@ export class NotificationCenter {
             this.watcher.close();
             this.watcher = null;
         }
+        if (this.pollTimer) {
+            clearInterval(this.pollTimer);
+            this.pollTimer = null;
+        }
     }
 
     // ─── 内部方法 ───
@@ -197,6 +207,7 @@ export class NotificationCenter {
             this.watcher = watch(this.logPath, () => {
                 // 忽略自己的写入
                 if (this.selfWriting) return;
+                log.debug("fs.watch 触发");
                 this.readNewEntries();
             });
 
@@ -204,7 +215,16 @@ export class NotificationCenter {
             this.watcher.unref();
         } catch {
             // watch 不支持的环境下静默降级
+            log.warn("fs.watch 不可用，使用轮询模式");
         }
+
+        // 后备轮询：每 2 秒检查文件变更（macOS 的 fs.watch 可能丢失事件）
+        this.pollTimer = setInterval(() => {
+            if (!this.selfWriting) {
+                this.readNewEntries();
+            }
+        }, 2000);
+        this.pollTimer.unref();
     }
 
     /**
@@ -215,9 +235,9 @@ export class NotificationCenter {
             const stat = statSync(this.logPath);
             if (stat.size <= this.fileOffset) return;
 
-            // 读取新增部分
-            const fd = readFileSync(this.logPath, "utf-8");
-            const newContent = fd.slice(this.fileOffset);
+            // 读取文件为 Buffer（字节精确切割——UTF-8 多字节字符安全）
+            const buf = readFileSync(this.logPath);
+            const newContent = buf.subarray(this.fileOffset).toString("utf-8");
             this.fileOffset = stat.size;
 
             // 逐行解析
@@ -240,10 +260,11 @@ export class NotificationCenter {
 
             // 有新事件则唤醒 waiter
             if (added > 0) {
+                log.debug(`读取了 ${added} 个新事件`, { queue: this.queue.length });
                 this.wakeWaiters();
             }
-        } catch {
-            // 读取失败静默忽略
+        } catch (err) {
+            log.debug("readNewEntries 失败", { error: String(err) });
         }
     }
 
