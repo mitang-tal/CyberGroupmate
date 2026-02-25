@@ -26,6 +26,9 @@ import {
     appendFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { createLogger } from "./logger.js";
+
+const log = createLogger("main");
 
 // ─── 常量 ───
 
@@ -223,17 +226,17 @@ async function runBootstrap(
                     );
                 }
             }
-            console.log("[Bootstrap] 重放成功！");
+            log.info("重放成功");
             return;
         } catch (err: unknown) {
             const errorMsg =
                 err instanceof Error ? err.message : String(err);
-            console.log(`[Bootstrap] 重放失败 (${errorMsg})，回退到 LLM bootstrap`);
+            log.warn("重放失败，回退到 LLM bootstrap", { error: errorMsg });
         }
     }
 
     // 完整 LLM bootstrap
-    console.log("[Bootstrap] 运行 LLM bootstrap...");
+    log.info("运行 LLM bootstrap...");
 
     const homeScene = sceneManager.getScene("home");
     const homeTypeDefs = homeScene?.typeDefs ?? "";
@@ -265,14 +268,10 @@ async function runBootstrap(
     // 保存成功的 bootstrap 代码
     if (successfulCodes.length > 0) {
         saveBootstrapCode(successfulCodes);
-        console.log(
-            `[Bootstrap] 保存了 ${successfulCodes.length} 段 bootstrap 代码`
-        );
+        log.info(`保存了 ${successfulCodes.length} 段 bootstrap 代码`);
     }
 
-    console.log(
-        `[Bootstrap] 完成 (${result.turns.length} turns, reason: ${result.endReason})`
-    );
+    log.info("Bootstrap 完成", { turns: result.turns.length, reason: result.endReason });
 }
 
 // ─── Main Event Loop ───
@@ -288,7 +287,7 @@ async function mainEventLoop(
     llmConfig: LLMConfig,
     systemPrompt: string
 ): Promise<void> {
-    console.log("[Main Loop] 进入主事件循环");
+    log.info("进入主事件循环");
 
     while (true) {
         // ─── 等待事件 ───
@@ -299,11 +298,11 @@ async function mainEventLoop(
             continue;
         }
 
-        console.log(`[Main Loop] 收到 ${events.length} 个新事件`);
+        log.info(`收到 ${events.length} 个新事件`);
 
         // ─── 检查 sandbox 健康 ───
         if (!sandbox.isAlive()) {
-            console.log("[Main Loop] Sandbox 已退出，尝试重启...");
+            log.warn("Sandbox 已退出，尝试重启...");
             try {
                 await sandbox.start();
                 await runBootstrap(
@@ -313,11 +312,11 @@ async function mainEventLoop(
                     llmConfig,
                     systemPrompt
                 );
-                console.log("[Main Loop] Sandbox 重启完成");
+                log.info("Sandbox 重启完成");
             } catch (err: unknown) {
                 const errorMsg =
                     err instanceof Error ? err.message : String(err);
-                console.error(`[Main Loop] Sandbox 重启失败: ${errorMsg}`);
+                log.error("Sandbox 重启失败", { error: errorMsg });
                 // 将事件推回队列
                 for (const event of events) {
                     nc.push(event);
@@ -368,10 +367,10 @@ ${eventText}
                 SESSIONS_DIR
             );
 
-            console.log(
-                `[Main Loop] Session ${result.sessionId} 完成 ` +
-                `(${result.turns.length} turns, reason: ${result.endReason})`
-            );
+            log.info(`Session ${result.sessionId} 完成`, {
+                turns: result.turns.length,
+                reason: result.endReason,
+            });
 
             // ─── Session Compaction ───
             try {
@@ -382,12 +381,12 @@ ${eventText}
                 await runCompaction(result, memory, llmConfig, chatId, chatTitle);
             } catch (compErr: unknown) {
                 const compErrMsg = compErr instanceof Error ? compErr.message : String(compErr);
-                console.error(`[Main Loop] Compaction 失败: ${compErrMsg}`);
+                log.error("Compaction 失败", { error: compErrMsg });
             }
         } catch (err: unknown) {
             const errorMsg =
                 err instanceof Error ? err.message : String(err);
-            console.error(`[Main Loop] Session 异常: ${errorMsg}`);
+            log.error("Session 异常", { error: errorMsg });
 
             // 记录错误事件
             nc.push({
@@ -404,15 +403,17 @@ ${eventText}
  * 主入口函数
  */
 async function main(): Promise<void> {
-    console.log("🤖 CyberGroupmate starting...");
+    log.info("🤖 CyberGroupmate starting...");
 
     // ─── 初始化 ───
     ensureDataDirs();
 
     const llmConfig = loadLLMConfig();
-    console.log(
-        `[Config] LLM: ${llmConfig.provider} / ${llmConfig.model} @ ${llmConfig.baseUrl}`
-    );
+    log.info("LLM 配置加载完成", {
+        provider: llmConfig.provider,
+        model: llmConfig.model,
+        baseUrl: llmConfig.baseUrl,
+    });
 
     const systemPrompt = loadSystemPrompt();
     const nc = new NotificationCenter(EVENTS_PATH);
@@ -421,7 +422,7 @@ async function main(): Promise<void> {
     const sceneManager = new SceneManager();
     registerBuiltinScenes(sceneManager);
 
-    console.log("[Init] 组件初始化完成");
+    log.info("组件初始化完成");
 
     // ─── 连接 sandbox notify 事件到 NC ───
     sandbox.on("notify", (event: Record<string, unknown>) => {
@@ -429,16 +430,15 @@ async function main(): Promise<void> {
     });
 
     sandbox.on("stderr", (data: string) => {
-        // Worker 的 stderr 输出记录到事件日志
         if (data.trim()) {
-            console.error(`[Sandbox stderr] ${data.trim()}`);
+            log.warn("Sandbox stderr", { output: data.trim() });
         }
     });
 
     // ─── 启动 sandbox ───
-    console.log("[Init] 启动 Sandbox...");
+    log.info("启动 Sandbox...");
     await sandbox.start();
-    console.log("[Init] Sandbox 就绪");
+    log.info("Sandbox 就绪");
 
     // ─── Bootstrap ───
     await runBootstrap(
@@ -471,8 +471,7 @@ process.on("SIGTERM", () => {
     process.exit(0);
 });
 
-// 运行
 main().catch((err) => {
-    console.error("Fatal error:", err);
+    log.error("Fatal error", { error: err instanceof Error ? err.message : String(err) });
     process.exit(1);
 });
