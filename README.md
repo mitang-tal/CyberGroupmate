@@ -2,6 +2,8 @@
 
 基于 LLM 的 Telegram 社交智能体。终极目标：**让新来的群友一点都看不出这是赛博群友。**
 
+The architecture is inspired by [CodeAct](https://github.com/xingyaoww/code-act).
+
 ## 架构概览
 
 ```
