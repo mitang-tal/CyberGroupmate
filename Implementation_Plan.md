@@ -22,13 +22,13 @@
 | 2.2 | CodeAct Session Runner | ✅ 完成 | 多轮交互循环；parseResponse 解析 ts/js/typescript/javascript 围栏；输出截断 4000 字符；每 5 轮检查新通知 |
 | 2.3 | Bootstrap 流程 | ✅ 完成 | 代码保存+重放机制；重放失败回退到完整 LLM bootstrap |
 | 2.4 | Main Event Loop | ✅ 完成 | drain+context组装+session运行；sandbox 崩溃检测+自动重启；graceful shutdown |
-| 3.1 | Session Compaction | ⬜ 未开始 | |
-| 3.2 | Agent State 管理 | ⬜ 未开始 | |
-| 3.3 | System Prompt 调优 | ⬜ 未开始 | |
-| 3.4 | 安全限制（rate limit、禁止破坏性操作） | ⬜ 未开始 | |
-| 4.1 | 错误恢复（sandbox 重启 + bootstrap 重放） | ⬜ 未开始 | |
+| 3.1 | Session Compaction | ✅ 完成 | LLM 提取摘要/事实/人物/待办；自动写入 memory 各表；JSON 解析含 markdown 代码块回退 |
+| 3.2 | Agent State 管理 | ✅ 完成 | agent-state.md 自动更新；3500 字符截断防无限增长；main.ts 读取注入到 context |
+| 3.3 | System Prompt 调优 | ✅ 完成 | system-prompt.md 含 CodeAct 环境说明、行为原则、场景系统、{{PERSONA}} 注入 |
+| 3.4 | 安全限制（rate limit、禁止破坏性操作） | ✅ 完成 | MessageRateLimiter (session/分钟)、12 个禁止方法、sent-messages.jsonl 审计日志 |
+| 4.1 | 错误恢复（sandbox 重启 + bootstrap 重放） | ✅ 完成 | 已在 main.ts 中实现：sandbox 崩溃检测 → 重启 → bootstrap 重放 → 事件推回队列 |
 | 4.2 | CLI 工具 | ⬜ 未开始 | |
-| 4.3 | 配置化 | ⬜ 未开始 | |
+| 4.3 | 配置化 | ✅ 完成 | config.example.yaml + loadLLMConfig (env > yaml > defaults) |
 
 ---
 
@@ -912,3 +912,21 @@ Agent 在 bootstrap 时从 `process.env` 读取这些值。
 **对后续影响**：
 - Session compaction (Phase 3.1) 需要在 main loop 的 session 完成后调用
 - Agent state 文件 (Phase 3.2) 的读写逻辑已在 main.ts 中预留
+
+### Phase 3 总结 — 2026-02-25
+
+**完成情况**：Phase 3 全部 4 个 Task + Phase 4 的 Task 4.1 和 4.3 完成，73 个测试全部通过。
+
+**关键决策与发现**：
+
+1. **Compaction JSON 解析**：LLM 有时会在 JSON 外包裹 markdown 代码块（` ```json `），因此 `parseCompactionResult` 先尝试直接 `JSON.parse`，失败后提取代码块内容再解析。
+
+2. **Agent State 大小控制**：`agent-state.md` 设置 3500 字符上限，超出时只保留最后 3000 字符并加截断提示。防止 context window 被状态文件占满。
+
+3. **安全模块设计**：Rate limiter 同时限制 session 内发送量（默认 10）和每分钟发送量（默认 5），双重保护。所有发出的消息 ID 记录到 JSONL 文件用于事后审计和批量撤回。
+
+4. **错误恢复提前完成**：Task 4.1（sandbox 重启 + bootstrap 重放）在 Phase 2 的 `main.ts` 中已实现。Task 4.3（配置化）在 Phase 2 的 `llm.ts` 中已实现。
+
+**剩余工作**：
+- Task 4.2 CLI 工具（可选，非核心功能）
+- 实际 Telegram 连接测试需要配置 API credentials

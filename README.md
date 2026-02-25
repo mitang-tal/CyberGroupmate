@@ -119,8 +119,8 @@ src/
 
 - [x] Phase 1：基础 Runtime (v0.1.0)
 - [x] Phase 2：Agent Loop + LLM 集成 (v0.2.0)
-- [ ] Phase 3：记忆与人格
-- [ ] Phase 4：稳定性与工具
+- [x] Phase 3：记忆与人格 (v0.3.0)
+- [x] Phase 4：稳定性与工具 (v0.3.0, CLI 待实现)
 
 ## License
 

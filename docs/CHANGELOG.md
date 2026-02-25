@@ -29,3 +29,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **System Prompt** (`system-prompt.md`): Agent instructions with CodeAct environment, behavioral principles, persona injection
 - **Config** (`config.example.yaml`): Sample configuration with documented options
 - **8 additional unit tests** (63 total)
+
+## [0.3.0] — 2026-02-25 — Phase 3: 记忆与人格 + Phase 4 部分
+
+### Added
+
+- **Session Compaction** (`src/compaction.ts`): LLM-based extraction of summaries, facts, person updates, todos from session transcripts; auto-writes to all memory tables; agent-state.md management
+- **Safety Module** (`src/safety.ts`): `MessageRateLimiter` (per-session and per-minute), 12 forbidden destructive methods, `sent-messages.jsonl` audit log
+- **Compaction integration** in `src/main.ts`: runs after each session in the event loop
+- **Error recovery** (Task 4.1): sandbox crash detection → auto-restart → bootstrap replay → events pushed back to queue
+- **Configuration** (Task 4.3): `config.example.yaml` + `loadLLMConfig` with env > yaml > defaults priority
+- **10 additional unit tests** (73 total)
