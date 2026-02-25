@@ -80,7 +80,7 @@ export interface TodoItem {
  *
  * @example
  * ```ts
- * const mem = new MemoryStore("data/memory.db");
+ * const mem = new MemoryStore("workspace/memory.db");
  * mem.store("alice 喜欢喝抹茶", { source: "telegram", chatId: -100123 });
  * const results = mem.search("抹茶", 5);
  * ```

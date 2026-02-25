@@ -68,7 +68,7 @@ export class MessageRateLimiter {
      */
     constructor(
         config?: Partial<RateLimitConfig>,
-        logPath: string = "data/sent-messages.jsonl"
+        logPath: string = "workspace/sent-messages.jsonl"
     ) {
         this.config = {
             maxMessagesPerSession: config?.maxMessagesPerSession ?? 10,

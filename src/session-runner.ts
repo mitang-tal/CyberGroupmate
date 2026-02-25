@@ -122,7 +122,7 @@ export function parseResponse(response: string): {
  * ```ts
  * const result = await runCodeActSession(
  *   [{ role: "system", content: systemPrompt }, { role: "user", content: eventContext }],
- *   sandbox, nc, llmConfig, "data/sessions"
+ *   sandbox, nc, llmConfig, "workspace/sessions"
  * );
  * ```
  */
@@ -131,7 +131,7 @@ export async function runCodeActSession(
     sandbox: Sandbox,
     nc: NotificationCenter,
     llmConfig: LLMConfig,
-    sessionsDir: string = "data/sessions",
+    sessionsDir: string = "workspace/sessions",
     /** 每段代码的执行超时（毫秒），默认 30s，bootstrap 可设 5min */
     executeTimeout: number = 30000
 ): Promise<SessionResult> {

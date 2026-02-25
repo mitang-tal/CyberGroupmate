@@ -51,7 +51,7 @@ export type NotificationInput = Omit<NotificationEvent, "_id" | "_ts"> & {
  *
  * @example
  * ```ts
- * const nc = new NotificationCenter("data/events.jsonl");
+ * const nc = new NotificationCenter("workspace/events.jsonl");
  * nc.push({ type: "telegram.message", text: "hello" });
  * const events = await nc.drain(5000, 10);
  * nc.dispose(); // 停止文件监视

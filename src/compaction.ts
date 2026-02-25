@@ -19,7 +19,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 // ─── 常量 ───
 
 /** Agent state 文件路径 */
-const AGENT_STATE_PATH = "data/agent-state.md";
+const AGENT_STATE_PATH = "workspace/agent-state.md";
 
 /** 摘要中每个对话最后取多少条消息用于压缩 */
 const LAST_N_MESSAGES = 10;

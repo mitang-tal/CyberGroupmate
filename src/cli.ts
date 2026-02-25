@@ -21,7 +21,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 const log = createLogger("cli");
-const DATA_DIR = "data";
+const DATA_DIR = "workspace";
 
 // ─── 子命令 ───
 

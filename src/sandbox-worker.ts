@@ -68,7 +68,7 @@ const ctx: Record<string, unknown> = {};
 interface DocEntry { slug: string; title: string; content: string }
 
 function loadAllDocs(): DocEntry[] {
-    const DOCS_DIR = "docs";
+    const DOCS_DIR = "workspace/agent-docs";
     if (!existsSync(DOCS_DIR)) return [];
     return readdirSync(DOCS_DIR)
         .filter(f => f.endsWith(".md") && !f.startsWith("CHANGELOG"))

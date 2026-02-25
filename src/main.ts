@@ -35,7 +35,7 @@ const log = createLogger("main");
 // ─── 常量 ───
 
 /** 数据目录 */
-const DATA_DIR = "data";
+const DATA_DIR = "workspace";
 
 /** 事件日志路径 */
 const EVENTS_PATH = join(DATA_DIR, "events.jsonl");
@@ -179,7 +179,7 @@ ${tgMode === "bot"
             : `   - 手机号: ${hasPhone ? "✓ 已配置 (process.env.TG_PHONE)" : "✗ 未配置"}`
         }
    - API ID/Hash: ✓ 已配置 (process.env.TG_API_ID, process.env.TG_API_HASH)
-   - Session 路径: \`data/tg-session/account\`（持久化，重启不需要重新登录）
+   - Session 路径: \`workspace/tg-session/account\`（持久化，重启不需要重新登录）
 3. **确认身份**：输出你的名字和 ID
 4. **完成**：输出 "BOOTSTRAP_COMPLETE"
 
