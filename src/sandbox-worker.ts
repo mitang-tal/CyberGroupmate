@@ -35,6 +35,7 @@ interface ResultMessage {
     id: string;
     output: string;
     error: boolean;
+    sceneState?: string;
 }
 
 /** Worker → Host: 后台任务推送事件 */
@@ -62,6 +63,7 @@ type OutgoingMessage = ResultMessage | NotifyMessage | InputRequestMessage | Pri
 // ─── 全局上下文 ───
 
 const ctx: Record<string, unknown> = {};
+let globalSceneState = "home";
 
 // ─── Docs 系统 ───
 
@@ -185,15 +187,17 @@ async function executeCode(id: string, code: string): Promise<void> {
 
         const memory = {};
         const scene = {
-            current: "home",
+            get current() { return globalSceneState; },
             enter: (name: string) => {
                 outputLines.push(`[Scene switched to: ${name}]`);
-                scene.current = name;
+                globalSceneState = name;
             },
             list: () => {
                 outputLines.push("[Available scenes: home, telegram, memory]");
             },
             showFullTypes: () => {
+                // 这个输出仅仅是为了在 runner 中匹配后提供完整类型的占位符，
+                // 真正的注入由 host 的 session runner 处理
                 outputLines.push("[Full type definitions for current scene]");
             },
         };
@@ -205,6 +209,7 @@ async function executeCode(id: string, code: string): Promise<void> {
             id,
             output: outputLines.join("\n"),
             error: false,
+            sceneState: globalSceneState,
         });
     } catch (err: unknown) {
         const errorMsg =
@@ -219,6 +224,7 @@ async function executeCode(id: string, code: string): Promise<void> {
             id,
             output: outputLines.join("\n"),
             error: true,
+            sceneState: globalSceneState,
         });
     } finally {
         console.log = originalConsole.log;

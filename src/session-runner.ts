@@ -58,8 +58,10 @@ export interface SessionResult {
     turns: SessionTurn[];
     /** 完整的消息历史 */
     messages: ChatMessage[];
-    /** 结束原因：no_code（agent 完成）| max_turns（达到上限）| error */
-    endReason: "no_code" | "max_turns" | "error";
+    /** 结束原因 */
+    endReason: "no_code" | "max_turns" | "error" | "scene_changed";
+    /** 当 endReason == scene_changed 时的新场景 */
+    nextScene?: string;
     /** 如果因为 error 结束，错误信息 */
     error?: string;
 }
@@ -127,7 +129,8 @@ export function parseResponse(response: string): {
  * ```
  */
 export async function runCodeActSession(
-    initialMessages: ChatMessage[],
+    messages: ChatMessage[],
+    currentScene: string,
     sandbox: Sandbox,
     nc: NotificationCenter,
     llmConfig: LLMConfig,
@@ -136,7 +139,6 @@ export async function runCodeActSession(
     executeTimeout: number = 30000
 ): Promise<SessionResult> {
     const sessionId = ulid();
-    const messages: ChatMessage[] = [...initialMessages];
     const turns: SessionTurn[] = [];
 
     // 确保 session 目录存在
@@ -227,6 +229,27 @@ export async function runCodeActSession(
                     error: true,
                 });
                 outputParts.push(`[⚠ Sandbox Error]\n${errorMsg}`);
+            }
+
+            // --- 检查是否发生了场景切换 ---
+            const lastResult = turn.executionResults[turn.executionResults.length - 1];
+            if (lastResult?.sceneState && lastResult.sceneState !== currentScene) {
+                // 如果是本轮的最后一块代码导致切换，或者中途发生切换，我们都要记录结果并结束 session
+                outputParts.push(`\n[系统] 已成功跳转至新场景: ${lastResult.sceneState}`);
+                let observation = outputParts.join("\n\n");
+                if (observation.trim()) {
+                    messages.push({ role: "user", content: observation });
+                }
+                turns.push(turn);
+                appendTranscript(transcriptPath, turn);
+
+                return {
+                    sessionId,
+                    turns,
+                    messages,
+                    endReason: "scene_changed",
+                    nextScene: lastResult.sceneState
+                };
             }
         }
 

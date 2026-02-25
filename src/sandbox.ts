@@ -24,6 +24,8 @@ export interface ExecutionResult {
     output: string;
     /** 是否有错误 */
     error: boolean;
+    /** 发生切换后的当前 scene */
+    sceneState?: string;
 }
 
 /** Worker → Host 消息 */
@@ -32,6 +34,7 @@ interface WorkerMessage {
     id?: string;
     output?: string;
     error?: boolean;
+    sceneState?: string;
     event?: Record<string, unknown>;
     prompt?: string;
     message?: string;
@@ -167,6 +170,7 @@ export class Sandbox extends EventEmitter {
                 pending.resolve({
                     output: msg.output ?? "",
                     error: msg.error ?? false,
+                    sceneState: msg.sceneState,
                 });
             }
         } else if (msg.type === "notify" && msg.event) {

@@ -242,6 +242,7 @@ async function runBootstrap(
 
     const result = await runCodeActSession(
         bootstrapMessages,
+        "home",
         sandbox,
         nc,
         llmConfig,
@@ -289,6 +290,9 @@ async function mainEventLoop(
 ): Promise<void> {
     log.info("进入主事件循环");
 
+    // ─── 维护多场景 session ───
+    const sceneSessions = new Map<string, ChatMessage[]>();
+
     while (true) {
         // ─── 等待事件 ───
         const events = await nc.drain(DRAIN_TIMEOUT, DRAIN_MAX_BATCH);
@@ -327,80 +331,122 @@ async function mainEventLoop(
             }
         }
 
-        // ─── 组装 context ───
-        const agentState = loadAgentState();
-        const eventText = formatEvents(events);
-        const homeScene = sceneManager.getScene("home");
-        const homeTypeDefs = homeScene?.typeDefs ?? "";
+        let activeScene = sceneManager.current;
+        let isFirstTurnOfBatch = true;
 
-        const contextMessage = `# 当前状态
+        while (true) {
+            let messages = sceneSessions.get(activeScene);
+            if (!messages) {
+                messages = [];
+                sceneSessions.set(activeScene, messages);
+            }
 
-## Agent State
-${agentState}
+            // 更新 system prompt
+            const agentState = loadAgentState();
+            const sceneDef = sceneManager.getScene(activeScene);
+            const typeDefs = sceneDef?.typeDefs ?? "";
+            const currentSystemPrompt = `${systemPrompt}\n\n[System Inject] 当前场景: ${activeScene}\n类型定义:\n\`\`\`typescript\n${typeDefs}\n\`\`\`\nAgent State:\n${agentState}`;
 
-## 当前场景
-${sceneManager.current} — 类型定义如下：
-
-\`\`\`typescript
-${homeTypeDefs}
-\`\`\`
-
-## 新到达的事件 (${events.length} 条)
-
-${eventText}
-
----
-
-请处理以上事件。你可以切换场景来使用不同的 API。处理完毕后不要输出代码块即可。`;
-
-        const sessionMessages: ChatMessage[] = [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: contextMessage },
-        ];
-
-        // ─── 运行 CodeAct session ───
-        try {
-            const result = await runCodeActSession(
-                sessionMessages,
-                sandbox,
-                nc,
-                llmConfig,
-                SESSIONS_DIR
-            );
-
-            if (result.endReason === "error") {
-                log.error(`Session ${result.sessionId} 失败`, {
-                    error: result.error,
-                    turns: result.turns.length,
-                });
+            if (messages.length === 0) {
+                messages.push({ role: "system", content: currentSystemPrompt });
             } else {
-                log.info(`Session ${result.sessionId} 完成`, {
-                    turns: result.turns.length,
-                    reason: result.endReason,
+                messages[0] = { role: "system", content: currentSystemPrompt };
+            }
+
+            if (isFirstTurnOfBatch) {
+                const eventText = formatEvents(events);
+                messages.push({
+                    role: "user",
+                    content: `[新事件到达] (${events.length} 条)\n${eventText}\n请处理以上事件。你可以切换场景来使用不同的 API。处理完毕后不要输出代码块即可。`
                 });
+                isFirstTurnOfBatch = false;
             }
 
-            // ─── Session Compaction ───
             try {
-                // 尝试从事件中提取 chatId 和 chatTitle
-                const firstEvent = events[0] as Record<string, unknown>;
-                const chatId = firstEvent?.chatId as string | undefined;
-                const chatTitle = firstEvent?.chatTitle as string | undefined;
-                await runCompaction(result, memory, llmConfig, chatId, chatTitle);
-            } catch (compErr: unknown) {
-                const compErrMsg = compErr instanceof Error ? compErr.message : String(compErr);
-                log.error("Compaction 失败", { error: compErrMsg });
-            }
-        } catch (err: unknown) {
-            const errorMsg =
-                err instanceof Error ? err.message : String(err);
-            log.error("Session 异常", { error: errorMsg });
+                const result = await runCodeActSession(
+                    messages,
+                    activeScene,
+                    sandbox,
+                    nc,
+                    llmConfig,
+                    SESSIONS_DIR
+                );
 
-            // 记录错误事件
-            nc.push({
-                type: "system.session_error",
-                error: errorMsg,
-            });
+                if (result.endReason === "scene_changed" && result.nextScene) {
+                    messages.push({
+                        role: "user",
+                        content: `[系统] 已离开此场景，控制权转移至 ${result.nextScene}。`
+                    });
+
+                    try {
+                        sceneManager.enter(result.nextScene);
+                        const oldScene = activeScene;
+                        activeScene = result.nextScene;
+
+                        let nextMessages = sceneSessions.get(activeScene);
+                        if (!nextMessages) {
+                            nextMessages = [];
+                            sceneSessions.set(activeScene, nextMessages);
+                        }
+                        // 追加切换提示
+                        nextMessages.push({
+                            role: "user",
+                            content: `[系统] 已从 ${oldScene} 场景切入。请继续处理事件与执行代码。`
+                        });
+                        continue; // 继续外层 while 循环，进入新场景的 Session！
+                    } catch (e: any) {
+                        messages.push({
+                            role: "user",
+                            content: `[⚠ 严重错误] 尝试进入场景 ${result.nextScene} 失败。场景不存在！`
+                        });
+                        continue;
+                    }
+                }
+
+                // 正常结束 (no_code, max_turns, error)
+                if (result.endReason === "error") {
+                    log.error(`Session 失败 in scene ${activeScene}`, { error: result.error, turns: result.turns.length });
+                } else {
+                    log.info(`Session 完成 in scene ${activeScene}`, { turns: result.turns.length, reason: result.endReason });
+                }
+
+                // ─── Session Compaction ───
+                try {
+                    const firstEvent = events[0] as Record<string, unknown>;
+                    const chatId = firstEvent?.chatId as string | undefined;
+                    const chatTitle = firstEvent?.chatTitle as string | undefined;
+                    await runCompaction(result, memory, llmConfig, chatId, chatTitle);
+                } catch (compErr: unknown) {
+                    const compErrMsg = compErr instanceof Error ? compErr.message : String(compErr);
+                    log.error("Compaction 失败", { error: compErrMsg });
+                }
+
+                // Rolling Truncation: 如果太长，截断它。保留 System prompt, 和最后 10 条
+                if (messages.length > 25) {
+                    const sys = messages[0];
+                    const tail = messages.slice(-10);
+                    const omitted = messages.length - 11;
+                    messages.length = 0;
+                    messages.push(sys);
+                    messages.push({
+                        role: "user",
+                        content: `[系统] 由于上下文长度限制，在此之前的 ${omitted} 条场景对话记录已被压缩归档并从上下文中移除。`
+                    });
+                    messages.push(...tail);
+                }
+
+                break; // 结束这个 Batch，等待 next drain!
+            } catch (err: unknown) {
+                const errorMsg = err instanceof Error ? err.message : String(err);
+                log.error("Session 异常", { error: errorMsg });
+
+                // 记录错误事件
+                nc.push({
+                    type: "system.session_error",
+                    error: errorMsg,
+                });
+                break;
+            }
         }
     }
 }

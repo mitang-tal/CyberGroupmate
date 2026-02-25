@@ -32,6 +32,9 @@
 | 4.4 | Agent Docs 系统 | ✅ 完成 | docs.ts + docs/mtcute-guide.md；sandbox 中 docs.read()/docs.list()；避免 agent 联网搜索 |
 | 4.5 | 结构化日志 | ✅ 完成 | logger.ts: level/format/color；LOG_LEVEL + LOG_FORMAT 环境变量；子 logger；已集成到 main.ts |
 | 4.6 | Bootstrap 改进 | ✅ 完成 | 具体 mtcute 代码示例 (bot/userbot)；登录流程 + OTP 交互；docs 注入到 sandbox |
+| 4.7 | 跨进程通讯补丁 | ✅ 完成 | NC cross-process fix (buffer offset instead of string slice, fallback polling) |
+| 4.8 | API Docs 与配置补丁 | ✅ 完成 | Mtcute API docs fix (full prototype method reference, Object.keys 警告); Temperature 覆盖 fix |
+| 5.1 | Scene-Bound Sessions | 📝 规划中 | 见下方附录 11.5 节，将单次事件触发的 Session 改为绑定在 Scene 上的长驻持久化 Session |
 
 ---
 
@@ -798,6 +801,30 @@ v0.4.0 — Phase 4 完成（稳定性与工具）= MVP
 - 配置加载和验证
 
 **Phase 4 验收标准**：连续运行 48h 无不可恢复崩溃。CLI 可用。配置修改后重启生效。
+
+### Phase 5（架构重构）：Scene-Bound Sessions（持久化场景会话）
+
+**背景**：原设计中，主循环每次 `nc.drain()` 获取事件后都会抛弃历史重启一个纯洁的 `runCodeActSession`。如果 Agent 中途切换场景，下一次交互它的上下文全部重置，导致严重的“断片”（失忆感）。
+
+**重构目标**：
+1. **持久化 Session**：不再“每次事件建一个新 Session”。全生命周期内，每个 Scene 维持一个活跃的会话（记录历史）。
+2. **上下文隔离与衔接**：Agent 当且仅当身处对应的 Scene，才能看到该 Scene 此前的发言或代码执行历史。
+3. **动态注入**：Agent State 和当前 Scene 的最新类型定义（`.d.ts`）在每一轮调用前热更新注入到 `system prompt`，防止浪费 Token。
+4. **流动性 Compaction**：当某场景对话过长（>25 轮），对其截断并执行单线 Compaction。
+
+**Task 5.1 — SessionState 状态机设计**
+- 引入全局 `Map<string, ChatMessage[]>` 维护各 scene 的 `messages`。
+- 新事件到达时：向当前活动 Scene 的 Session 追加 user 消息：`[新事件到达]...`。
+
+**Task 5.2 — Main Loop 与 CodeAct 引擎重构**
+- 改造 `session-runner.ts` 为持续迭代器或单步调用 `runCodeActTurn`。
+- 如果执行时 `scene.current` 发生了变化：
+  - 老场景追加记录：`[系统] 已离开此场景，控制权转移至 ${scene.current}`
+  - 切换到新场景对应的 Session
+  - 新场景追加记录：`[系统] 已从 ${oldScene} 场景切入。上一次进入此场景时的历史如下，请继续思考`。
+
+**Task 5.3 — 滚动 Compaction / 历史截断机制**
+- 单个 Scene Session 过长时切段执行 `compaction.ts` 并缩减历史数组（只留 system prompt 和最后的 10 条）。
 
 完成后打 tag `v0.4.0`（= MVP），更新 README 和 CHANGELOG，整理 `docs/architecture.md`。
 
