@@ -149,7 +149,6 @@ export async function runCompaction(
 
     try {
         const response = await callLLM(messages, llmConfig, {
-            temperature: 0.3, // 低温度保证结构化输出
             maxTokens: 2000,
         });
 
