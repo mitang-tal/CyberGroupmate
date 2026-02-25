@@ -1,0 +1,25 @@
+{
+  "name": "cybergroupmate",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "dev": "tsx watch src/main.ts",
+    "test": "tsx --test tests/**/*.test.ts",
+    "cli": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@mtcute/node": "latest",
+    "better-sqlite3": "^11.0.0",
+    "ulid": "^2.3.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0",
+    "@types/better-sqlite3": "^7.0.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  }
+}
