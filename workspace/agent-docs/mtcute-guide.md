@@ -90,12 +90,12 @@ ctx.self = self;
 
 ## 监听新消息
 
-TelegramClient 内置了事件监听器，直接调用 `tg.onNewMessage(handler)` 即可。
-**不需要安装或导入额外的包。**
+`ctx.tg.onNewMessage` 是一个 **Emitter 对象**（不是函数！）。
+必须使用 `.add(handler)` 方法来注册监听器。
 
 ```typescript
-// 监听所有新消息
-ctx.tg.onNewMessage(async (msg) => {
+// ✅ 正确：用 .add() 注册监听器
+ctx.tg.onNewMessage.add(async (msg) => {
   // 忽略自己的消息
   if (msg.sender?.id === ctx.self.id) return;
 
@@ -119,18 +119,36 @@ ctx.tg.onNewMessage(async (msg) => {
 console.log("消息监听已启动");
 ```
 
-### 其他可用的事件监听器
+**⚠ 常见错误**：
+```typescript
+// ❌ 错误：onNewMessage 不是函数，不能直接调用
+ctx.tg.onNewMessage(handler);  // TypeError: not a function
 
-TelegramClient 内置以下事件监听器（都是 `tg.onXxx(handler)` 形式）：
+// ❌ 错误：Object.keys() 看不到 Emitter 方法（在原型链上）
+Object.keys(ctx.tg.onNewMessage);  // 返回 []
+```
 
-- `tg.onNewMessage(handler)` — 新消息
-- `tg.onEditMessage(handler)` — 消息被编辑
-- `tg.onDeleteMessage(handler)` — 消息被删除
-- `tg.onChatMemberUpdate(handler)` — 群成员变更
-- `tg.onCallbackQuery(handler)` — 按钮回调
-- `tg.onUserStatusUpdate(handler)` — 用户在线状态变更
-- `tg.onUserTyping(handler)` — 用户正在输入
-- `tg.onHistoryRead(handler)` — 消息已读
+### Emitter API
+
+所有事件监听器都是 Emitter 对象，方法一致：
+
+| 方法 | 说明 |
+|------|------|
+| `.add(handler)` | 注册监听器 |
+| `.once(handler)` | 注册一次性监听器（触发后自动移除） |
+| `.remove(handler)` | 移除监听器 |
+| `.clear()` | 移除所有监听器 |
+
+### 可用的事件监听器
+
+- `ctx.tg.onNewMessage` — 新消息
+- `ctx.tg.onEditMessage` — 消息被编辑
+- `ctx.tg.onDeleteMessage` — 消息被删除
+- `ctx.tg.onChatMemberUpdate` — 群成员变更
+- `ctx.tg.onCallbackQuery` — 按钮回调
+- `ctx.tg.onUserStatusUpdate` — 用户在线状态变更
+- `ctx.tg.onUserTyping` — 用户正在输入
+- `ctx.tg.onHistoryRead` — 消息已读
 
 ## 发送消息
 
@@ -177,7 +195,7 @@ console.log("I am: " + me.displayName + " (ID: " + me.id + ")");
 1. **必须用 `await import()`**：sandbox 不支持 `import` 和 `require`
 2. **Session 持久化**：始终使用 `storage: "workspace/tg-session/account"` 保持登录
 3. **保存到 ctx**：将 tg client 保存到 `ctx.tg` 以便跨代码块使用
-4. **消息监听用内置 API**：直接调用 `tg.onNewMessage(handler)`，不需要额外的包
+4. **消息监听用 Emitter 的 .add()**：`ctx.tg.onNewMessage.add(handler)`，不能直接调 `onNewMessage(handler)`
 5. **对话信息在 peer 上**：`dialog.peer.displayName`，不是 `dialog.chat`
 6. **API 限制**：Telegram 有 flood wait，mtcute 会自动重试但可能会阻塞
 7. **Userbot 风险**：使用用户号登录时，频繁操作可能导致封号
