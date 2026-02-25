@@ -5,45 +5,22 @@
 > **重要：sandbox 执行环境使用 `new Function()`，不支持 `import` 和 `require`。**
 > **必须用 `await import("模块名")` 来导入模块。**
 
-## 导入
+> **⚠ Object.keys(ctx.tg) 只显示事件监听器（onNewMessage 等），不显示 sendText 等方法！**
+> **方法在原型链上，请直接按文档调用，不要用 Object.keys() 来探索 API。**
 
-```typescript
-const { TelegramClient } = await import("@mtcute/node");
-```
-
-## 创建客户端
-
-```typescript
-const { TelegramClient } = await import("@mtcute/node");
-
-const tg = new TelegramClient({
-  apiId: Number(process.env.TG_API_ID),
-  apiHash: process.env.TG_API_HASH,
-  storage: "workspace/tg-session/account",  // SQLite 自动持久化
-});
-ctx.tg = tg;  // 保存到 ctx 以便后续代码块使用
-```
-
-**重要**：`storage` 传字符串路径即可，mtcute 自动使用 `SqliteStorage`。
-Session 文件保存在 `workspace/tg-session/` 目录下，重启后自动恢复登录状态。
-
-## 登录方式
+## 创建客户端 & 登录
 
 ### Bot 模式
 
 ```typescript
 const { TelegramClient } = await import("@mtcute/node");
-
 const tg = new TelegramClient({
   apiId: Number(process.env.TG_API_ID),
   apiHash: process.env.TG_API_HASH,
   storage: "workspace/tg-session/account",
 });
-
-const self = await tg.start({
-  botToken: process.env.TG_BOT_TOKEN,
-});
-console.log("Logged in as bot: " + self.displayName + " (ID: " + self.id + ")");
+const self = await tg.start({ botToken: process.env.TG_BOT_TOKEN });
+console.log("Bot: " + self.displayName + " (ID: " + self.id + ")");
 ctx.tg = tg;
 ctx.self = self;
 ```
@@ -52,151 +29,136 @@ ctx.self = self;
 
 ```typescript
 const { TelegramClient } = await import("@mtcute/node");
-
 const tg = new TelegramClient({
   apiId: Number(process.env.TG_API_ID),
   apiHash: process.env.TG_API_HASH,
   storage: "workspace/tg-session/account",
 });
-
 const self = await tg.start({
   phone: () => process.env.TG_PHONE,
-  code: async () => {
-    // runtime.input() 会在 CLI 中提问并等待用户输入
-    const code = await runtime.input("请输入 Telegram 验证码: ");
-    return code;
-  },
-  password: async () => {
-    const pwd = await runtime.input("请输入两步验证密码: ");
-    return pwd;
-  },
+  code: async () => await runtime.input("请输入 Telegram 验证码: "),
+  password: async () => await runtime.input("请输入两步验证密码: "),
   codeSentCallback: (sentCode) => {
-    runtime.print("📱 验证码已发送 (type: " + sentCode.type + "), 请查看你的 Telegram 应用");
+    runtime.print("📱 验证码已发送 (type: " + sentCode.type + ")");
   },
 });
-console.log("Logged in as: " + self.displayName + " (ID: " + self.id + ")");
+console.log("Logged in: " + self.displayName + " (ID: " + self.id + ")");
 ctx.tg = tg;
 ctx.self = self;
 ```
 
-**关键 API**：
-- `runtime.input(prompt)` — 在 CLI 中显示提示并等待用户输入
-- `runtime.print(msg)` — 直接打印到 CLI（不被 console.log 捕获）
-- `runtime.notify(event)` — 推送事件到通知中心
-
-## 会话恢复
-
-**首次登录后，session 自动保存。** 重启时 `tg.start()` 会直接恢复，不会再要求验证码。
-
-## 监听新消息
-
-`ctx.tg.onNewMessage` 是一个 **Emitter 对象**（不是函数！）。
-必须使用 `.add(handler)` 方法来注册监听器。
-
-```typescript
-// ✅ 正确：用 .add() 注册监听器
-ctx.tg.onNewMessage.add(async (msg) => {
-  // 忽略自己的消息
-  if (msg.sender?.id === ctx.self.id) return;
-
-  const senderName = msg.sender?.displayName || "未知";
-  const chatId = msg.chat.id;
-  const text = msg.text || "[非文本消息]";
-  
-  console.log("[收到消息] " + senderName + " in " + chatId + ": " + text);
-
-  // 推送到事件中心，让主循环处理
-  runtime.notify({
-    type: "telegram.message",
-    chatId: chatId,
-    senderId: msg.sender?.id,
-    senderName: senderName,
-    text: text,
-    messageId: msg.id,
-  });
-});
-
-console.log("消息监听已启动");
-```
-
-**⚠ 常见错误**：
-```typescript
-// ❌ 错误：onNewMessage 不是函数，不能直接调用
-ctx.tg.onNewMessage(handler);  // TypeError: not a function
-
-// ❌ 错误：Object.keys() 看不到 Emitter 方法（在原型链上）
-Object.keys(ctx.tg.onNewMessage);  // 返回 []
-```
-
-### Emitter API
-
-所有事件监听器都是 Emitter 对象，方法一致：
-
-| 方法 | 说明 |
-|------|------|
-| `.add(handler)` | 注册监听器 |
-| `.once(handler)` | 注册一次性监听器（触发后自动移除） |
-| `.remove(handler)` | 移除监听器 |
-| `.clear()` | 移除所有监听器 |
-
-### 可用的事件监听器
-
-- `ctx.tg.onNewMessage` — 新消息
-- `ctx.tg.onEditMessage` — 消息被编辑
-- `ctx.tg.onDeleteMessage` — 消息被删除
-- `ctx.tg.onChatMemberUpdate` — 群成员变更
-- `ctx.tg.onCallbackQuery` — 按钮回调
-- `ctx.tg.onUserStatusUpdate` — 用户在线状态变更
-- `ctx.tg.onUserTyping` — 用户正在输入
-- `ctx.tg.onHistoryRead` — 消息已读
+Session 持久化在 `workspace/tg-session/`，重启时 `tg.start()` 自动恢复。
 
 ## 发送消息
 
 ```typescript
-// 发送文本消息
-await ctx.tg.sendText(chatId, "Hello!");
+// 发送文本（返回 Message 对象）
+const sent = await ctx.tg.sendText(chatId, "Hello!");
+console.log("已发送, msgId=" + sent.id);
 
 // 带 HTML 格式
 const { html } = await import("@mtcute/node");
-await ctx.tg.sendText(chatId, html`<b>粗体</b> 和 <i>斜体</i>`);
+await ctx.tg.sendText(chatId, html`<b>粗体</b>`);
 
 // 回复消息
 await ctx.tg.sendText(chatId, "回复内容", { replyTo: messageId });
+
+// 发送媒体
+await ctx.tg.sendMedia(chatId, { type: "photo", file: "path/to/photo.jpg" });
 ```
 
-## 获取消息
+## 获取消息历史
 
 ```typescript
-// 获取最近的消息
 for await (const msg of ctx.tg.iterHistory(chatId, { limit: 20 })) {
-  console.log(msg.sender?.displayName + ": " + msg.text);
+  console.log((msg.sender?.displayName || "?") + ": " + msg.text);
 }
 ```
 
 ## 获取对话列表
 
 ```typescript
-// 注意：对话信息在 dialog.peer 上，不是 dialog.chat
 for await (const dialog of ctx.tg.iterDialogs({ limit: 20 })) {
+  // ⚠ 对话信息在 dialog.peer 上，不是 dialog.chat
   const name = dialog.peer.displayName || dialog.peer.title || "未知";
   console.log(name + " (ID: " + dialog.peer.id + ")");
 }
 ```
 
-## 获取自身信息
+## 监听新消息
+
+`ctx.tg.onNewMessage` 是 **Emitter 对象**（不是函数！），用 `.add(handler)` 注册：
 
 ```typescript
-const me = await ctx.tg.getMe();
-console.log("I am: " + me.displayName + " (ID: " + me.id + ")");
+ctx.tg.onNewMessage.add(async (msg) => {
+  if (msg.sender?.id === ctx.self.id) return;  // 忽略自己
+  runtime.notify({
+    type: "telegram.message",
+    chatId: msg.chat.id,
+    senderId: msg.sender?.id,
+    senderName: msg.sender?.displayName || "未知",
+    text: msg.text || "",
+    messageId: msg.id,
+  });
+});
+console.log("消息监听已启动");
 ```
+
+### Emitter 方法
+
+| 方法 | 说明 |
+|------|------|
+| `.add(handler)` | 注册监听器 |
+| `.once(handler)` | 一次性监听器 |
+| `.remove(handler)` | 移除 |
+| `.clear()` | 移除全部 |
+
+### 可用事件
+
+`onNewMessage` · `onEditMessage` · `onDeleteMessage` · `onChatMemberUpdate` · `onCallbackQuery` · `onUserStatusUpdate` · `onUserTyping` · `onHistoryRead`
+
+## 常用方法速查
+
+这些方法在原型链上，`Object.keys()` 看不到，但可以直接调用：
+
+| 方法 | 说明 |
+|------|------|
+| `sendText(chatId, text, opts?)` | 发消息，返回 Message |
+| `sendMedia(chatId, media, opts?)` | 发媒体 |
+| `replyText(msg, text, opts?)` | 回复消息 |
+| `editMessage(msgOrId, params)` | 编辑消息 |
+| `deleteMessages(chatId, ids)` | 删除消息 |
+| `forwardMessages(toChatId, msgs)` | 转发消息 |
+| `iterHistory(chatId, opts?)` | 迭代消息历史 |
+| `getHistory(chatId, opts?)` | 获取消息历史 |
+| `iterDialogs(opts?)` | 迭代对话列表 |
+| `getChat(chatId)` | 获取聊天详情 |
+| `getChatMembers(chatId, opts?)` | 获取群成员列表 |
+| `getMe()` | 获取自身信息 |
+| `getUser(userId)` | 获取用户信息 |
+| `readHistory(chatId)` | 标记已读 |
+| `sendTyping(chatId)` | 发送"正在输入"状态 |
+| `pinMessage(chatId, msgId)` | 置顶消息 |
+| `joinChat(chatId)` | 加入群组/频道 |
+| `leaveChat(chatId)` | 退出群组/频道 |
+| `searchMessages(chatId, opts)` | 搜索消息 |
+
+## Sandbox Runtime API
+
+| 方法 | 说明 |
+|------|------|
+| `runtime.notify(event)` | 推送事件到通知中心 |
+| `runtime.input(prompt)` | 向 CLI 请求用户输入（阻塞等待） |
+| `runtime.print(msg)` | 直接打印到 CLI（不被 console.log 捕获） |
 
 ## 注意事项
 
-1. **必须用 `await import()`**：sandbox 不支持 `import` 和 `require`
-2. **Session 持久化**：始终使用 `storage: "workspace/tg-session/account"` 保持登录
-3. **保存到 ctx**：将 tg client 保存到 `ctx.tg` 以便跨代码块使用
-4. **消息监听用 Emitter 的 .add()**：`ctx.tg.onNewMessage.add(handler)`，不能直接调 `onNewMessage(handler)`
-5. **对话信息在 peer 上**：`dialog.peer.displayName`，不是 `dialog.chat`
-6. **API 限制**：Telegram 有 flood wait，mtcute 会自动重试但可能会阻塞
-7. **Userbot 风险**：使用用户号登录时，频繁操作可能导致封号
-8. **ChatId**：群组和频道的 ID 通常是负数
+1. **必须用 `await import()`**：sandbox 不支持 `import`/`require`
+2. **Session 持久化**：始终用 `storage: "workspace/tg-session/account"`
+3. **保存到 ctx**：`ctx.tg` 跨代码块复用
+4. **方法在原型链上**：`Object.keys(ctx.tg)` 只显示事件，直接调用 `sendText` 等即可
+5. **Emitter 用 .add()**：`ctx.tg.onNewMessage.add(fn)`，不能直接调用 `onNewMessage(fn)`
+6. **对话信息在 peer**：`dialog.peer.displayName`，不是 `dialog.chat`
+7. **sendText 返回 Message**：发送成功时打印 `sent.id` 确认
+8. **API 限制**：Telegram 有 flood wait，mtcute 自动重试
+9. **ChatId**：群组/频道 ID 通常是负数
