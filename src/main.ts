@@ -29,7 +29,6 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "./logger.js";
-import { getDocsInjectionCode } from "./docs.js";
 
 const log = createLogger("main");
 
@@ -155,106 +154,44 @@ function loadBootstrapCode(): string[] | null {
  */
 function buildBootstrapPrompt(homeTypeDefs: string, appConfig: AppConfig): string {
     const tgMode = appConfig.telegram.mode;
-
-    const botExample = `
-// Bot 模式登录
-const { TelegramClient } = require("@mtcute/node");
-
-const tg = new TelegramClient({
-  apiId: Number(process.env.TG_API_ID),
-  apiHash: process.env.TG_API_HASH,
-  storage: "data/tg-session/account",
-});
-
-const self = await tg.start({
-  botToken: process.env.TG_BOT_TOKEN,
-});
-console.log("Logged in as: " + self.displayName + " (ID: " + self.id + ")");
-ctx.tg = tg;
-ctx.self = self;
-`;
-
-    const userbotExample = `
-// Userbot 模式登录——需要人类协助输入验证码
-const { TelegramClient } = require("@mtcute/node");
-
-const tg = new TelegramClient({
-  apiId: Number(process.env.TG_API_ID),
-  apiHash: process.env.TG_API_HASH,
-  storage: "data/tg-session/account",
-});
-
-const self = await tg.start({
-  phone: () => process.env.TG_PHONE || "+86...",
-  code: () => new Promise((resolve) => {
-    runtime.notify({
-      type: "system.auth_code_needed",
-      message: "请在 Telegram 应用中查看验证码，然后通过 notify 发送给我: { type: 'auth.code', code: '12345' }",
-    });
-    ctx._resolveAuthCode = resolve;
-  }),
-  password: () => new Promise((resolve) => {
-    runtime.notify({
-      type: "system.auth_2fa_needed",
-      message: "请提供两步验证密码",
-    });
-    ctx._resolve2FA = resolve;
-  }),
-  codeSentCallback: (sentCode) => {
-    console.log("验证码已发送，类型: " + sentCode.type);
-  },
-});
-console.log("Logged in as: " + self.displayName + " (ID: " + self.id + ")");
-ctx.tg = tg;
-ctx.self = self;
-`;
-
-    const loginExample = tgMode === "userbot" ? userbotExample : botExample;
+    const hasPhone = !!appConfig.telegram.phone;
+    const hasBotToken = !!appConfig.telegram.botToken;
 
     return `# Bootstrap 初始化
 
-你刚被启动。以下是你需要完成的初始化。
+你刚被启动。请完成 Telegram 连接。
 
-## 可用工具
+## 执行环境
 
-- \`ctx\` — 持久化变量容器（跨代码块保存）
-- \`runtime.notify(event)\` — 推送事件到通知中心
-- \`runtime.spawn(name, fn)\` — 启动后台任务
-- \`docs.list()\` — 查看可用参考文档
-- \`docs.read("mtcute")\` — 读取 mtcute 使用指南
+- 代码通过 \`new Function()\` 执行，**不能用 \`import\` 或 \`require\`**
+- 导入模块必须用 \`await import("模块名")\`
+- \`ctx\` 是跨代码块的持久化对象，用来保存 tg client 等
+- \`runtime.notify(event)\` 推送事件到通知中心
+- \`docs.read("mtcute")\` 查看 mtcute 使用指南（**必读**）
+- \`docs.list()\` 查看所有可用文档
 
-如果你不确定某个库怎么用，**先读文档**：\`console.log(docs.read("mtcute"))\`
+## 你的任务
 
-## 步骤 1：连接 Telegram
-
-当前配置的连接模式：**${tgMode}**
-
-以下是参考代码（可以直接使用，也可以根据情况修改）：
-
-\`\`\`typescript${loginExample}\`\`\`
-
-**重要**：
-- \`storage: "data/tg-session/account"\` 保证 session 持久化，重启后不需要重新登录
-- 如果 \`tg.start()\` 发现已有保存的 session，它会直接恢复登录状态
-- 环境变量 \`TG_API_ID\`, \`TG_API_HASH\`${tgMode === "bot" ? ", `TG_BOT_TOKEN`" : ", `TG_PHONE`"} 必须已设置
-
-## 步骤 2：确认自身信息
-
-登录成功后，\`self\` 就是你的 User 对象。请确认并输出你的名字和 ID。
-
-## 步骤 3：完成
-
-登录成功后输出 "BOOTSTRAP_COMPLETE"。
+1. **先读文档**：执行 \`console.log(docs.read("mtcute"))\` 了解 mtcute 用法
+2. **连接 Telegram**：当前模式是 **${tgMode}**
+${tgMode === "bot"
+            ? `   - Bot Token: ${hasBotToken ? "✓ 已配置 (process.env.TG_BOT_TOKEN)" : "✗ 未配置"}`
+            : `   - 手机号: ${hasPhone ? "✓ 已配置 (process.env.TG_PHONE)" : "✗ 未配置"}`
+        }
+   - API ID/Hash: ✓ 已配置 (process.env.TG_API_ID, process.env.TG_API_HASH)
+   - Session 路径: \`data/tg-session/account\`（持久化，重启不需要重新登录）
+3. **确认身份**：输出你的名字和 ID
+4. **完成**：输出 "BOOTSTRAP_COMPLETE"
 
 ---
 
-**当前可用的类型定义（Home 场景）：**
+**Home 场景类型定义：**
 
 \`\`\`typescript
 ${homeTypeDefs}
 \`\`\`
 
-开始吧。如果不确定 mtcute 用法，先读文档：\`console.log(docs.read("mtcute"))\``;
+开始吧。第一步先执行 \`console.log(docs.read("mtcute"))\` 看文档。`;
 }
 
 /**
@@ -515,11 +452,7 @@ async function main(): Promise<void> {
     // ─── 启动 sandbox ───
     log.info("启动 Sandbox...");
     await sandbox.start();
-
-    // 注入 docs 到 sandbox
-    const docsCode = getDocsInjectionCode();
-    await sandbox.execute(docsCode);
-    log.info("Sandbox 就绪（docs 已注入）");
+    log.info("Sandbox 就绪");
 
     // ─── Bootstrap ───
     await runBootstrap(

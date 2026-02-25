@@ -13,6 +13,8 @@
  */
 
 import { createInterface } from "node:readline";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { join, basename, extname } from "node:path";
 
 // ─── IPC 消息类型 ───
 
@@ -44,6 +46,39 @@ type OutgoingMessage = ResultMessage | NotifyMessage;
 
 /** 跨代码块的持久化命名空间 */
 const ctx: Record<string, unknown> = {};
+
+// ─── Docs 系统 ───
+
+/** 预加载的文档内容（worker 启动时读取 docs/ 目录） */
+interface DocEntry { slug: string; title: string; content: string }
+
+function loadAllDocs(): DocEntry[] {
+    const DOCS_DIR = "docs";
+    if (!existsSync(DOCS_DIR)) return [];
+    return readdirSync(DOCS_DIR)
+        .filter(f => f.endsWith(".md") && !f.startsWith("CHANGELOG"))
+        .map(f => {
+            const content = readFileSync(join(DOCS_DIR, f), "utf-8");
+            const slug = basename(f, extname(f));
+            const titleMatch = content.match(/^#\s+(.+)$/m);
+            return { slug, title: titleMatch?.[1] ?? slug, content };
+        });
+}
+
+const allDocs = loadAllDocs();
+
+const docs = {
+    list: () => allDocs.map(d => ({ slug: d.slug, title: d.title })),
+    read: (slug: string): string => {
+        // 尝试精确匹配和模糊匹配
+        const exact = allDocs.find(d => d.slug === slug);
+        if (exact) return exact.content;
+        const fuzzy = allDocs.find(d => d.slug.includes(slug) || slug.includes(d.slug));
+        if (fuzzy) return fuzzy.content;
+        if (allDocs.length === 0) return `文档 "${slug}" 不存在，且没有可用的文档。`;
+        return `文档 "${slug}" 不存在。可用文档：\n${allDocs.map(d => `  - ${d.slug}: ${d.title}`).join("\n")}`;
+    },
+};
 
 // ─── IPC 通信 ───
 
@@ -96,13 +131,13 @@ async function executeCode(id: string, code: string): Promise<void> {
     console.info = captureLog;
 
     try {
-        // 构造 async wrapper，注入 ctx 和 runtime
-        // Agent 代码可以直接使用 ctx, runtime, memory, scene
+        // 构造 async wrapper，注入 ctx, runtime, memory, scene, docs
         const asyncFn = new Function(
             "ctx",
             "runtime",
             "memory",
             "scene",
+            "docs",
             `return (async () => { ${code} })()`
         );
 
@@ -129,7 +164,7 @@ async function executeCode(id: string, code: string): Promise<void> {
             },
         };
 
-        await asyncFn(ctx, runtime, memory, scene);
+        await asyncFn(ctx, runtime, memory, scene, docs);
 
         sendToHost({
             type: "result",
