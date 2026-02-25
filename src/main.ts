@@ -16,6 +16,7 @@ import { MemoryStore } from "./memory.js";
 import { SceneManager } from "./scene-manager.js";
 import { registerBuiltinScenes } from "./scenes/index.js";
 import { runCodeActSession, SessionResult } from "./session-runner.js";
+import { runCompaction } from "./compaction.js";
 import { loadLLMConfig, LLMConfig, ChatMessage } from "./llm.js";
 import {
     readFileSync,
@@ -372,8 +373,17 @@ ${eventText}
                 `(${result.turns.length} turns, reason: ${result.endReason})`
             );
 
-            // TODO Phase 3: Session compaction
-            // await runCompaction(result, memory, llmConfig);
+            // ─── Session Compaction ───
+            try {
+                // 尝试从事件中提取 chatId 和 chatTitle
+                const firstEvent = events[0] as Record<string, unknown>;
+                const chatId = firstEvent?.chatId as string | undefined;
+                const chatTitle = firstEvent?.chatTitle as string | undefined;
+                await runCompaction(result, memory, llmConfig, chatId, chatTitle);
+            } catch (compErr: unknown) {
+                const compErrMsg = compErr instanceof Error ? compErr.message : String(compErr);
+                console.error(`[Main Loop] Compaction 失败: ${compErrMsg}`);
+            }
         } catch (err: unknown) {
             const errorMsg =
                 err instanceof Error ? err.message : String(err);
