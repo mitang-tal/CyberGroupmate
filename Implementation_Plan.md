@@ -18,7 +18,7 @@
 | 1.4 | Memory Store | ✅ 完成 | FTS5 + LIKE fallback for CJK; merge-update person profiles; WAL mode |
 | 1.5 | SceneManager + 类型定义文件 | ✅ 完成 | L1/L2 type def system; home/telegram/memory scenes; scene-authoring.md |
 | 1.6 | 项目脚手架（package.json, tsconfig, git 初始化） | ✅ 完成 | ESM, Node ≥22, strict TS, 55 tests passing |
-| 2.1 | LLM 调用封装 | ✅ 完成 | 支持 Anthropic + OpenAI API；简易 YAML 解析器避免额外依赖；重试 + 指数退避 |
+| 2.1 | LLM 调用封装 | ✅ 完成 | 支持 Anthropic + OpenAI API；重试 + 指数退避；配置迁移到 config.ts (yaml 库) |
 | 2.2 | CodeAct Session Runner | ✅ 完成 | 多轮交互循环；parseResponse 解析 ts/js/typescript/javascript 围栏；输出截断 4000 字符；每 5 轮检查新通知 |
 | 2.3 | Bootstrap 流程 | ✅ 完成 | 代码保存+重放机制；重放失败回退到完整 LLM bootstrap |
 | 2.4 | Main Event Loop | ✅ 完成 | drain+context组装+session运行；sandbox 崩溃检测+自动重启；graceful shutdown |
@@ -27,8 +27,11 @@
 | 3.3 | System Prompt 调优 | ✅ 完成 | system-prompt.md 含 CodeAct 环境说明、行为原则、场景系统、{{PERSONA}} 注入 |
 | 3.4 | 安全限制（rate limit、禁止破坏性操作） | ✅ 完成 | MessageRateLimiter (session/分钟)、12 个禁止方法、sent-messages.jsonl 审计日志 |
 | 4.1 | 错误恢复（sandbox 重启 + bootstrap 重放） | ✅ 完成 | 已在 main.ts 中实现：sandbox 崩溃检测 → 重启 → bootstrap 重放 → 事件推回队列 |
-| 4.2 | CLI 工具 | ⬜ 未开始 | |
-| 4.3 | 配置化 | ✅ 完成 | config.example.yaml + loadLLMConfig (env > yaml > defaults) |
+| 4.2 | CLI 工具 | ✅ 完成 | 6 个子命令 (sandbox REPL/notify/drain/memory/config/status)；支持多行输入、缩写命令 |
+| 4.3 | 配置化 | ✅ 完成 | config.ts: 统一 AppConfig (LLM/Persona/Telegram)；yaml 库解析；env > yaml > defaults；TG_ 自动注入 |
+| 4.4 | Agent Docs 系统 | ✅ 完成 | docs.ts + docs/mtcute-guide.md；sandbox 中 docs.read()/docs.list()；避免 agent 联网搜索 |
+| 4.5 | 结构化日志 | ✅ 完成 | logger.ts: level/format/color；LOG_LEVEL + LOG_FORMAT 环境变量；子 logger；已集成到 main.ts |
+| 4.6 | Bootstrap 改进 | ✅ 完成 | 具体 mtcute 代码示例 (bot/userbot)；登录流程 + OTP 交互；docs 注入到 sandbox |
 
 ---
 
@@ -925,8 +928,20 @@ Agent 在 bootstrap 时从 `process.env` 读取这些值。
 
 3. **安全模块设计**：Rate limiter 同时限制 session 内发送量（默认 10）和每分钟发送量（默认 5），双重保护。所有发出的消息 ID 记录到 JSONL 文件用于事后审计和批量撤回。
 
-4. **错误恢复提前完成**：Task 4.1（sandbox 重启 + bootstrap 重放）在 Phase 2 的 `main.ts` 中已实现。Task 4.3（配置化）在 Phase 2 的 `llm.ts` 中已实现。
+4. **错误恢复提前完成**：Task 4.1（sandbox 重启 + bootstrap 重放）在 Phase 2 的 `main.ts` 中已实现。
 
-**剩余工作**：
-- Task 4.2 CLI 工具（可选，非核心功能）
-- 实际 Telegram 连接测试需要配置 API credentials
+### Phase 4 总结 — 2026-02-26
+
+**完成情况**：Phase 4 全部 6 个 Task 完成，73 个测试全部通过。
+
+**关键决策与发现**：
+
+1. **正式 YAML 解析**：从自写的 regex YAML 解析迁移到 `yaml` 库。新建 `config.ts` 统一管理 LLM/Persona/Telegram 三块配置，`llm.ts` 只保留纯 LLM 调用逻辑。
+2. **Agent 文档系统**：`docs.ts` 在 sandbox 启动时注入 `docs.read()`/`docs.list()`，Agent 可以读取 `docs/mtcute-guide.md` 等参考资料，避免联网搜索浪费 token。
+3. **Bootstrap 改进**：根据 `config.telegram.mode` 动态生成 bot/userbot 两种登录示例代码，包含完整的 OTP 交互流程（通过 `runtime.notify` 请求人类输入验证码）。
+4. **CLI 完善**：6 个子命令覆盖调试场景——`sandbox` REPL 可直接执行代码、`config` 检查全部配置、`memory` 子命令支持 search/person/todos/sql。
+5. **TG 配置自动注入**：`config.ts` 在加载时将 `config.yaml` 中的 Telegram 配置自动注入 `process.env`，sandbox 中的代码可以直接通过 `process.env.TG_*` 访问。
+
+**下一步**：
+- 实际启动 agent，验证 Telegram 连接和 bootstrap 流程
+- 根据实际运行中发现的问题迭代
