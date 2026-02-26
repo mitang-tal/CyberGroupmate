@@ -6,7 +6,7 @@
 
 ### Bot 模式
 
-```typescript
+```javascript
 const { TelegramClient } = await import("@mtcute/node");
 const tg = new TelegramClient({
   apiId: Number(process.env.TG_API_ID),
@@ -21,7 +21,7 @@ ctx.self = self;
 
 ### Userbot 模式（手机号 + OTP）
 
-```typescript
+```javascript
 const { TelegramClient } = await import("@mtcute/node");
 const tg = new TelegramClient({
   apiId: Number(process.env.TG_API_ID),
@@ -49,7 +49,7 @@ Session 持久化在 `workspace/tg-session/`，重启时 `tg.start()` 自动恢�
 > ❌ 错误做法 (会报 Illegal state at toInputPeer)：`ctx.tg.sendText({ chatId: 123, text: "hi" })`
 > ✅ 正确位置参数：`ctx.tg.sendText(123, "hi", { replyTo: 456 })`
 
-```typescript
+```javascript
 // 发送文本（返回 Message 对象）
 const sent = await ctx.tg.sendText(chatId, "Hello!");
 console.log("已发送, msgId=" + sent.id);
@@ -71,7 +71,7 @@ await ctx.tg.sendMedia(chatId, { type: "photo", file: "path/to/photo.jpg" });
 > ❌ 错误做法：`ctx.tg.getHistory({ chatId: 123, limit: 5 })`
 > ✅ 正确位置参数：`ctx.tg.getHistory(123, { limit: 5 })`
 
-```typescript
+```javascript
 for await (const msg of ctx.tg.iterHistory(chatId, { limit: 20 })) {
   console.log((msg.sender?.displayName || "?") + ": " + msg.text);
 }
@@ -79,7 +79,7 @@ for await (const msg of ctx.tg.iterHistory(chatId, { limit: 20 })) {
 
 ## 获取对话列表
 
-```typescript
+```javascript
 for await (const dialog of ctx.tg.iterDialogs({ limit: 20 })) {
   // ⚠ 对话信息在 dialog.peer 上，不是 dialog.chat
   const name = dialog.peer.displayName || dialog.peer.title || "未知";
@@ -91,7 +91,7 @@ for await (const dialog of ctx.tg.iterDialogs({ limit: 20 })) {
 
 `ctx.tg.onNewMessage` 是 **Emitter 对象**（不是函数！），用 `.add(handler)` 注册：
 
-```typescript
+```javascript
 ctx.tg.onNewMessage.add(async (msg) => {
   if (msg.sender?.id === ctx.self.id) return;  // 忽略自己
 

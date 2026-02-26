@@ -311,7 +311,7 @@ Worker → Host：
 
 **CodeAct Session Runner**：
 1. 调用 LLM 获取 response
-2. 解析 response：分离自然语言思考和 TypeScript 代码块（匹配 ` ```typescript ` / ` ```ts ` / ` ```js ` 围栏）
+2. 解析 response：分离自然语言思考和 TypeScript 代码块（匹配 ` ```javascript ` / ` ```ts ` / ` ```js ` 围栏）
 3. 没有代码块 → session 结束
 4. 有代码块 → 在 sandbox 中依次执行，收集输出
 5. 执行输出作为 `[Execution Output]` 追加到消息历史（截断到 4000 字符）
@@ -931,7 +931,7 @@ Agent 在 bootstrap 时从 `process.env` 读取这些值。
 
 1. **YAML 解析**：为避免引入 `yaml` 依赖，手写了简单的 YAML 解析器（只支持一层嵌套 key-value）。足以满足 config.yaml 的需求。
 
-2. **代码块解析**：使用正则匹配 ` ```typescript ` / ` ```ts ` / ` ```js ` / ` ```javascript ` 围栏。忽略其他语言的代码块（如 python、json）。
+2. **代码块解析**：使用正则匹配 ` ```javascript ` / ` ```ts ` / ` ```js ` / ` ```javascript ` 围栏。忽略其他语言的代码块（如 python、json）。
 
 3. **Bootstrap 重放**：Bootstrap 成功后，所有成功执行的代码块保存到 `data/bootstrap-code.json`。Sandbox 重启后先尝试重放，失败才回退到完整 LLM bootstrap。
 

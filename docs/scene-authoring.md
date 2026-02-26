@@ -43,7 +43,7 @@ src/scenes/
 
 ## 场景定义格式
 
-```typescript
+```javascript
 interface SceneDefinition {
   name: string;         // 场景标识符
   description: string;  // 一句话描述
@@ -58,7 +58,7 @@ interface SceneDefinition {
 
 在 `src/scenes/index.ts` 中添加注册：
 
-```typescript
+```javascript
 // 1. 创建 src/scenes/my-scene.d.ts 类型定义文件
 // 2. 在 registerBuiltinScenes 函数中添加：
 
@@ -76,7 +76,7 @@ sm.register({
 
 1. 创建 `src/scenes/discord.d.ts`：
 
-```typescript
+```javascript
 declare const scene: { enter(name: string): void; /* ... */ };
 declare const runtime: { /* ... */ };
 declare const ctx: Record<string, any>;
