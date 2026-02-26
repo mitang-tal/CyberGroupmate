@@ -17,6 +17,9 @@ declare const runtime: {
     notify(event: { type: string;[key: string]: unknown }): void;
     input(prompt: string): Promise<string>;
     print(msg: string): void;
+    spawn(name: string, fn: (signal: AbortSignal) => Promise<void>): void;
+    kill(name: string): void;
+    ps(): string[];
 };
 
 declare const ctx: {

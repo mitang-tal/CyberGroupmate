@@ -133,6 +133,40 @@ function requestInput(prompt: string): Promise<string> {
     });
 }
 
+// ─── 后台任务管理 ───
+
+const backgroundTasks = new Map<string, AbortController>();
+
+function spawnTask(name: string, fn: (signal: AbortSignal) => Promise<void>): void {
+    if (backgroundTasks.has(name)) {
+        backgroundTasks.get(name)!.abort();
+    }
+    const controller = new AbortController();
+    backgroundTasks.set(name, controller);
+
+    // 不 await，让其在后台运行
+    fn(controller.signal).catch(err => {
+        const msg = err instanceof Error ? err.stack : String(err);
+        printToHost(`[Task Error] ${name}: ${msg}`);
+    }).finally(() => {
+        if (backgroundTasks.get(name) === controller) {
+            backgroundTasks.delete(name);
+        }
+    });
+}
+
+function killTask(name: string): void {
+    if (backgroundTasks.has(name)) {
+        backgroundTasks.get(name)!.abort();
+        backgroundTasks.delete(name);
+        printToHost(`[Task Killed] ${name}`);
+    }
+}
+
+function listTasks(): string[] {
+    return Array.from(backgroundTasks.keys());
+}
+
 // ─── 代码执行 ───
 
 async function executeCode(id: string, code: string): Promise<void> {
@@ -183,6 +217,20 @@ async function executeCode(id: string, code: string): Promise<void> {
              * @example runtime.print("⚠ 需要你的帮助！");
              */
             print: printToHost,
+            /**
+             * 启动一个后台监听任务，自动处理清理逻辑
+             * @example runtime.spawn("tg-listener", async (signal) => { ... })
+             */
+            spawn: spawnTask,
+            /**
+             * 停止某个后台任务
+             * @example runtime.kill("tg-listener")
+             */
+            kill: killTask,
+            /**
+             * 获取当前正在运行的所有后台任务名称列表
+             */
+            ps: listTasks,
         };
 
         const memory = {};
