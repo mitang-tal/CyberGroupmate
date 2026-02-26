@@ -100,6 +100,9 @@ for await (const dialog of ctx.tg.iterDialogs({ limit: 20 })) {
 ```typescript
 ctx.tg.onNewMessage.add(async (msg) => {
   if (msg.sender?.id === ctx.self.id) return;  // 忽略自己
+
+  const isUrgent = msg.mentioned || msg.replyToMessageId ? true : undefined;
+
   runtime.notify({
     type: "telegram.message",
     chatId: msg.chat.id,
@@ -107,6 +110,7 @@ ctx.tg.onNewMessage.add(async (msg) => {
     senderName: msg.sender?.displayName || "未知",
     text: msg.text || "",
     messageId: msg.id,
+    _urgent: isUrgent,
   });
 });
 console.log("消息监听已启动");
