@@ -2,12 +2,6 @@
 
 本文档供 Agent 在 sandbox 中查阅。通过 `docs.read("mtcute")` 读取。
 
-> **重要：sandbox 执行环境使用 `new Function()`，不支持 `import` 和 `require`。**
-> **必须用 `await import("模块名")` 来导入模块。**
-
-> **⚠ Object.keys(ctx.tg) 只显示事件监听器（onNewMessage 等），不显示 sendText 等方法！**
-> **方法在原型链上，请直接按文档调用，不要用 Object.keys() 来探索 API。**
-
 ## 创建客户端 & 登录
 
 ### Bot 模式
@@ -101,7 +95,7 @@ for await (const dialog of ctx.tg.iterDialogs({ limit: 20 })) {
 ctx.tg.onNewMessage.add(async (msg) => {
   if (msg.sender?.id === ctx.self.id) return;  // 忽略自己
 
-  const isUrgent = msg.mentioned || msg.replyToMessageId ? true : undefined;
+  const isUrgent = msg.isMention || msg.replyToMessage || msg.chat.id > 0 ? true : false;
 
   runtime.notify({
     type: "telegram.message",
@@ -110,6 +104,7 @@ ctx.tg.onNewMessage.add(async (msg) => {
     senderName: msg.sender?.displayName || "未知",
     text: msg.text || "",
     messageId: msg.id,
+    raw: msg,
     _urgent: isUrgent,
   });
 });

@@ -83,7 +83,7 @@ function ensureDataDirs(): void {
  * 读取 system prompt 模板并注入 persona 配置
  */
 function loadSystemPrompt(appConfig: AppConfig): string {
-    const promptPath = "system-prompt.md";
+    const promptPath = join(DATA_DIR, "agent-docs", "system-prompt.md");
     if (!existsSync(promptPath)) {
         return "You are a helpful AI assistant running in a CodeAct environment.";
     }
@@ -153,45 +153,28 @@ function loadBootstrapCode(): string[] | null {
  * Bootstrap prompt — 告诉 agent 需要初始化什么
  */
 function buildBootstrapPrompt(homeTypeDefs: string, appConfig: AppConfig): string {
+    const promptPath = join(DATA_DIR, "agent-docs", "bootstrap-prompt.md");
+    let promptTemplate = "";
+
+    if (existsSync(promptPath)) {
+        promptTemplate = readFileSync(promptPath, "utf-8");
+    } else {
+        // Fallback or error if not found, but we expect it to exist
+        promptTemplate = `# Bootstrap 初始化\n\n请连接 Telegram。\n\n{{HOME_TYPE_DEFS}}`;
+    }
+
     const tgMode = appConfig.telegram.mode;
     const hasPhone = !!appConfig.telegram.phone;
     const hasBotToken = !!appConfig.telegram.botToken;
 
-    return `# Bootstrap 初始化
+    const tgAuthStatus = tgMode === "bot"
+        ? `Bot Token: ${hasBotToken ? "✓ 已配置 (process.env.TG_BOT_TOKEN)" : "✗ 未配置"}`
+        : `手机号: ${hasPhone ? "✓ 已配置 (process.env.TG_PHONE)" : "✗ 未配置"}`;
 
-你刚被启动。请完成 Telegram 连接。
-
-## 执行环境
-
-- 代码通过 \`new Function()\` 执行，**不能用 \`import\` 或 \`require\`**
-- 导入模块必须用 \`await import("模块名")\`
-- \`ctx\` 是跨代码块的持久化对象，用来保存 tg client 等
-- \`runtime.notify(event)\` 推送事件到通知中心
-- \`docs.read("mtcute")\` 查看 mtcute 使用指南（**必读**）
-- \`docs.list()\` 查看所有可用文档
-
-## 你的任务
-
-1. **先读文档**：执行 \`console.log(docs.read("mtcute"))\` 了解 mtcute 用法
-2. **连接 Telegram**：当前模式是 **${tgMode}**
-${tgMode === "bot"
-            ? `   - Bot Token: ${hasBotToken ? "✓ 已配置 (process.env.TG_BOT_TOKEN)" : "✗ 未配置"}`
-            : `   - 手机号: ${hasPhone ? "✓ 已配置 (process.env.TG_PHONE)" : "✗ 未配置"}`
-        }
-   - API ID/Hash: ✓ 已配置 (process.env.TG_API_ID, process.env.TG_API_HASH)
-   - Session 路径: \`workspace/tg-session/account\`（持久化，重启不需要重新登录）
-3. **确认身份**：输出你的名字和 ID
-4. **完成**：输出 "BOOTSTRAP_COMPLETE"
-
----
-
-**Home 场景类型定义：**
-
-\`\`\`typescript
-${homeTypeDefs}
-\`\`\`
-
-开始吧。第一步先执行 \`console.log(docs.read("mtcute"))\` 看文档。`;
+    return promptTemplate
+        .replace("{{TG_MODE}}", tgMode)
+        .replace("{{TG_AUTH_STATUS}}", tgAuthStatus)
+        .replace("{{HOME_TYPE_DEFS}}", homeTypeDefs);
 }
 
 /**
