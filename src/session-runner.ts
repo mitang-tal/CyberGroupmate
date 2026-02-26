@@ -181,9 +181,6 @@ export async function runCodeActSession(
 
         // ─── Debug: 输出本轮的思考和代码 ───
         log.debug(`[${currentScene}] Turn ${turnNum}: thinking`, { text: thinking });
-        for (let i = 0; i < codeBlocks.length; i++) {
-            log.debug(`[${currentScene}] Turn ${turnNum}: code[${i}]`, { code: codeBlocks[i] });
-        }
 
         // ─── 无代码块 → session 结束 ───
         if (codeBlocks.length === 0) {
@@ -202,12 +199,15 @@ export async function runCodeActSession(
         const outputParts: string[] = [];
 
         for (const code of codeBlocks) {
+            const codeIndex = codeBlocks.indexOf(code);
+            log.debug(`[${currentScene}] Turn ${turnNum}: code[${codeIndex}]`, { code });
+
             try {
                 const result = await sandbox.execute(code, executeTimeout);
                 turn.executionResults.push(result);
 
                 // Debug: 输出执行结果
-                log.debug(`[${currentScene}] Turn ${turnNum}: exec[${codeBlocks.indexOf(code)}]`, {
+                log.debug(`[${currentScene}] Turn ${turnNum}: exec[${codeIndex}]`, {
                     error: result.error,
                     output: result.output,
                 });
