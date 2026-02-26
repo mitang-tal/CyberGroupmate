@@ -155,6 +155,10 @@ export async function runCodeActSession(
         } catch (err: unknown) {
             const errorMsg =
                 err instanceof Error ? err.message : String(err);
+
+            // 重要：如果在请求 LLM 时就失败（如 400 Bad Request），我们不能将当前这轮（破损的）遗留下来，
+            // 不然外层拿到断裂的 sessionMessages 可能会出问题。
+            // 直接带着出错原因返回即可保护 session 不被完全销毁，或者至少日志能体现。
             return {
                 sessionId,
                 turns,
