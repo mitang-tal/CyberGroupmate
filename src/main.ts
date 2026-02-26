@@ -235,42 +235,51 @@ async function runBootstrap(
     const homeScene = sceneManager.getScene("home");
     const homeTypeDefs = homeScene?.typeDefs ?? "";
 
-    const bootstrapMessages: ChatMessage[] = [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: buildBootstrapPrompt(homeTypeDefs, appConfig) },
-    ];
+    while (true) {
+        const bootstrapMessages: ChatMessage[] = [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: buildBootstrapPrompt(homeTypeDefs, appConfig) },
+        ];
 
-    const result = await runCodeActSession(
-        bootstrapMessages,
-        "home",
-        sandbox,
-        nc,
-        llmConfig,
-        SESSIONS_DIR,
-        5 * 60 * 1000  // 5 分钟超时（等验证码可能需要更长时间）
-    );
+        const result = await runCodeActSession(
+            bootstrapMessages,
+            "home",
+            sandbox,
+            nc,
+            llmConfig,
+            SESSIONS_DIR,
+            5 * 60 * 1000  // 5 分钟超时（等验证码可能需要更长时间）
+        );
 
-    // 提取所有成功执行的代码块
-    const successfulCodes: string[] = [];
-    for (const turn of result.turns) {
-        for (let i = 0; i < turn.codeBlocks.length; i++) {
-            const execResult = turn.executionResults[i];
-            if (execResult && !execResult.error) {
-                successfulCodes.push(turn.codeBlocks[i]);
+        // 提取所有成功执行的代码块
+        const successfulCodes: string[] = [];
+        let hasCompleteSignal = false;
+
+        for (const turn of result.turns) {
+            for (let i = 0; i < turn.codeBlocks.length; i++) {
+                const execResult = turn.executionResults[i];
+                if (execResult && !execResult.error) {
+                    successfulCodes.push(turn.codeBlocks[i]);
+                    if (execResult.output && execResult.output.includes("BOOTSTRAP_COMPLETE")) {
+                        hasCompleteSignal = true;
+                    }
+                }
             }
         }
-    }
 
-    // 保存成功的 bootstrap 代码
-    if (successfulCodes.length > 0) {
-        saveBootstrapCode(successfulCodes);
-        log.info(`保存了 ${successfulCodes.length} 段 bootstrap 代码`);
-    }
-
-    if (result.endReason === "error") {
-        log.error("Bootstrap 失败", { error: result.error, turns: result.turns.length });
-    } else {
-        log.info("Bootstrap 完成", { turns: result.turns.length, reason: result.endReason });
+        if (hasCompleteSignal) {
+            // 保存成功的 bootstrap 代码
+            if (successfulCodes.length > 0) {
+                saveBootstrapCode(successfulCodes);
+                log.info(`保存了 ${successfulCodes.length} 段 bootstrap 代码`);
+            }
+            log.info("Bootstrap 完成", { turns: result.turns.length, reason: result.endReason });
+            break;
+        } else {
+            log.warn("未收到 BOOTSTRAP_COMPLETE 信号，视为 Bootstrap 失败，不保存并重试", { reason: result.endReason });
+            // 等待一小段时间后重试，避免死循环请求崩溃
+            await new Promise(r => setTimeout(r, 3000));
+        }
     }
 }
 
