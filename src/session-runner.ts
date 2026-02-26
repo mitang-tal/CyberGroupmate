@@ -229,6 +229,8 @@ export async function runCodeActSession(
                     outputParts.push(`${prefix}\n${truncated}`);
                 } else if (result.error) {
                     outputParts.push("[⚠ Execution completed with error, no output]");
+                } else {
+                    outputParts.push("[Execution completed without output]");
                 }
 
                 if (result.error) {
