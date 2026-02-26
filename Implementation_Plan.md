@@ -802,29 +802,30 @@ v0.4.0 — Phase 4 完成（稳定性与工具）= MVP
 
 **Phase 4 验收标准**：连续运行 48h 无不可恢复崩溃。CLI 可用。配置修改后重启生效。
 
-### Phase 5（架构重构）：Scene-Bound Sessions（持久化场景会话）
+### Phase 5（架构重构）：Scene-Bound Sessions（单一长 Session + 动态视界隔离）
 
 **背景**：原设计中，主循环每次 `nc.drain()` 获取事件后都会抛弃历史重启一个纯洁的 `runCodeActSession`。如果 Agent 中途切换场景，下一次交互它的上下文全部重置，导致严重的“断片”（失忆感）。
 
 **重构目标**：
-1. **持久化 Session**：不再“每次事件建一个新 Session”。全生命周期内，每个 Scene 维持一个活跃的会话（记录历史）。
-2. **上下文隔离与衔接**：Agent 当且仅当身处对应的 Scene，才能看到该 Scene 此前的发言或代码执行历史。
-3. **动态注入**：Agent State 和当前 Scene 的最新类型定义（`.d.ts`）在每一轮调用前热更新注入到 `system prompt`，防止浪费 Token。
-4. **流动性 Compaction**：当某场景对话过长（>25 轮），对其截断并执行单线 Compaction。
+1. **单一时间线持久化 Session**：不再“每次事件建一个新 Session”或者“每个 scene 维持一张分叉时间表”。整个 Agent 生命周期仅维持唯一一条长长的历史流水数组 `const messages: ChatMessage[] = []`。
+2. **基于 Scope 的上下文动态视界隔离**：为 `ChatMessage` 引入 `scope?: string` 属性（如 `"global"`, `"scene:telegram"`, `"scene:home"`）。Agent 在和 LLM API 交互时，`callLLM` 动态过滤网关保证仅向大模型展示当前所在的 `scope` 节点的内容，以及基础的 `"global"` 内容。
+3. **动态注入系统 Prompt**：Agent State 和当前 Scene 的最新类型定义（`.d.ts`）在每一轮调用前热更新注入到 `system prompt`，防止浪费 Token。始终放置在消息数组的第一条 (`unshift`)。
+4. **流动性 Compaction**：当全景对话过长时（针对外层），对其截断并保留最近对话条目和系统引导。
 
-**Task 5.1 — SessionState 状态机设计**
-- 引入全局 `Map<string, ChatMessage[]>` 维护各 scene 的 `messages`。
-- 新事件到达时：向当前活动 Scene 的 Session 追加 user 消息：`[新事件到达]...`。
+**Task 5.1 — SessionState 状态机设计（已完成）**
+- 为 ChatMessage 引入 `scope` 字段元数据。
+- 只有一条全局时间线数组来承接所有的 user / assistant 对话记录。
+- 新事件到达时：以 `scope: "global"` 把消息插入，这样不管当前 Agent 身处哪一个具体的 Scene，它全都能看见这则跨域通知。
 
-**Task 5.2 — Main Loop 与 CodeAct 引擎重构**
-- 改造 `session-runner.ts` 为持续迭代器或单步调用 `runCodeActTurn`。
+**Task 5.2 — Main Loop 与 CodeAct 引擎重构（已完成）**
+- 改造 `main.ts` 与 `session-runner.ts`，彻底抛弃旧的 `sceneSessions` Map。
+- 每次 Agent 输出/思维、宿主的回复以及报错信息记录时，都顺带将当前活动 scene（如 `scope: "scene:telegram"`) 打入单条 ChatMessage。
 - 如果执行时 `scene.current` 发生了变化：
-  - 老场景追加记录：`[系统] 已离开此场景，控制权转移至 ${scene.current}`
-  - 切换到新场景对应的 Session
-  - 新场景追加记录：`[系统] 已从 ${oldScene} 场景切入。上一次进入此场景时的历史如下，请继续思考`。
+  - 会以 `scope: "global"` 的身份发送一条 `"已控制权转移至新场景: telegram"`，向后串起时间线。
+- 当向底层模型发送请求时，通过 `messages.filter(m => !m.scope || m.scope === "global" || m.scope === \`scene:\${currentScene}\`)` 完美规避掉另外一个场景产生的历史，但又始终带着过往全局系统事件，实现了**“同一个人、不同的房间视角”**。
 
-**Task 5.3 — 滚动 Compaction / 历史截断机制**
-- 单个 Scene Session 过长时切段执行 `compaction.ts` 并缩减历史数组（只留 system prompt 和最后的 10 条）。
+**Task 5.3 — 滚动历史截断机制**
+- 全局轮次或局部数组过长时保留末尾 10 条（加上一条折叠提示）以及开头的动态 `system prompt`。
 
 完成后打 tag `v0.4.0`（= MVP），更新 README 和 CHANGELOG，整理 `docs/architecture.md`。
 
