@@ -108,7 +108,6 @@ runtime.spawn("tg-listener", async (signal) => {
       senderName: msg.sender?.displayName || "未知",
       text: msg.text || "",
       messageId: msg.id,
-      raw: msg, // 将原始消息透传也是个好主意
       _urgent: isUrgent,
     });
   };

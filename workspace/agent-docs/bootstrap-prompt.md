@@ -10,7 +10,8 @@
    - API ID/Hash: ✓ 已配置 (process.env.TG_API_ID, process.env.TG_API_HASH)
    - Session 路径: `workspace/tg-session/account`（持久化，重启不需要重新登录）
 3. **确认身份**：输出你的名字和 ID
-4. **完成**：一切检查正常无误后，输出 "BOOTSTRAP_COMPLETE"
+4. **设置监听**：参考文档设置监听
+5. **完成**：一切检查正常无误后，console.log 输出 "BOOTSTRAP_COMPLETE"
 
 ---
 

@@ -55,6 +55,9 @@ const DRAIN_TIMEOUT = 30000;
 /** drain 最大批量 */
 const DRAIN_MAX_BATCH = 20;
 
+/** drain 批量窗口（毫秒） */
+const DRAIN_BATCH_WINDOW = 60000;
+
 /** Agent state 最大字符数 */
 const MAX_AGENT_STATE_CHARS = 4000;
 
@@ -290,7 +293,7 @@ async function mainEventLoop(
         const events = await nc.drain(
             DRAIN_TIMEOUT,
             DRAIN_MAX_BATCH,
-            30000,
+            DRAIN_BATCH_WINDOW,
             appConfig.notification?.urgentWords ?? ["?", "？", "呢", "吗"]
         );
 
