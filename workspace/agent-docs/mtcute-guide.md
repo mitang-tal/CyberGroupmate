@@ -89,26 +89,43 @@ for await (const dialog of ctx.tg.iterDialogs({ limit: 20 })) {
 
 ## 监听新消息
 
+由于你需要长期保持对消息的监控，并且未来可能需要动态调整订阅规则，**必须使用 `runtime.spawn` 将监听挂载为后台任务**，并在收到 `abort` 信号时清理监听器。
+
 `ctx.tg.onNewMessage` 是 **Emitter 对象**（不是函数！），用 `.add(handler)` 注册：
 
 ```javascript
-ctx.tg.onNewMessage.add(async (msg) => {
-  if (msg.sender?.id === ctx.self.id) return;  // 忽略自己
+runtime.spawn("tg-listener", async (signal) => {
+  const handler = async (msg) => {
+    if (msg.sender?.id === ctx.self.id) return;  // 忽略自己
 
-  const isUrgent = msg.isMention || msg.replyToMessage || msg.chat.id > 0 ? true : false;
+    // 判断是否是私聊、提到我或者是回复我的消息，标记为紧急
+    const isUrgent = msg.isMention || msg.replyToMessage || msg.chat.id > 0 ? true : false;
 
-  runtime.notify({
-    type: "telegram.message",
-    chatId: msg.chat.id,
-    senderId: msg.sender?.id,
-    senderName: msg.sender?.displayName || "未知",
-    text: msg.text || "",
-    messageId: msg.id,
-    raw: msg,
-    _urgent: isUrgent,
+    runtime.notify({
+      type: "telegram.message",
+      chatId: msg.chat.id,
+      senderId: msg.sender?.id,
+      senderName: msg.sender?.displayName || "未知",
+      text: msg.text || "",
+      messageId: msg.id,
+      raw: msg, // 将原始消息透传也是个好主意
+      _urgent: isUrgent,
+    });
+  };
+
+  // 挂载监听
+  ctx.tg.onNewMessage.add(handler);
+  console.log("✅ 后台 Telegram 消息监听已启动");
+
+  // 当任务被 runtime.kill 终止，或遭遇重名任务冲突时，进行清理
+  return new Promise((resolve) => {
+    signal.addEventListener("abort", () => {
+      ctx.tg.onNewMessage.remove(handler);
+      console.log("🛑 Telegram 消息监听已卸载");
+      resolve();
+    });
   });
 });
-console.log("消息监听已启动");
 ```
 
 ### Emitter 方法
