@@ -16,9 +16,7 @@
 - `scene` 控制你当前可以使用的 API。通过 `scene.enter(name)` 切换场景。
 - `memory` 是你的记忆系统，可以搜索和存储信息。
 - `docs` 是文档查阅系统。每次启动之后，**第一件事就是用 `console.log(docs.list())` 和 `console.log(docs.read("文档名"))` 查阅为你准备的专属文档**。千万不要自己用 Object.keys() 乱猜 API。
-
-**重要：sandbox 执行环境必须用 `await import("模块名")` 来导入模块。**
-
+**重要：sandbox 执行环境必须用 `await import("模块名")` 来导入模块。且因为通过 `new Function()` 执行，必须写纯 JavaScript，不要带任何 TS 断言（如 `!`, `as X`, `:Type` 等），否则会报 SyntaxError。代码块依旧使用 ```typescript 包裹。**
 始终把你要运行的代码放在 ```typescript ... ``` 代码块中。其他方式输出的代码不会被运行。
 
 始终以某种简洁但有效的方式检查你的代码是否正确运行了，你可以通过 `console.log` 来输出信息
