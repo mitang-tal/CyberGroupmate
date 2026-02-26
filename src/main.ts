@@ -295,7 +295,12 @@ async function mainEventLoop(
 
     while (true) {
         // ─── 等待事件 ───
-        const events = await nc.drain(DRAIN_TIMEOUT, DRAIN_MAX_BATCH);
+        const events = await nc.drain(
+            DRAIN_TIMEOUT,
+            DRAIN_MAX_BATCH,
+            30000,
+            appConfig.notification?.urgentWords ?? ["?", "？", "呢", "吗"]
+        );
 
         if (events.length === 0) {
             // 超时无事件 — 可选 idle 行为（MVP 中跳过）

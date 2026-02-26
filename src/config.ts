@@ -26,6 +26,10 @@ export interface PersonaConfig {
     description: string;
 }
 
+export interface NotificationConfig {
+    urgentWords: string[];
+}
+
 export interface TelegramConfig {
     mode: "bot" | "userbot";
     botToken: string;
@@ -38,6 +42,7 @@ export interface AppConfig {
     llm: LLMConfig;
     persona: PersonaConfig;
     telegram: TelegramConfig;
+    notification: NotificationConfig;
 }
 
 // ─── 默认值 ───
@@ -61,6 +66,9 @@ const DEFAULTS: AppConfig = {
         apiId: "",
         apiHash: "",
         phone: "",
+    },
+    notification: {
+        urgentWords: ["?", "？", "呢", "吗"],
     },
 };
 
@@ -93,6 +101,7 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
     const fileLLM = (fileConfig.llm ?? {}) as Record<string, unknown>;
     const filePersona = (fileConfig.persona ?? {}) as Record<string, unknown>;
     const fileTG = (fileConfig.telegram ?? {}) as Record<string, unknown>;
+    const fileNotification = (fileConfig.notification ?? {}) as Record<string, unknown>;
 
     const config: AppConfig = {
         llm: {
@@ -146,6 +155,14 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
                 env("TG_PHONE") ??
                 str(fileTG.phone) ??
                 DEFAULTS.telegram.phone,
+        },
+        notification: {
+            urgentWords:
+                Array.isArray(fileNotification.urgent_words)
+                    ? (fileNotification.urgent_words as string[])
+                    : Array.isArray(fileNotification.urgentWords)
+                        ? (fileNotification.urgentWords as string[])
+                        : DEFAULTS.notification.urgentWords,
         },
     };
 

@@ -144,12 +144,14 @@ export class NotificationCenter {
      * @param timeout - 队列为空时的最大等待时间（毫秒），0 表示不等待
      * @param maxBatch - 单次最多取出的事件数，默认 50
      * @param batchWindow - 队列非空时的静默收集窗口（毫秒），默认 30000ms。若期间无重要/紧急提及事件，则暂不弹出，让消息聚合
+     * @param urgentWords - 触发紧急事件的关键字列表
      * @returns 事件数组（可能为空）
      */
     async drain(
         timeout: number = 30000,
         maxBatch: number = 50,
-        batchWindow: number = 30000
+        batchWindow: number = 30000,
+        urgentWords: string[] = ["?", "？", "呢", "吗"]
     ): Promise<NotificationEvent[]> {
         const startTime = Date.now();
 
@@ -162,7 +164,7 @@ export class NotificationCenter {
 
             const text = (typeof event.text === "string" ? event.text : "").toLowerCase();
             // 在缺乏精准 API 判断的情况下，通过文字嗅探
-            if (text.includes("@miu") || text.includes("miu") || text.includes("?") || text.includes("？") || text.includes("呢") || text.includes("吗")) {
+            if (urgentWords.some(word => text.includes(word.toLowerCase()))) {
                 return true;
             }
 
