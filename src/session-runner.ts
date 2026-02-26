@@ -202,6 +202,8 @@ export async function runCodeActSession(
             const codeIndex = codeBlocks.indexOf(code);
             log.debug(`[${currentScene}] Turn ${turnNum}: code[${codeIndex}]`, { code });
 
+            let errorOccurred = false;
+
             try {
                 const result = await sandbox.execute(code, executeTimeout);
                 turn.executionResults.push(result);
@@ -221,14 +223,24 @@ export async function runCodeActSession(
                 } else if (result.error) {
                     outputParts.push("[⚠ Execution completed with error, no output]");
                 }
+
+                if (result.error) {
+                    errorOccurred = true;
+                }
             } catch (err: unknown) {
                 const errorMsg =
                     err instanceof Error ? err.message : String(err);
                 turn.executionResults.push({
                     output: errorMsg,
                     error: true,
+                    sceneState: turn.executionResults[turn.executionResults.length - 1]?.sceneState
                 });
                 outputParts.push(`[⚠ Sandbox Error]\n${errorMsg}`);
+                errorOccurred = true;
+            }
+
+            if (errorOccurred) {
+                break; // 如果沙箱捕捉到了运行时错误或者宿主层面抛出异常，停止执行后续代码块
             }
         }
 
