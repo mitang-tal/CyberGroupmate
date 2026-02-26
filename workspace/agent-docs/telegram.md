@@ -1,6 +1,4 @@
-# mtcute 参考指南
-
-本文档供 Agent 在 sandbox 中查阅。通过 `docs.read("mtcute")` 读取。
+# Telegram MTProto 协议库 mtcute 参考指南
 
 ## 创建客户端 & 登录
 
