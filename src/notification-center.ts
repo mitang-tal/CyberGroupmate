@@ -159,8 +159,8 @@ export class NotificationCenter {
             if (event._urgent) return true;
             if (event.type !== "telegram.message") return true;
 
-            // 包含提及、回复或其他紧急属性时视作急迫事件
-            if (event.mentioned || event.replyToMessageId || event.replyTo) return true;
+            // 在某些旧版本的残留或者自定义透传里，可能是这些字段。
+            if (event.isMention || event.replyToMessage) return true;
 
             const text = (typeof event.text === "string" ? event.text : "").toLowerCase();
             // 在缺乏精准 API 判断的情况下，通过文字嗅探

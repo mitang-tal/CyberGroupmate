@@ -52,8 +52,8 @@ interface Message {
     date: Date;
     chat: Chat;
     sender: Peer;
-    mentioned: boolean;
-    replyToMessageId?: number;
+    isMention: boolean;
+    replyToMessage?: any;
     media?: unknown;
 }
 
