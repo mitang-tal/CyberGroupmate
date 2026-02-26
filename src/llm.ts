@@ -18,6 +18,8 @@ import type { LLMConfig } from "./config.js";
 export interface ChatMessage {
     role: "system" | "user" | "assistant";
     content: string;
+    /** 可选作用域：用于在多场景设计下过滤消息. 例如 "global", "scene:telegram", "scene:home" */
+    scope?: string;
 }
 
 /** LLM 调用选项（可覆盖默认配置） */
@@ -124,7 +126,7 @@ async function callOpenAI(
         headers,
         body: JSON.stringify({
             model,
-            messages,
+            messages: messages.map(m => ({ role: m.role, content: m.content })),
             temperature,
             max_tokens: maxTokens,
         }),

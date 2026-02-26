@@ -151,7 +151,10 @@ export async function runCodeActSession(
         // ─── 调用 LLM ───
         let llmResponse: LLMResponse;
         try {
-            llmResponse = await callLLM(messages, llmConfig);
+            const visibleMessages = messages.filter(m =>
+                !m.scope || m.scope === "global" || m.scope === `scene:${currentScene}`
+            );
+            llmResponse = await callLLM(visibleMessages, llmConfig);
         } catch (err: unknown) {
             const errorMsg =
                 err instanceof Error ? err.message : String(err);
@@ -169,7 +172,7 @@ export async function runCodeActSession(
         }
 
         const assistantText = llmResponse.content;
-        messages.push({ role: "assistant", content: assistantText });
+        messages.push({ role: "assistant", content: assistantText, scope: `scene:${currentScene}` });
 
         // ─── 解析 response ───
         const { thinking, codeBlocks } = parseResponse(assistantText);
@@ -268,17 +271,25 @@ export async function runCodeActSession(
                         return `- ${e.type}: ${preview}`;
                     })
                     .join("\n");
-                observation += `\n\n[📬 新通知到达 (${newEvents.length} 条)]\n${eventSummary}`;
+                messages.push({
+                    role: "user",
+                    content: `[📬 新通知到达 (${newEvents.length} 条)]\n${eventSummary}`,
+                    scope: "global"
+                });
             }
         }
 
         // --- 根据最终的 sceneState 决定是否结束 Session 交给新 Scene ---
         const lastResult = turn.executionResults[turn.executionResults.length - 1];
         if (lastResult?.sceneState && lastResult.sceneState !== currentScene) {
-            observation += `\n\n[系统] 已控制权转移至新场景: ${lastResult.sceneState}`;
             if (observation.trim()) {
-                messages.push({ role: "user", content: observation });
+                messages.push({ role: "user", content: observation, scope: `scene:${currentScene}` });
             }
+            messages.push({
+                role: "user",
+                content: `[系统] 已控制权转移至新场景: ${lastResult.sceneState}`,
+                scope: "global"
+            });
             return {
                 sessionId,
                 turns,
@@ -290,7 +301,7 @@ export async function runCodeActSession(
 
         // 将 observation 作为 user 消息追加
         if (observation.trim()) {
-            messages.push({ role: "user", content: observation });
+            messages.push({ role: "user", content: observation, scope: `scene:${currentScene}` });
         }
     }
 

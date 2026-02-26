@@ -282,8 +282,8 @@ async function mainEventLoop(
 ): Promise<void> {
     log.info("进入主事件循环");
 
-    // ─── 维护多场景 session ───
-    const sceneSessions = new Map<string, ChatMessage[]>();
+    // ─── 维护唯一的长生命周期 session ───
+    const messages: ChatMessage[] = [];
 
     while (true) {
         // ─── 等待事件 ───
@@ -332,29 +332,25 @@ async function mainEventLoop(
         let isFirstTurnOfBatch = true;
 
         while (true) {
-            let messages = sceneSessions.get(activeScene);
-            if (!messages) {
-                messages = [];
-                sceneSessions.set(activeScene, messages);
+            // 移除旧的系统 prompt（如果在头两行的话）
+            if (messages.length > 0 && messages[0].role === "system") {
+                messages.shift();
             }
 
-            // 更新 system prompt
+            // 更新 system prompt，必须作为首位插入
             const agentState = loadAgentState();
             const sceneDef = sceneManager.getScene(activeScene);
             const typeDefs = sceneDef?.typeDefs ?? "";
             const currentSystemPrompt = `${systemPrompt}\n\n[System Inject] 当前场景: ${activeScene}\n类型定义:\n\`\`\`typescript\n${typeDefs}\n\`\`\`\nAgent State:\n${agentState}`;
 
-            if (messages.length === 0) {
-                messages.push({ role: "system", content: currentSystemPrompt });
-            } else {
-                messages[0] = { role: "system", content: currentSystemPrompt };
-            }
+            messages.unshift({ role: "system", content: currentSystemPrompt, scope: "global" });
 
             if (isFirstTurnOfBatch) {
                 const eventText = formatEvents(events);
                 messages.push({
                     role: "user",
-                    content: `[新事件到达] (${events.length} 条)\n${eventText}\n请处理以上事件。你可以切换场景来使用不同的 API。处理完毕后不要输出代码块即可。`
+                    content: `[新事件到达] (${events.length} 条)\n${eventText}\n请处理以上事件。你可以切换场景来使用不同的 API。处理完毕后不要输出代码块即可。`,
+                    scope: "global"
                 });
                 isFirstTurnOfBatch = false;
             }
@@ -370,31 +366,15 @@ async function mainEventLoop(
                 );
 
                 if (result.endReason === "scene_changed" && result.nextScene) {
-                    messages.push({
-                        role: "user",
-                        content: `[系统] 已离开此场景，控制权转移至 ${result.nextScene}。`
-                    });
-
                     try {
                         sceneManager.enter(result.nextScene);
-                        const oldScene = activeScene;
                         activeScene = result.nextScene;
-
-                        let nextMessages = sceneSessions.get(activeScene);
-                        if (!nextMessages) {
-                            nextMessages = [];
-                            sceneSessions.set(activeScene, nextMessages);
-                        }
-                        // 追加切换提示
-                        nextMessages.push({
-                            role: "user",
-                            content: `[系统] 已从 ${oldScene} 场景切入。请继续处理事件与执行代码。`
-                        });
-                        continue; // 继续外层 while 循环，进入新场景的 Session！
+                        continue; // 继续外层 while 循环重新拼装 system prompt 切入新阶段
                     } catch (e: any) {
                         messages.push({
                             role: "user",
-                            content: `[⚠ 严重错误] 尝试进入场景 ${result.nextScene} 失败。场景不存在！`
+                            content: `[⚠ 严重错误] 尝试进入场景 ${result.nextScene} 失败。场景不存在！`,
+                            scope: "global"
                         });
                         continue;
                     }
@@ -418,7 +398,7 @@ async function mainEventLoop(
                     log.error("Compaction 失败", { error: compErrMsg });
                 }
 
-                // Rolling Truncation: 如果太长，截断它。保留 System prompt, 和最后 10 条
+                // Rolling Truncation: 如果太长，截断它。由于消息带有 scope，全局截断可能会稍微粗暴，但仍然有效
                 if (messages.length > 25) {
                     const sys = messages[0];
                     const tail = messages.slice(-10);
@@ -427,7 +407,8 @@ async function mainEventLoop(
                     messages.push(sys);
                     messages.push({
                         role: "user",
-                        content: `[系统] 由于上下文长度限制，在此之前的 ${omitted} 条场景对话记录已被压缩归档并从上下文中移除。`
+                        content: `[系统] 由于上下文长度限制，在此之前的 ${omitted} 条场景对话记录已被压缩归档并从上下文中移除。`,
+                        scope: "global"
                     });
                     messages.push(...tail);
                 }
