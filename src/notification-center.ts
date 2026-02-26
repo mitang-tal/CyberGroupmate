@@ -141,34 +141,86 @@ export class NotificationCenter {
     /**
      * 异步等待并批量取出事件
      *
-     * @param timeout - 最大等待时间（毫秒），0 表示不等待
+     * @param timeout - 队列为空时的最大等待时间（毫秒），0 表示不等待
      * @param maxBatch - 单次最多取出的事件数，默认 50
+     * @param batchWindow - 队列非空时的静默收集窗口（毫秒），默认 30000ms。若期间无重要/紧急提及事件，则暂不弹出，让消息聚合
      * @returns 事件数组（可能为空）
      */
     async drain(
-        timeout: number = 5000,
-        maxBatch: number = 50
+        timeout: number = 30000,
+        maxBatch: number = 50,
+        batchWindow: number = 30000
     ): Promise<NotificationEvent[]> {
-        // 如果队列为空且 timeout > 0，等待新事件或超时
-        if (this.queue.length === 0 && timeout > 0) {
-            await new Promise<void>((resolve) => {
-                const timer = setTimeout(() => {
-                    const idx = this.waiters.indexOf(wrappedResolve);
-                    if (idx !== -1) this.waiters.splice(idx, 1);
-                    resolve();
-                }, timeout);
+        const startTime = Date.now();
 
-                const wrappedResolve = () => {
-                    clearTimeout(timer);
-                    resolve();
-                };
-                this.waiters.push(wrappedResolve);
-            });
+        const isUrgent = (event: NotificationEvent) => {
+            if (event._urgent) return true;
+            if (event.type !== "telegram.message") return true;
+
+            // 包含提及、回复或其他紧急属性时视作急迫事件
+            if (event.mentioned || event.replyToMessageId || event.replyTo) return true;
+
+            const text = (typeof event.text === "string" ? event.text : "").toLowerCase();
+            // 在缺乏精准 API 判断的情况下，通过文字嗅探
+            if (text.includes("@miu") || text.includes("miu") || text.includes("?") || text.includes("？") || text.includes("呢") || text.includes("吗")) {
+                return true;
+            }
+
+            return false;
+        };
+
+        while (true) {
+            const now = Date.now();
+
+            // 如果队列空，等待直到有消息或硬超时
+            if (this.queue.length === 0) {
+                const remaining = timeout - (now - startTime);
+                if (remaining <= 0) break;
+                await this.waitForWakeup(remaining);
+                continue;
+            }
+
+            // 如果队列中有紧急消息，立即触发处理
+            if (this.queue.some(isUrgent)) {
+                break;
+            }
+
+            // 如果队列中有非紧急消息，我们看看它有多老
+            if (batchWindow > 0) {
+                const oldestTs = new Date(this.queue[0]._ts).getTime();
+                const windowRemaining = (oldestTs + batchWindow) - now;
+
+                if (windowRemaining <= 0) {
+                    // 已在队列中积攒了 batchWindow 时间，该处理了
+                    break;
+                }
+
+                // 还没有积攒满 batchWindow 时间，继续等待（中间可能被新的紧急消息打断唤醒）
+                await this.waitForWakeup(windowRemaining);
+                continue;
+            }
+
+            break; // 不需要批处理，直接返回
         }
 
-        // 取出最多 maxBatch 条事件
         const batch = this.queue.splice(0, maxBatch);
         return batch;
+    }
+
+    private waitForWakeup(ms: number): Promise<void> {
+        return new Promise<void>((resolve) => {
+            const timer = setTimeout(() => {
+                const idx = this.waiters.indexOf(wrappedResolve);
+                if (idx !== -1) this.waiters.splice(idx, 1);
+                resolve();
+            }, ms);
+
+            const wrappedResolve = () => {
+                clearTimeout(timer);
+                resolve();
+            };
+            this.waiters.push(wrappedResolve);
+        });
     }
 
     /**
