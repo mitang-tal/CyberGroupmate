@@ -1,7 +1,6 @@
 # Runtime workspace (ignore runtime files, keep agent docs)
-workspace/
+workspace/*
 !workspace/agent-docs/
-!workspace/agent-docs/**
 *.db
 *.db-wal
 *.db-shm
