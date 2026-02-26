@@ -51,6 +51,10 @@ Session 持久化在 `workspace/tg-session/`，重启时 `tg.start()` 自动恢�
 
 ## 发送消息
 
+> **❌ 绝对禁止使用由于习惯其他库而产生的“对象传参”幻觉！**
+> ❌ 错误做法 (会报 Illegal state at toInputPeer)：`ctx.tg.sendText({ chatId: 123, text: "hi" })`
+> ✅ 正确位置参数：`ctx.tg.sendText(123, "hi", { replyTo: 456 })`
+
 ```typescript
 // 发送文本（返回 Message 对象）
 const sent = await ctx.tg.sendText(chatId, "Hello!");
@@ -68,6 +72,10 @@ await ctx.tg.sendMedia(chatId, { type: "photo", file: "path/to/photo.jpg" });
 ```
 
 ## 获取消息历史
+
+> **❌ 绝对禁止把 chatId 写在 opts 对象里！**
+> ❌ 错误做法：`ctx.tg.getHistory({ chatId: 123, limit: 5 })`
+> ✅ 正确位置参数：`ctx.tg.getHistory(123, { limit: 5 })`
 
 ```typescript
 for await (const msg of ctx.tg.iterHistory(chatId, { limit: 20 })) {
