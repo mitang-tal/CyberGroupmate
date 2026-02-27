@@ -34,7 +34,20 @@
 | 4.6 | Bootstrap 改进 | ✅ 完成 | 具体 mtcute 代码示例 (bot/userbot)；登录流程 + OTP 交互；docs 注入到 sandbox |
 | 4.7 | 跨进程通讯补丁 | ✅ 完成 | NC cross-process fix (buffer offset instead of string slice, fallback polling) |
 | 4.8 | API Docs 与配置补丁 | ✅ 完成 | Mtcute API docs fix (full prototype method reference, Object.keys 警告); Temperature 覆盖 fix |
-| 5.1 | Scene-Bound Sessions | 📝 规划中 | 见下方附录 11.5 节，将单次事件触发的 Session 改为绑定在 Scene 上的长驻持久化 Session |
+| 5.1 | Scene-Bound Sessions | ✅ 完成 | 单一 session + scope 过滤，见 Phase 5 总结 |
+| 6.0 | Memory V2 完全重写 | 📝 TODO | 三层记忆模型（短期/中期/长期）；等待独立设计文档确认后实施 |
+| 6.1 | Air-Reading Engine | 📝 规划中 | 初筛 + 快速路由 + 预热缓存；融合另一个架构的 Triage + Foraging 概念 |
+| 6.2 | Recording Pipeline | 📝 规划中 | 后台话题提取观察者；不回复只记录；双触发缓冲策略 |
+| 6.3 | Reply Pipeline Framework | 📝 规划中 | Advisory / Guided / Enforced 三种模式；适配不同模型能力 |
+| 6.4 | High-Level Action API | 📝 规划中 | 弱模型小抄系统；actions.getContext / recallPerson / reply |
+| 6.5 | Feedback Loop | 📝 规划中 | 发言后 3 分钟评估群友反应；更新 engagement_score |
+| 6.6 | Dry-Run System | 📝 规划中 | 在历史聊天记录上回放模拟 agent 行为；离线评估 |
+| 6.7 | Model Router | 📝 规划中 | 根据事件复杂度选择模型 + pipeline 模式 |
+| 7.1 | Playbook System | 📝 规划中 | SOTA 定期分析生成 GroupPlaybook；注入弱模型上下文 |
+| 7.2 | Skill Auto-Generation | 📝 规划中 | SOTA 介入失败场景 → 写代码/测试/类型 → 生成可复用 Skill |
+| 7.3 | CoT Template Distillation | 📝 规划中 | SOTA 提取典型场景思维链模板；弱模型直接套用 |
+| 7.4 | Cost Control | 📝 规划中 | 每日预算控制器；模型分层策略 |
+| 7.5 | Degradation Strategy | 📝 规划中 | 三级降级：API 超时 → 持续不可用 → 系统异常 |
 
 ---
 
@@ -100,34 +113,54 @@ CyberGroupmate（赛博群友）是一个基于 LLM 的 Telegram 社交智能体
 
 ## 1. 系统架构
 
-### 1.1 总体架构
+### 1.1 总体架构（融合架构 Phase 6+）
+
+本项目在 Phase 5 完成了 CodeAct 执行引擎的基础建设。Phase 6 开始引入第二套架构（结构化决策流水线）的核心理念，形成**三层融合架构**：CodeAct 提供底层执行灵活性，决策流水线提供行为可控性，两者共享统一的记忆系统。
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                    Host Process (Node.js + tsx)               │
-│                                                              │
-│  ┌─────────────┐    ┌──────────────┐    ┌────────────────┐   │
-│  │ Agent Loop   │◄──│ Notification │◄───│ Background     │   │
-│  │ (orchestrator│    │ Center       │    │ Task Manager   │   │
-│  │  + LLM call) │    │ (event queue)│    │ (agent-spawned)│   │
-│  └──────┬───────┘    └──────────────┘    └───────▲────────┘   │
-│         │                                        │            │
-│         │ 提交代码                     stdout / notify()      │
-│         ▼                                        │            │
-│  ┌──────────────────────────────────────────────────────┐    │
-│  │              Code Execution Sandbox                   │    │
-│  │  Node.js subprocess via tsx（持久化命名空间）           │    │
-│  │  预装: @mtcute/node, better-sqlite3 等                │    │
-│  │  注入: runtime (notify/spawn/cron), memory, scene     │    │
-│  └──────────────────────────────────────────────────────┘    │
-│         │                                                     │
-│         ▼                                                     │
-│  ┌──────────────┐    ┌──────────────┐                        │
-│  │ Memory Store  │    │ Event Log    │                        │
-│  │ (SQLite+FTS5) │    │ (JSONL)      │                        │
-│  └──────────────┘    └──────────────┘                        │
-└──────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────┐
+│                     融合后的架构                                    │
+│                                                                   │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │  Layer 3: 决策层 (Decision Layer) — Phase 6 新增             │  │
+│  │  ├── Air-Reading Engine (初筛/深评 + 话题状态机)              │  │
+│  │  ├── Recording Pipeline (后台持续观察记录)                    │  │
+│  │  ├── Reply Pipeline (PERCEIVE→RECALL→THINK→ACT→REMEMBER)    │  │
+│  │  ├── Feedback Loop (发言后反馈评估)                          │  │
+│  │  ├── Model Router (事件→模型+模式 路由)                      │  │
+│  │  └── Dry-Run Engine (历史记录回放评估)                       │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                              │                                     │
+│                     决策结果 + 预加载上下文                         │
+│                              ▼                                     │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │  Layer 2: 执行层 (Execution Layer) — Phase 1-5 已完成        │  │
+│  │  ├── CodeAct Session Runner (单一长 Session + scope 过滤)    │  │
+│  │  ├── Sandbox + Worker (new Function 执行引擎)                │  │
+│  │  ├── Scene System (home/telegram/memory 场景切换)            │  │
+│  │  ├── Background Task Manager (spawn/kill/ps)                 │  │
+│  │  └── Skill Registry (Phase 7 新增：可复用函数库)             │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                              │                                     │
+│                     读写调用                                       │
+│                              ▼                                     │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │  Layer 1: 数据层 (Data Layer) — Phase 6.0 重写               │  │
+│  │  ├── Memory V2 (三层记忆：短期/中期/长期) — TODO              │  │
+│  │  ├── Vector Store (语义检索：sqlite-vec 或 LanceDB)          │  │
+│  │  ├── Playbook Store (SOTA 生成的行为指南)                    │  │
+│  │  ├── Skill Store (自动生成的可复用函数)                      │  │
+│  │  └── Notification Center (已有，增强)                         │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+└───────────────────────────────────────────────────────────────────┘
 ```
+
+**核心设计原则**：
+
+1. **渐进增强**：弱模型走 Enforced Pipeline（系统代执行），SOTA 模型走 Advisory 模式（完全自由 CodeAct）。系统永远有保底行为。
+2. **观察与行动分离**：Recording Pipeline 持续后台运行，不依赖 agent 是否决定回复。
+3. **代码复杂度梯度**：从"零代码"（enforced pipeline 自动执行）到"完全自由"（原始 CodeAct）的完整能力梯度。
+4. **SOTA 知识下沉**：SOTA 模型的判断力通过 Playbook、Skill、CoT 模板"物化"为结构化数据，弱模型可以直接消费。
 
 整个系统是**一个 Node.js 进程**（或一个 container）。不引入消息队列、不引入微服务。
 
@@ -828,6 +861,534 @@ v0.4.0 — Phase 4 完成（稳定性与工具）= MVP
 - 全局轮次或局部数组过长时保留末尾 10 条（加上一条折叠提示）以及开头的动态 `system prompt`。
 
 完成后打 tag `v0.4.0`（= MVP），更新 README 和 CHANGELOG，整理 `docs/architecture.md`。
+
+### Phase 6：社交智能工程化 — 决策层（目标：~3-4 周）
+
+**背景**：Phase 1-5 构建了一个能力极强但完全依赖 SOTA 模型自主决策的 CodeAct 智能体。Phase 6 的目标是在其上叠加一个结构化决策层，使系统在不同模型能力水平下都能稳定运行。同时引入持续观察和反馈闭环机制。
+
+本阶段的设计融合了两套独立架构的优势：
+- **CodeAct 架构**（Phase 1-5）：提供灵活的代码执行能力
+- **流水线架构**（参见 `另一个架构的cybergroupmate.md`）：提供结构化的决策流程、话题管理和反馈闭环
+
+**融合原则——保留什么、不引入什么**：
+
+| 另一个架构的组件 | 是否引入 | 理由 |
+|-----------------|---------|------|
+| 结构化 Triage（初筛/深评） | ✅ | 核心决策逻辑 |
+| 话题状态机（NEW→PENDING→INTERVENED→COOLDOWN） | ✅ | 避免重复处理和连续轰炸 |
+| 预热缓存 + 知识觅食 | ✅ | 并行执行内搜外搜，减少延迟 |
+| 反馈回路（engagement_score） | ✅ | 行为自我校正 |
+| 三级降级策略 | ✅ | 系统韧性 |
+| 每日预算控制 | ✅ | 成本可控 |
+| 25秒超时硬上限 | ✅ | 宁可沉默不迟到 |
+| Recording Agent（持续记录不回复） | ✅ 概念引入 | 用简单 array+timer 实现，不引入 RxJS |
+| Markdown 文件存储 | ❌ | SQLite 更适合关联查询和事务 |
+| Monorepo (pnpm + Turborepo) | ❌ | 当前单包结构足够 |
+| RxJS 消息缓冲 | ❌ 概念引入，不引入库 | 用简单的 array + timer 实现相同效果 |
+| Vercel AI SDK | ❌ | 已有 `callLLM` 封装 |
+| LanceDB | ⚠️ 待评估 | 先用 sqlite-vec 或 FTS5 替代，性能不足再引入 |
+| chokidar 文件监听 | ❌ | 不用 Markdown 文件就不需要 |
+| XState 状态机 | ❌ | 话题状态简单，用 enum + 函数即可 |
+| Langfuse 追踪 | ⚠️ 后续引入 | 对 LLM 调用可观测性有价值 |
+| `/forget` 隐私命令 | ⚠️ 后续引入 | 合规需要 |
+
+#### Task 6.0 — Memory V2 完全重写 [TODO]
+
+**状态**：设计中，等待独立设计文档确认后实施。
+
+**已确认的方向**：
+- 现有的三张扁平表（`memories`, `person_profiles`, `conversation_log`）全部废弃重建
+- 新结构应支持三层记忆模型：
+  - **短期记忆（Working Memory）**：当前 session 的上下文，已有 scope 机制基本满足
+  - **中期记忆（Episodic + Social Memory）**：话题节点、个体画像（PersonModel）、群组模型（GroupModel）、交互日志、话题-用户/话题-话题关联图谱
+  - **长期记忆（Semantic / Identity）**：核心事实、Playbook、人格本体
+- 个体画像应支持邓巴数分层（Tier 1 核心 ≤15人，Tier 2 熟悉 ≤50人，Tier 3 认识 ≤150人，Tier 4 陌生人）
+- 向量搜索引入（sqlite-vec 或 LanceDB 待评估）
+- 统一检索入口 `recall()`：向量冷启动 → 受限 BFS 图遍历 → Token 预算控制
+- Compaction 保留但输出目标改为写入新的三层结构
+- 存储引擎继续使用 SQLite（关联查询优势 + 已有基础），可选提供 Markdown 导出命令用于 Obsidian 检视
+
+**依赖**：独立设计文档完成后，此 Task 的交付物、表结构和接口定义将在此处补充。
+
+#### Task 6.1 — Air-Reading Engine
+
+**职责**：在事件从 NotificationCenter drain 出来之后、交给 CodeAct session 之前，进行结构化评估和路由。
+
+**核心组件**：
+
+1. **Fast Router（快速路由）**：
+   - 被直接 @、回复、私聊 → 标记为 `FAST_PATH`，跳过初筛
+   - 普通群聊消息 → 进入完整评估流水线
+
+2. **Triage（初筛）**：
+   - 使用便宜模型（如 Gemini Flash / GPT-4o-mini）
+   - 输出结构化判断：`should_intervene`, `reason`, `intervention_type`, `confidence`
+   - `confidence < 0.6` 一律不介入
+   - intervention_type 枚举：FACTUAL_CORRECTION, KNOWLEDGE_GAP, QUESTION_ANSWER, RESOURCE_SHARING, CONFLICT_MEDIATION, CONSENSUS_SUMMARY, NOT_APPLICABLE
+
+3. **预热缓存（Preload）**：
+   - 初筛通过后，立即并行启动记忆检索（`memory.recall()`）
+   - 结果附加到事件对象上，后续 pipeline 直接使用
+
+4. **话题状态机**：
+   - 状态枚举：NEW → PENDING_SEARCH → IGNORED / IGNORED_LOW_VALUE → INTERVENED → COOLDOWN → PENDING_FEEDBACK
+   - IGNORED 状态有 TTL（默认 10 分钟），过期自动回退为 NEW
+   - 话题内容显著偏移时（关键词重合度 < 30%）自动重置为 NEW
+
+5. **超时硬上限**：
+   - 整条评估管线最大 25 秒
+   - 超时后静默，不发迟到消息
+
+**输出**：每个事件被标注 `decision`（PROCESS / IGNORE）和 `pipelineMode`（FULL_CODEACT / GUIDED / ENFORCED）。
+
+#### Task 6.2 — Recording Pipeline
+
+**职责**：后台持续运行的观察者任务，将群聊消息结构化沉淀到记忆系统。与 agent 是否决定回复无关。
+
+**设计**：
+- 作为后台任务（`runtime.spawn`）运行在主进程中
+- 消息缓冲：双触发策略——满 40 条 OR 静默 5 分钟，取先到者（概念来自另一个架构的 RxJS bufferTime+bufferCount，但用简单的 array+timer 实现）
+- 两步话题切分：
+  1. 消息级话题标注（便宜模型）：利用 `reply_to_message_id` 作为聚类强信号
+  2. 按 tag 分组后结构化总结（便宜模型）
+- 输出写入 Memory V2 的话题表（topics）和个体画像更新
+- 同时更新向量索引
+
+**与 Compaction 的关系**：
+- Recording Pipeline 是**主动式**记忆积累（不管 agent 有没有参与对话都在记录）
+- Compaction 是**被动式**记忆提取（只在 agent 参与的 session 结束后触发）
+- 两者互补，不冲突
+
+#### Task 6.3 — Reply Pipeline Framework
+
+**职责**：规范化 agent 的回复行为，根据模型能力提供不同程度的流程引导。
+
+**三种模式**：
+
+| 模式 | 适用场景 | 实现方式 |
+|------|---------|---------|
+| **Advisory**（建议性） | SOTA 模型 + 复杂场景 | system prompt 中描述推荐流程，不强制。agent 保留完全 CodeAct 自由度 |
+| **Guided**（引导性） | 中等模型 + 一般场景 | 系统预加载上下文注入 prompt，每个 stage 有提示。agent 在框架内写代码 |
+| **Enforced**（强制性） | 弱模型 + 简单场景 | 系统代码硬编码执行 pipeline 各阶段，模型只在 THINK 和 ACT 阶段填充内容，不需要写代码 |
+
+**Pipeline 阶段**（Guided/Enforced 模式执行）：
+
+```
+Stage 1: PERCEIVE (感知)
+├── 自动注入：当前通知摘要
+├── 自动/引导执行：读取最近 N 条群聊消息获取上下文
+└── 输出：context_summary
+
+Stage 2: RECALL (回忆)
+├── 自动执行：根据消息发送者查询 PersonModel
+├── 自动执行：根据话题关键词搜索相关记忆
+├── 自动执行：查询与此人的最近交互记录
+└── 输出：memory_context
+
+Stage 3: THINK (思考)
+├── 判断：要不要回复？（基于 GroupModel 的规范）
+├── 判断：用什么语气？（基于 PersonModel.relationToAgent）
+├── 规划：回复的核心内容是什么
+└── 输出：reply_plan
+
+Stage 4: ACT (行动)
+├── 生成回复文本
+├── 执行发送（通过 staging 机制防止误发）
+└── 输出：sent_message_id
+
+Stage 5: REMEMBER (记忆)
+├── 更新 PersonModel（如果有新信息）
+├── 存储本次交互摘要
+└── 更新 agent state
+```
+
+**消息 Staging 机制**：
+- Enforced/Guided 模式下，消息不直接发送，而是进入暂存区 `actions.draft()`
+- 只有走完所有 stage 并通过最终检查后才 `actions.commitDrafts()` 实际发送
+- 防止弱模型在 debug 过程中误发消息
+
+**Session Runner 集成**：
+- 不替换整个 session runner，而是在 context 组装阶段根据 `pipelineMode` 注入不同的上下文
+- FULL_CODEACT 模式：只给建议流程提示
+- GUIDED 模式：注入预加载的记忆上下文 + 分步引导
+- ENFORCED 模式：系统硬编码执行 pipeline，模型只负责 THINK 和 ACT
+
+#### Task 6.4 — High-Level Action API
+
+**职责**：为弱模型提供"小抄"——高层动作函数，只需伪代码级调用即可完成完整交互。
+
+**注入到 sandbox 的 API**：
+
+```typescript
+declare const actions: {
+  /** 获取群聊最近消息上下文 */
+  getContext(chatId: number, limit?: number): Promise<{
+    messages: Array<{ from: string; text: string; time: string }>;
+    summary: string;
+  }>;
+  
+  /** 查询一个人的所有相关记忆 */
+  recallPerson(userId: string): Promise<{
+    profile: PersonModel | null;
+    recentInteractions: string[];
+    sharedTopics: string[];
+    suggestedTone: string;
+  }>;
+  
+  /** 暂存一条回复（不立即发送） */
+  draft(chatId: number, content: string, options?: { replyTo?: number }): void;
+  
+  /** 实际发送所有暂存回复 */
+  commitDrafts(): Promise<Array<{ messageId: number }>>;
+  
+  /** 判断是否应该回复 */
+  shouldReply(chatId: number, messageId: number): Promise<{
+    should: boolean;
+    reason: string;
+  }>;
+  
+  /** 搜索相关记忆 */
+  searchMemory(keywords: string[]): Promise<string[]>;
+};
+```
+
+**与底层 API 的关系**：
+- SOTA 模型仍然可以使用底层的 `ctx.tg.getMessages()` + `memory.search()` 等原始 API
+- 弱模型推荐使用 `actions.*` 高层 API
+- 两套 API 共存，在 system prompt 中根据模型能力推荐使用哪一套
+
+#### Task 6.5 — Feedback Loop
+
+**职责**：agent 发言后，评估群友反应，反馈到记忆系统调整未来行为。
+
+**流程**：
+1. Agent 发送消息后，启动一个 3 分钟的观察窗口
+2. 窗口结束后，获取后续消息
+3. 用便宜模型评估：`is_response_to_bot`, `sentiment` (positive/negative/neutral), `triggered_further_discussion`
+4. 更新相关话题的 `engagement_score`
+5. 更新 GroupModel 的 `bot_engagement_config`
+6. 更新 PersonModel 的 `relationToAgent`（如果有直接互动）
+
+**负面反馈处理**：
+- 连续收到 negative 反馈 → 降低该群的主动介入频率
+- 特定用户的 negative 反馈 → 调整与该用户的交互策略
+
+#### Task 6.6 — Dry-Run System
+
+**职责**：在历史聊天记录上离线模拟 agent 行为，用于评估和调优决策流水线。
+
+**设计**：
+
+```typescript
+interface DryRunConfig {
+  chatId: number;
+  /** 拉取最近 N 天的历史消息 */
+  daysBack: number;
+  /** 使用哪个模型 */
+  model: string;
+  /** 使用哪种 pipeline 模式 */
+  pipelineMode: 'FULL_CODEACT' | 'GUIDED' | 'ENFORCED';
+  /** 是否实际发送消息（false = 只评估不发送） */
+  send: boolean;
+}
+
+interface DryRunResult {
+  totalMessages: number;
+  /** agent 决定回复的消息数 */
+  wouldReply: number;
+  /** agent 决定沉默的消息数 */
+  wouldIgnore: number;
+  /** 每条决定回复的消息的详情 */
+  decisions: Array<{
+    triggerMessage: { from: string; text: string; time: string };
+    decision: 'reply' | 'ignore';
+    reason: string;
+    generatedReply?: string;
+    pipelineTrace: string[];
+  }>;
+  /** 总 token 消耗 */
+  totalTokens: number;
+  /** 总耗时 */
+  totalTimeMs: number;
+}
+```
+
+**实现方式**：
+1. 通过 mtcute 拉取指定群的历史消息
+2. 按时间顺序回放，模拟事件到达
+3. 每条消息经过 Air-Reading Engine 评估
+4. 通过评估的消息进入 Reply Pipeline（但 `send: false` 时不实际发送）
+5. 记录所有决策和生成的回复
+6. 最终输出评估报告
+
+**用途**：
+- 调优初筛的 confidence 阈值
+- 对比不同模型/pipeline 模式的表现
+- 验证 PersonModel 和 GroupModel 的有效性
+- 发现需要修正的行为模式
+
+**CLI 命令**：
+```bash
+npx tsx src/cli.ts dry-run --chat -100123456 --days 7 --model gpt-4o-mini --mode GUIDED
+```
+
+#### Task 6.7 — Model Router
+
+**职责**：根据事件的复杂度和重要性，自动选择合适的模型和 pipeline 模式。
+
+**路由规则**：
+
+| 事件类型 | 模型选择 | Pipeline 模式 |
+|---------|---------|-------------|
+| 直接 @ 或私聊 + 复杂问题 | SOTA (Claude Sonnet 4 / GPT-4o) | FULL_CODEACT |
+| 直接 @ 或私聊 + 简单问题 | Mid-tier (GPT-4o-mini) | GUIDED |
+| 群聊主动介入 + 高 confidence | Mid-tier | GUIDED |
+| 群聊主动介入 + 低 confidence | Cheap (Gemini Flash) | ENFORCED |
+| 定时任务（Playbook 生成等） | SOTA | N/A（专用流程） |
+| Recording Pipeline | Cheap | N/A（专用流程） |
+| Triage 初筛 | Cheap | N/A |
+| Feedback 评估 | Cheap | N/A |
+
+**复杂度评估信号**：
+- 消息长度
+- 是否包含问题
+- 是否涉及多人讨论
+- 话题的 `engagement_score` 历史
+- 发送者的 Dunbar tier（核心用户用更好的模型）
+
+**配置化**：路由规则通过 `config.yaml` 配置，支持热更新。
+
+---
+
+### Phase 7：SOTA 指导 + 技能自动化（目标：~2-3 周）
+
+**背景**：Phase 6 解决了"弱模型如何被流水线引导"的问题。Phase 7 进一步解决"SOTA 模型的智慧如何持久化、下沉给弱模型复用"的问题。
+
+#### Task 7.1 — Playbook System
+
+**职责**：SOTA 模型定期分析群聊，生成结构化的行为指南（Playbook），供弱模型在交互时参考。
+
+**Playbook 结构**：
+
+```typescript
+interface GroupPlaybook {
+  generatedAt: string;
+  generatedBy: string;       // 生成模型名
+  validUntil: string;        // 过期时间
+  chatId: string;
+
+  // 群聊总体氛围
+  currentMood: string;
+  hotTopics: string[];
+
+  // 针对每个活跃成员的交互指南
+  memberGuides: Array<{
+    userId: string;
+    displayName: string;
+    recentBehavior: string;
+    recommendedTone: string;
+    topicsToEngage: string[];
+    topicsToAvoid: string[];
+    exampleReplies: Array<{
+      theirMessage: string;
+      goodReply: string;
+      badReply: string;
+      reasoning: string;
+    }>;
+  }>;
+
+  // 什么时候该说话、什么时候该沉默
+  engagementRules: Array<{
+    condition: string;
+    action: 'reply' | 'react' | 'ignore';
+    reasoning: string;
+  }>;
+}
+```
+
+**生成频率**：
+- 每日一次（定时任务），或群聊活跃度显著变化时触发
+- 使用 SOTA 模型分析当天的话题摘要（来自 Recording Pipeline）
+- 存储到 Memory V2 的 Playbook 表
+
+**消费方式**：
+- Guided/Enforced 模式下，`recall()` 自动加载当前有效的 Playbook
+- 注入到 LLM prompt 的 memory_context 部分
+- 弱模型不需要自己判断"这个人喜欢什么"，查 Playbook 即可
+
+#### Task 7.2 — Skill Auto-Generation（SOTA 介入 + 自动建技能）
+
+**职责**：当弱模型连续执行失败时，SOTA 模型自动介入，分析失败原因，编写可复用的 Skill 函数，供弱模型后续直接调用。
+
+**触发条件**：
+- 同一类型的操作连续失败 N 次（默认 3 次）
+- 弱模型在同一 session 内 debug 轮次超过阈值（默认 5 轮）
+
+**SOTA 介入流程**：
+
+```
+弱模型连续失败 → 系统检测到失败模式 → 暂停弱模型 session
+    → 将失败上下文（代码 + 错误信息 + 意图）提交给 SOTA 模型
+    → SOTA 模型生成：
+        1. 可复用函数代码（解决这类问题的通用方案）
+        2. 函数的类型定义（.d.ts）
+        3. 测试用例（验证函数正确性）
+        4. 使用说明（自然语言，注入到 agent-docs）
+    → 在 sandbox 中执行测试验证
+    → 测试通过 → 注册为 Skill
+    → 恢复弱模型 session，告知新 Skill 可用
+```
+
+**Skill 存储结构**：
+
+```typescript
+interface Skill {
+  id: string;                 // skill_<name>_<version>
+  name: string;               // 函数名，如 "replyInGroup"
+  description: string;        // 一句话描述
+  code: string;               // 函数实现代码
+  typeDef: string;            // .d.ts 类型定义
+  testCode: string;           // 测试代码
+  createdBy: string;          // 生成该 Skill 的 SOTA 模型
+  createdAt: string;
+  usageCount: number;         // 被调用次数
+  successRate: number;        // 成功率
+  triggerPattern: string;     // 什么场景下推荐使用此 Skill
+}
+```
+
+**Skill 注入方式**：
+- Skill 的类型定义追加到对应场景的 `.d.ts` 中
+- Skill 的实现代码在 sandbox 启动时预加载到 `globalThis`
+- system prompt 中列出可用 Skill 及使用示例
+- 弱模型可以直接调用 `skills.replyInGroup(chatId, content)` 等
+
+**Skill 生命周期**：
+- 新创建的 Skill 标记为 `experimental`
+- 被成功使用 5 次以上 → 标记为 `stable`
+- 连续失败 3 次 → 标记为 `deprecated`，通知 SOTA 模型重新生成
+
+#### Task 7.3 — CoT Template Distillation
+
+**职责**：SOTA 模型从成功的交互中提取思维链模板，弱模型在类似场景下直接套用。
+
+**模板结构**：
+
+```markdown
+## 模板：有人在群里@你问问题
+触发条件：收到 telegram.message 事件，_urgent=true，消息中包含问题标记
+1. 先调用 actions.getContext(chatId, 10) 了解最近话题
+2. 调用 actions.recallPerson(userId) 了解提问者
+3. 判断这个问题我是否有能力/适合回答
+4. 如果能回答：用和提问者平时聊天一致的语气回复
+5. 如果不确定：承认不确定，或者幽默地转移话题
+6. 不要回复太长，群聊不适合长篇大论
+
+## 模板：群里在讨论一个你感兴趣的话题
+触发条件：triage.should_intervene=true, intervention_type=KNOWLEDGE_GAP
+1. 先看是否已经有很多人在讨论
+2. 如果讨论很热烈，不要强行插入
+3. 如果有空隙，可以简短地发表一下看法
+4. 不要接连发多条消息
+```
+
+**生成方式**：
+- SOTA 模型在成功处理场景后，系统自动提取其决策过程
+- 定期批量总结为模板
+- 存储在 `workspace/agent-docs/` 目录中，通过 `docs.read()` 被 agent 读取
+
+#### Task 7.4 — Cost Control
+
+**职责**：控制 LLM API 调用成本。
+
+**每日预算控制器**：
+
+```typescript
+interface DailyBudget {
+  maxTokens: number;         // 默认 500,000
+  currentTokens: number;
+  maxAPICalls: number;       // 默认 200
+  currentAPICalls: number;
+  date: string;
+}
+```
+
+- 预算耗尽后自动切换为 PASSIVE_ONLY 模式（只响应直接 @，不主动介入）
+- 跨天自动重置
+- 通过 `config.yaml` 配置
+
+**模型分层成本策略**：
+
+| 调用点 | 推荐模型 | 原因 |
+|--------|----------|------|
+| Recording Pipeline 话题标注/总结 | Cheap (Gemini Flash) | 高频，需最低成本 |
+| Triage 初筛 | Cheap | 高频，快速判断 |
+| Deep Assessment 深评 | SOTA | 低频，需要高质量推理 |
+| Main Agent 生成回复 | 按 Model Router 分配 | 视复杂度而定 |
+| Feedback 评估 | Cheap | 低复杂度分类任务 |
+| Playbook 生成 | SOTA | 低频（每日一次），需要深度分析 |
+| Skill 生成 | SOTA | 极低频，需要最强代码能力 |
+| Embedding | text-embedding-3-small | 最便宜的 Embedding |
+
+#### Task 7.5 — Degradation Strategy
+
+**职责**：系统异常时的优雅降级。
+
+**三级降级**：
+
+| 级别 | 触发条件 | 行为 |
+|------|---------|------|
+| Level 1 | API 连续失败 3-9 次 | 自动重试 + 使用缓存结果 + 切换到更便宜的备用模型 |
+| Level 2 | API 连续失败 ≥10 次 | 停止主动介入，仅保留被 @ 响应；使用纯记忆检索（无 Web Search）|
+| Level 3 | 文件系统异常 / 数据库损坏 | 所有 Agent 停止工作；向管理员发送告警 |
+
+- 降级状态自动恢复：连续 3 次成功调用后，Level 2 → Level 1 → Normal
+- 降级状态持久化到文件，重启后恢复
+
+---
+
+### Phase 6-7 实施路线图
+
+#### Phase 6A：基础管线 + Dry-Run（~2 周）
+
+| Task | 内容 | 依赖 | 估时 |
+|------|------|------|------|
+| 6.0 | Memory V2 完全重写 | 独立设计文档 | TODO |
+| 6.1 | Air-Reading Engine（初筛 + 快速路由 + 话题状态机） | NC | 3天 |
+| 6.2 | Recording Pipeline（后台话题提取） | 6.0 (或临时用现有 memory) | 3天 |
+| 6.6 | Dry-Run System（历史回放评估） | 6.1 | 2天 |
+| 6.7 | Model Router（事件→模型+模式路由） | 6.1, config | 1天 |
+
+#### Phase 6B：Reply Pipeline + Action API（~2 周）
+
+| Task | 内容 | 依赖 | 估时 |
+|------|------|------|------|
+| 6.3 | Reply Pipeline Framework（三种模式） | 6.1, session-runner | 3天 |
+| 6.4 | High-Level Action API（弱模型小抄） | 6.0, sandbox | 2天 |
+| 6.5 | Feedback Loop（发言后评估） | 6.3 | 2天 |
+| — | 集成测试：Dry-Run 对比不同模式表现 | 6.3, 6.6 | 2天 |
+
+#### Phase 7：SOTA 知识下沉（~2-3 周）
+
+| Task | 内容 | 依赖 | 估时 |
+|------|------|------|------|
+| 7.1 | Playbook System（SOTA 定期生成行为指南） | 6.0, 6.2 | 3天 |
+| 7.2 | Skill Auto-Generation（失败→SOTA 介入→生成 Skill） | sandbox, 6.7 | 4天 |
+| 7.3 | CoT Template Distillation（思维链模板提取） | 7.1 | 2天 |
+| 7.4 | Cost Control（每日预算 + 模型分层） | config | 2天 |
+| 7.5 | Degradation Strategy（三级降级） | 7.4 | 2天 |
+| — | 全链路集成测试 + 真实群运行验证 | 全部 | 3天 |
+
+**Phase 6 验收标准**：
+- Dry-Run 在历史聊天记录上运行，输出评估报告，误触发率 < 20%
+- Guided 模式下弱模型能稳定完成回复流程（不误发消息、不无限 debug）
+- Recording Pipeline 持续运行 24h 无异常，话题提取质量人工验证通过
+
+**Phase 7 验收标准**：
+- Playbook 每日自动生成，内容准确反映群聊动态
+- Skill Auto-Generation 在弱模型失败场景下成功介入并生成可用 Skill ≥ 3 个
+- 弱模型使用 Skill + Playbook 后，Action Success Rate 提升 ≥ 30%
+- 连续运行 48h，成本在预算范围内，无不可恢复崩溃
 
 ---
 
