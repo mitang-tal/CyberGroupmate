@@ -277,7 +277,7 @@ Worker → Host：
 **关键设计**：
 - 每个后台任务被 `guardedRun` 包裹。如果任务抛出异常（非正常取消），自动向 Notification Center 推送 `system.background_error` 事件（包含任务名、错误信息和 stack trace），agent 在下次 poll 到时自己决定是否重启。这是 CodeAct "自动错误反馈 → 自我调试"理念的延伸 [[11]]。
 
-### 2.4 Memory Store
+### 2.4 Memory Store [只在MVP中被提出，在Phase 6 中决定废弃，需要重构]
 
 **职责**：提供记忆的存储、搜索和管理。MVP 基于 better-sqlite3 + FTS5 全文搜索。
 
@@ -886,7 +886,7 @@ v0.4.0 — Phase 4 完成（稳定性与工具）= MVP
 | Monorepo (pnpm + Turborepo) | ❌ | 当前单包结构足够 |
 | RxJS 消息缓冲 | ❌ 概念引入，不引入库 | 用简单的 array + timer 实现相同效果 |
 | Vercel AI SDK | ❌ | 已有 `callLLM` 封装 |
-| LanceDB | ⚠️ 待评估 | 先用 sqlite-vec 或 FTS5 替代，性能不足再引入 |
+| LanceDB | ⚠️ 待评估 | 取决于 Memory V2 的设计 |
 | chokidar 文件监听 | ❌ | 不用 Markdown 文件就不需要 |
 | XState 状态机 | ❌ | 话题状态简单，用 enum + 函数即可 |
 | Langfuse 追踪 | ⚠️ 后续引入 | 对 LLM 调用可观测性有价值 |
