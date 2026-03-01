@@ -1981,25 +1981,643 @@ Agent 在 bootstrap 时从 `process.env` 读取这些值。
 
 ---
 
-## 附录 A：Agent 行为示例
+## 附录 A：Agent 行为示例 [REVISED @Phase-6/7: 完整决策流水线示例]
 
-以下展示完整交互流程，帮助理解组件协作。
+以下通过多个场景展示 Phase 6/7 引入后的完整系统协作流程。
 
-**触发**：NC 收到事件 `{ type: "telegram.message", priority: "high", chatTitle: "二次元研究所", fromUser: "alice", preview: "@CyberGroupmate 你觉得东京有什么好玩的", chatId: -100123456, messageId: 42 }`
+---
 
-**Turn 0 — Home 场景**：Orchestrator 将事件 + agent state + home 类型定义组装成 context 发给 LLM。
+### 场景 1：观察模式 → 话题发现 → 主动介入（典型完整流程）
 
-**Turn 1**：Agent 输出思考 + `scene.enter("telegram")`。Observation 返回 telegram 类型定义。
+**群聊背景**：「二次元研究所」群，日常活跃群，agent 以群友身份潜伏。
 
-**Turn 2**：Agent 写 `const msgs = await ctx.tg.getMessages(-100123456, { limit: 15 })`，console.log 打印最近消息。
+**消息流**（时间线）：
 
-**Turn 3**：`scene.enter("memory")`，然后 `memory.search("alice 东京")`。
+```
+t=0:00   alice: 有人去过京都的岚山吗
+t=0:15   bob: 去过，秋天去的，红叶超美
+t=0:30   carol: 我也想去，但感觉交通很麻烦？
+t=0:45   alice: 对啊从大阪过去要多久
+t=1:10   bob: JR 大概一个半小时？但是我记得有更快的
+t=1:25   dave: 坐阪急转�的电车更快，一小时出头
+t=1:40   carol: 哇感觉好复杂
+t=1:55   alice: 有没有那种一日券之类的
+t=2:05   bob: 好像有关西周游券？但我不确定岚山能不能用
+t=2:15   carol: 而且岚山里面的竹林和猴子公园值得去吗
+         ... (更多消息) ...
+t=3:20   [缓冲区累计 50 条] → Recording Pipeline flush 触发
+```
 
-**Turn 4**：`scene.enter("telegram")`，然后 `await ctx.tg.sendText(-100123456, "...")`。
+**Phase ①：Recording Pipeline 话题提取**
 
-**Turn 5**：`scene.enter("memory")`，调用 `memory.store(...)` 和 `memory.updatePerson(...)`。Agent 表示处理完毕。
+Recording Pipeline 缓冲区满 50 条，触发 flush。
 
-**Session 结束** → Compaction 自动执行 → Agent state 更新。
+```
+┌─ Recording Pipeline Step 1: 话题聚类 (Gemini Flash, ~2s) ─┐
+│                                                            │
+│  输入: 50 条消息 + TopicRegistry 中已有的 ACTIVE 话题列表    │
+│                                                            │
+│  LLM 输出:                                                  │
+│  {                                                          │
+│    "topics": [                                              │
+│      {                                                      │
+│        "id": "NEW_TOPIC_1",                                 │
+│        "label": "京都岚山旅行攻略",                           │
+│        "messages": [msg_1, msg_2, ..., msg_18],             │
+│        "participants": ["alice", "bob", "carol", "dave"],    │
+│        "keywords": ["京都", "岚山", "交通", "红叶", "一日券"]  │
+│      },                                                     │
+│      {                                                      │
+│        "id": "EXISTING_topic_01j8...",                       │
+│        "label": "新番讨论（续）",                              │
+│        "messages": [msg_19, msg_20, ..., msg_35],           │
+│        "note": "延续已有话题"                                 │
+│      },                                                     │
+│      {                                                      │
+│        "id": "NEW_TOPIC_2",                                 │
+│        "label": "群友日常闲聊/水群",                          │
+│        "messages": [msg_36, ..., msg_50],                   │
+│        "participants": ["eve", "frank"],                     │
+│        "keywords": ["摸鱼", "下班"]                          │
+│      }                                                      │
+│    ]                                                        │
+│  }                                                          │
+└─────────────────────────────────────────────────────────────┘
+
+┌─ Recording Pipeline Step 2: 摘要 + Triage (Gemini Flash, ~2.5s) ─┐
+│                                                                    │
+│  对每个话题独立生成摘要并判断是否值得介入:                            │
+│                                                                    │
+│  Topic "京都岚山旅行攻略":                                          │
+│  {                                                                 │
+│    "summary": "alice 想去岚山，bob 和 dave 在讨论交通路线，           │
+│               carol 在问景点推荐，目前没人能确认关西周游券的适用范围",  │
+│    "should_intervene": true,                                       │
+│    "confidence": 0.78,                                             │
+│    "intervention_type": "KNOWLEDGE_GAP",                           │
+│    "reason": "存在具体的事实性问题（交通方式/周游券）且暂无人给出      │
+│              准确答案，agent 的知识可以填补这个空缺"                   │
+│  }                                                                 │
+│                                                                    │
+│  Topic "新番讨论（续）":                                             │
+│  {                                                                 │
+│    "summary": "延续之前的新番讨论，主要是 bob 和 eve 在聊",           │
+│    "should_intervene": false,                                      │
+│    "confidence": 0.82,                                             │
+│    "reason": "话题参与度高且不存在知识空缺，介入无附加价值"            │
+│  }                                                                 │
+│                                                                    │
+│  Topic "群友日常闲聊/水群":                                          │
+│  {                                                                 │
+│    "summary": "eve 和 frank 在聊下班摸鱼",                          │
+│    "should_intervene": false,                                      │
+│    "confidence": 0.91,                                             │
+│    "intervention_type": "NOT_APPLICABLE",                          │
+│    "reason": "纯闲聊，无实质内容"                                    │
+│  }                                                                 │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+**TopicRegistry 更新**：
+- `topic_01jA...`（京都岚山旅行攻略）：`state: ACTIVE → TRIAGING → PRELOADING`
+- `topic_01j8...`（新番讨论）：`state: ACTIVE`，合并新消息
+- `topic_01jB...`（水群）：`state: ACTIVE → IGNORED_LOW_VALUE`
+
+**Phase ②：预热缓存（Preload）**（与 Triage 判定并行启动，~0.3s）
+
+```
+┌─ Preload (并行执行) ─────────────────────────┐
+│  memory.recall("京都 岚山 交通 周游券")        │
+│  → 找到 agent 之前存储的旅行相关记忆 2 条       │
+│                                               │
+│  personModel.get("alice")                     │
+│  → Tier 3 (认识), 之前聊过动漫相关话题          │
+│                                               │
+│  groupModel.get(-100123456)                   │
+│  → 活跃群, bot_engagement_config: "适度主动"    │
+│                                               │
+│  playbook.get(-100123456)                     │
+│  → 加载当日 Playbook (Phase 7.1 生成)           │
+│    engagementRules: "旅行话题可以积极参与"       │
+│    alice.recommendedTone: "轻松友好"            │
+└───────────────────────────────────────────────┘
+```
+
+**Phase ③：Model Router 路由决策**
+
+```
+┌─ Model Router ──────────────────────────────────┐
+│  输入信号:                                        │
+│  - 事件类型: 群聊主动介入                          │
+│  - Triage confidence: 0.78 (中高)                 │
+│  - intervention_type: KNOWLEDGE_GAP               │
+│  - alice Dunbar tier: Tier 3                      │
+│  - 群聊复杂度: 中等（多人讨论，有具体事实性问题）    │
+│                                                   │
+│  路由结果:                                         │
+│  - model: "gpt-4o-mini"                           │
+│  - pipelineMode: "GUIDED"                         │
+│  - reason: "中等复杂度群聊介入, GUIDED 模式足够"    │
+└───────────────────────────────────────────────────┘
+```
+
+**Phase ④：Reply Pipeline（Guided 模式）**
+
+话题状态转换：`PRELOADING → ENGAGED`。对话模式启动。
+
+```
+┌─ Reply Pipeline: GUIDED Mode ──────────────────────────────────────┐
+│                                                                     │
+│  Stage 1: PERCEIVE (系统自动注入)                                     │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │ 最近 18 条消息的结构化摘要（来自 Recording Pipeline）          │    │
+│  │ 话题: 京都岚山旅行攻略                                       │    │
+│  │ 关键问题: 大阪→岚山的交通方式, 关西周游券适用性, 景点推荐     │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│                                                                     │
+│  Stage 2: RECALL (系统自动执行)                                      │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │ Preload 结果注入:                                            │    │
+│  │ - agent 记忆: "去年查过岚山交通，阪急线到桂站转岚电最方便"    │    │
+│  │ - alice 画像: Tier 3, 之前聊过动漫, 轻松友好语气              │    │
+│  │ - Playbook: 旅行话题可以积极参与, 不要过长                    │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│                                                                     │
+│  Stage 3: THINK (LLM 推理 — GPT-4o-mini)                           │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │ System prompt 含:                                            │    │
+│  │ - 人格描述（从 config.yaml）                                  │    │
+│  │ - Playbook 片段                                              │    │
+│  │ - Guided 模式指引: "请基于以下上下文生成回复计划"              │    │
+│  │                                                              │    │
+│  │ LLM 输出:                                                    │    │
+│  │ {                                                            │    │
+│  │   "should_reply": true,                                      │    │
+│  │   "reply_plan": "回答交通问题（阪急+岚电）并补充周游券信息,   │    │
+│  │                   顺便推荐竹林, 控制在 3 句话以内",            │    │
+│  │   "tone": "轻松, 像分享经验的朋友",                           │    │
+│  │   "avoid": "不要太像攻略文, 不要一次说太多"                   │    │
+│  │ }                                                            │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│                                                                     │
+│  Stage 4: ACT (LLM 生成 + Staging)                                  │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │ actions.draft(-100123456,                                    │    │
+│  │   "从大阪去岚山的话坐阪急到桂站然后转岚电最快，大概50分钟     │    │
+│  │    关西周游券可以坐阪急但岚电要另买票 不过岚电本身很便宜       │    │
+│  │    竹林一定要去 早上人少的时候超震撼")                         │    │
+│  │                                                              │    │
+│  │ → Staging 区暂存, 未实际发送                                  │    │
+│  │ → 最终检查通过 → actions.commitDrafts()                       │    │
+│  │ → 消息发出, sent_message_id: 89                               │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│                                                                     │
+│  Stage 5: REMEMBER (系统自动执行)                                    │
+│  ┌─────────────────────────────────────────────────────────────┐    │
+│  │ - 更新话题: interventionCount++, lastAgentReplyAt = now       │    │
+│  │ - agent state: "刚在二次元研究所回复了岚山旅行相关话题"        │    │
+│  └─────────────────────────────────────────────────────────────┘    │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Phase ⑤：Feedback Loop 启动**（3 分钟观察窗口）
+
+```
+t=3:50   [agent 消息发出]
+t=3:55   alice: 哦哦谢谢！阪急转岚电 我记一下
+t=4:10   carol: 竹林早上去 get✓
+t=4:30   bob: 对对 岚电那段确实不贵 好像两三百日元
+t=6:50   [3 分钟窗口结束]
+
+┌─ Feedback Loop (Gemini Flash) ─────────────────────┐
+│  评估后续 7 条消息:                                   │
+│  {                                                   │
+│    "responses_to_bot": 3,                            │
+│    "sentiment": "positive",                          │
+│    "triggered_further_discussion": true,             │
+│    "engagement_score_delta": +0.3                    │
+│  }                                                   │
+│                                                      │
+│  更新:                                                │
+│  - 话题 engagement_score: 0.7 → 1.0                  │
+│  - alice.relationToAgent: "neutral" → "friendly"      │
+│  - GroupModel: 旅行话题参与效果好                      │
+└──────────────────────────────────────────────────────┘
+```
+
+**端到端耗时总结**：
+
+| 阶段 | 耗时 |
+|------|------|
+| Recording Pipeline 缓冲等待 | ~3 min 20 sec（50 条消息累积） |
+| 话题提取 + Triage | ~4.5 sec |
+| Preload | ~0.3 sec（与 Triage 并行） |
+| Model Router | ~10 ms |
+| Reply Pipeline (Guided) | ~3-5 sec |
+| **从缓冲触发到消息发出** | **~8 sec** |
+| **从第一条消息到介入** | **~3 min 28 sec** |
+
+---
+
+### 场景 2：对话模式 → 自然节奏的多轮互动 → 自然结束退出
+
+**承接场景 1**：agent 回复了岚山攻略后，话题状态为 `ENGAGED`，进入对话模式。
+
+```
+t=3:50   [agent 消息发出, topic state=ENGAGED, turnCount=1, maxTurns=6]
+
+t=3:55   alice: 哦哦谢谢！阪急转岚电 我记一下
+         → belongsToEngagedTopic(): CLEARLY_RELATED
+           (timeSinceAgentReply=5s, alice ∈ participantIds)
+         → pendingMessages.push(msg)
+         → scheduleEngagedResponse() 启动
+
+t=4:10   carol: 竹林早上去 get✓
+         → belongsToEngagedTopic(): CLEARLY_RELATED
+         → pendingMessages.push(msg)
+         → 重置 responseTimer（等 carol 说完）
+
+         [等待 6 秒无新消息 → 触发 processEngagedTurn]
+
+┌─ quickTriage (Gemini Flash, ~1.5s) ─────────────────────┐
+│  输入: 2 条新消息 + 话题上下文                             │
+│  {                                                       │
+│    "identityProbing": 0.0,                               │
+│    "shouldContinue": false,                              │
+│    "naturalConclusion": true,                            │
+│    "reason": "两位用户都在表示感谢和记录，                  │
+│              没有新的问题，不需要再补充"                     │
+│  }                                                       │
+│  → 判定: NATURAL_CONCLUSION                               │
+│  → exitStyle: SILENT_WITHDRAWAL                           │
+│  → 不发最后一条消息（对方只是在感谢，回"不客气"反而刻意）    │
+└──────────────────────────────────────────────────────────┘
+
+话题状态: ENGAGED → COOLDOWN (cooldownMinutes=5)
+```
+
+**但如果 alice 追问了呢？** 另一种分支：
+
+```
+t=3:55   alice: 那岚山一天够玩吗？还是要住一晚
+         → belongsToEngagedTopic(): CLEARLY_RELATED
+         → pendingMessages.push(msg)
+         → scheduleEngagedResponse()
+
+         [calculateNaturalDelay: 消息 44 字, 基础延迟 5s + 随机 3s = ~8s]
+         [等待 8 秒]
+
+┌─ quickTriage (Gemini Flash, ~1.5s) ──────────────┐
+│  {                                                │
+│    "identityProbing": 0.0,                        │
+│    "shouldContinue": true,                        │
+│    "naturalConclusion": false,                    │
+│    "replyHint": "回答一天是否够用，建议行程安排"    │
+│  }                                                │
+└───────────────────────────────────────────────────┘
+
+→ Reply Pipeline (Guided, turnCount=2)
+→ 生成回复: "一天够的 岚山+嵯峨野半天 下午可以去金阁寺 不用住那边"
+→ 发出 (sent_message_id: 93)
+
+t=4:20   alice: 好的好的 太有帮助了！
+         → quickTriage → naturalConclusion: true
+         → exitStyle: FADE_OUT
+         → 生成最后回复: "玩得开心～"
+
+t=4:28   [最后回复发出, turnCount=3]
+         → topic state: ENGAGED → EXITING → COOLDOWN (cooldownMinutes=5)
+```
+
+---
+
+### 场景 3：直接 @ → Fast Path → SOTA + FULL_CODEACT 模式
+
+**触发**：有人直接 @ agent 问了一个复杂问题。
+
+```
+t=0:00   alice: @CyberGroupmate 你能帮我查一下上周三群里讨论过的那个
+         关于 Rust 和 Go 性能对比的结论吗？我记得有人贴了个 benchmark 链接
+```
+
+**Phase ①：Fast Router**
+
+```
+┌─ Fast Router ────────────────────────────────┐
+│  msg.mentioned === true                       │
+│  → 标记为 FAST_PATH, 跳过 Recording Pipeline  │
+│  → 直接进入 Model Router                      │
+└───────────────────────────────────────────────┘
+```
+
+**Phase ②：Model Router**
+
+```
+┌─ Model Router ──────────────────────────────────────────┐
+│  输入信号:                                                │
+│  - 事件类型: 直接 @                                       │
+│  - 消息长度: 长（>100 字符）                               │
+│  - 内容: 涉及历史消息检索 + 多步推理                       │
+│  - alice Dunbar tier: Tier 3                              │
+│                                                           │
+│  路由结果:                                                 │
+│  - model: "claude-sonnet-4" (SOTA)                        │
+│  - pipelineMode: "FULL_CODEACT"                           │
+│  - reason: "复杂检索任务, 需要 SOTA 自由度"                 │
+└───────────────────────────────────────────────────────────┘
+```
+
+**Phase ③：CodeAct Session（FULL_CODEACT 模式）**
+
+SOTA 模型拿到完整的 CodeAct 自由度，自主写代码完成任务。
+
+```
+┌─ CodeAct Session (Claude Sonnet 4) ────────────────────────────────┐
+│                                                                     │
+│  [System Prompt 注入 Advisory 流程提示，但不强制]                     │
+│                                                                     │
+│  Turn 1 — Agent 思考 + 代码:                                        │
+│  "alice 想找上周三关于 Rust/Go 性能对比的讨论。我需要先搜索           │
+│   记忆，再拉历史消息确认。"                                          │
+│                                                                     │
+│  ```typescript                                                      │
+│  scene.enter("memory")                                              │
+│  const results = await memory.search("Rust Go 性能 benchmark")      │
+│  console.log(results)                                               │
+│  ```                                                                │
+│                                                                     │
+│  [Execution Output]:                                                │
+│  [{ content: "2/19 群里讨论了 Rust vs Go 网络 IO 性能...",            │
+│     metadata: { chatId: -100123456, date: "2026-02-19" } }]          │
+│                                                                     │
+│  Turn 2 — Agent 继续:                                               │
+│  "找到记忆了，是 2/19 的讨论。让我去拉那天的历史消息找到具体链接。"    │
+│                                                                     │
+│  ```typescript                                                      │
+│  scene.enter("telegram")                                            │
+│  // 搜索指定日期范围内含 benchmark 关键词的消息                       │
+│  const msgs = await ctx.tg.searchMessages(-100123456, {              │
+│    query: "benchmark",                                               │
+│    minDate: new Date("2026-02-19"),                                  │
+│    maxDate: new Date("2026-02-20"),                                  │
+│    limit: 10                                                         │
+│  })                                                                  │
+│  for (const m of msgs) {                                             │
+│    console.log(`${m.sender?.firstName}: ${m.text?.slice(0, 200)}`)   │
+│  }                                                                   │
+│  ```                                                                 │
+│                                                                     │
+│  [Execution Output]:                                                │
+│  bob: 看这个 benchmark https://github.com/xxx/yyy 结论是...         │
+│  dave: 这个测试方法有问题吧 他没有控制...                             │
+│                                                                     │
+│  Turn 3 — Agent 生成回复:                                            │
+│  "找到了。是 bob 分享的链接，dave 提了质疑。让我组织一下回复。"        │
+│                                                                     │
+│  ```typescript                                                      │
+│  await ctx.tg.sendText(-100123456, [                                 │
+│    "找到了！是2/19 bob 分享的",                                       │
+│    "https://github.com/xxx/yyy",                                     │
+│    "结论大概是网络IO场景Go略快 但CPU密集型Rust碾压",                   │
+│    "不过当时dave说那个测试方法有问题 没控制GC的影响"                    │
+│  ].join("\n"), { replyTo: 42 })                                      │
+│  ```                                                                 │
+│                                                                     │
+│  Turn 4 — Agent 存记忆:                                              │
+│  ```typescript                                                      │
+│  scene.enter("memory")                                              │
+│  await memory.updatePerson(alice.id, {                               │
+│    notes: "对 Rust/Go 性能对比感兴趣，可能在做技术选型"               │
+│  })                                                                  │
+│  ```                                                                 │
+│                                                                     │
+│  [Agent 无更多代码输出 → Session 结束]                                │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+**Session 结束** → Compaction 自动执行 → Feedback Loop 启动 3 分钟观察窗口。
+
+话题状态：直接进入 `ENGAGED`（turnCount=1）→ 因为是一次性检索任务，大概率下一轮 quickTriage 判定 `naturalConclusion: true` → `COOLDOWN`。
+
+---
+
+### 场景 4：身份探测检测 → 渐进退出
+
+**背景**：agent 已在群里活跃了一段时间。群友 eve 开始怀疑。
+
+```
+t=0:00   [话题: 讨论某部动画的作画质量, topic state=ENGAGED, turnCount=3]
+
+t=0:00   eve: 话说你怎么什么都知道啊
+         → belongsToEngagedTopic(): AMBIGUOUS
+           (timeSinceAgentReply=45s, eve 不在原始参与者中但 60s 内无其他话题)
+         → pendingMessages.push({ ...msg, _ambiguous: true })
+         → scheduleEngagedResponse()
+
+┌─ quickTriage ────────────────────────────────────────┐
+│  {                                                    │
+│    "identityProbing": 0.55,  ← 中等确信度              │
+│    "shouldContinue": true,                            │
+│    "reason": "可能只是随口夸奖，但措辞略有试探感"        │
+│  }                                                    │
+│                                                       │
+│  → handleIdentityProbing(confidence=0.55)             │
+│  → action: REDUCE_ENGAGEMENT                          │
+│    triageThresholdBoost: +0.2                         │
+│    delayMultiplier: 2.0                               │
+│    exitStyle: GRADUAL_WITHDRAWAL                      │
+└───────────────────────────────────────────────────────┘
+
+→ Reply Pipeline (Guided, 延迟 × 2 ≈ 16 秒)
+→ 生成回复: "哈哈没有啦 之前正好看过相关的帖子而已"
+→ 发出 (turnCount=4, 后续 Triage 阈值提高到 0.8)
+
+t=0:35   eve: 是吗 那你平时都看什么
+t=0:50   frank: 对啊你好像回复特别快哦
+
+┌─ quickTriage ────────────────────────────────────────┐
+│  {                                                    │
+│    "identityProbing": 0.82,  ← 高确信度               │
+│    "reason": "两个人同时表现出试探行为，                 │
+│              '回复特别快'是典型的 bot 探测信号"           │
+│  }                                                    │
+│                                                       │
+│  → handleIdentityProbing(confidence=0.82)             │
+│  → action: EXIT_GRACEFULLY                            │
+│    cooldownMinutes: 30                                │
+│    exitStyle: FADE_OUT                                │
+└───────────────────────────────────────────────────────┘
+
+→ 最后回复: "哈哈 最近放假比较闲"（minimal_acknowledgment）
+→ 发出
+→ topic state: ENGAGED → EXITING → COOLDOWN (30 min)
+→ 30 分钟内该群所有话题的 Triage 阈值全局提高
+```
+
+---
+
+### 场景 5：Recording Pipeline 静默观察（不介入）
+
+**背景**：群里正在进行一段 agent 不适合参与的对话。
+
+```
+t=0:00-2:00  [群内 12 条消息，内容是群友之间的私人话题——讨论某人的感情问题]
+             [2 分钟静默触发 → Recording Pipeline flush]
+
+┌─ Recording Pipeline ─────────────────────────────────┐
+│                                                       │
+│  Step 1: 话题聚类                                      │
+│  → 识别为 1 个话题: "alice 感情问题讨论"                 │
+│                                                       │
+│  Step 2: Triage                                        │
+│  {                                                    │
+│    "should_intervene": false,                         │
+│    "confidence": 0.95,                                │
+│    "intervention_type": "NOT_APPLICABLE",             │
+│    "reason": "私人感情话题，agent 介入不合适且无附加价值" │
+│  }                                                    │
+│  → topic state: ACTIVE → IGNORED                       │
+│                                                       │
+│  Step 3: 记忆写入（仍然执行）                           │
+│  → topics 表: 写入话题摘要                              │
+│  → person_profiles: 更新 alice（关系状态可能发生变化）    │
+│  → 不触发任何回复行为                                    │
+│                                                       │
+└───────────────────────────────────────────────────────┘
+
+结果: agent 完全沉默，但记住了这段对话的内容。
+下次 alice 提到相关话题时，agent 有上下文但不会主动提起。
+```
+
+---
+
+### 场景 6：强信号加速 → 提前触发 Recording Pipeline
+
+**背景**：群里刚安静了一会儿，突然有人发了一条长消息。
+
+```
+t=0:00   [Recording Pipeline 缓冲区: 8 条消息（远未到 50 条）]
+t=0:00   bob: [发了一段 300 字的消息，详细分析了某个技术方案的优缺点并提出了三个问题]
+         → recordingBuffer.push(msg)
+         → hasStrongSignal(msg) === true  (msg.text.length > 200)
+         → activateEagerMode(threshold=15, silence=30_000)
+
+t=0:15   alice: 第二个问题我有想法
+t=0:25   carol: 我觉得他说的第一点不太对
+
+t=0:55   [eagerSilence 30 秒到期，缓冲区有 11 条] → flush 触发
+
+┌─ Recording Pipeline (加速模式) ──────────────────────┐
+│  话题提取 → 识别出 bob 的技术分析话题                    │
+│  Triage → should_intervene: true, confidence: 0.73    │
+│  → 进入正常的 Preload → Model Router → Reply Pipeline  │
+└───────────────────────────────────────────────────────┘
+
+结果: 从 bob 发消息到 agent 介入，延迟仅约 1.5 分钟（而非正常模式下可能等待的 10+ 分钟）。
+```
+
+---
+
+### 场景 7：退出 — 硬上限与递减回报
+
+**背景**：agent 已经在一个话题上回复了较多轮。
+
+```
+[topic state=ENGAGED, turnCount=5, maxTurns=6 (CASUAL_CHAT 类型 base=3 但被调高)]
+
+t=0:00   alice: 哈哈哈对
+         → quickTriage → shouldContinue: true
+         → Reply: "确实hhh"
+         → turnCount=6 === maxTurns
+
+[MAX_TURNS 硬上限触发]
+→ exitStyle: NATURAL_END
+→ 不再回复（刚说完"确实hhh"已是自然收尾）
+→ topic state: ENGAGED → COOLDOWN (cooldownMinutes=5)
+```
+
+**递减回报退出示例**：
+
+```
+[topic state=ENGAGED, turnCount=3]
+
+Turn 1 回复后: alice 回了一句 → engagement +2
+Turn 2 回复后: 没人接话 → engagement -1 (gotIgnored)
+Turn 3 回复后: 没人接话 → engagement -1 (gotIgnored)
+
+┌─ checkDiminishingReturns ──────────────────────┐
+│  最近 3 轮 avgEngagement = (2 + -1 + -1) / 3    │
+│                           = 0.0 < 0.5           │
+│  → exitSignal: DIMINISHING_RETURNS              │
+│  → exitStyle: SILENT_WITHDRAWAL                 │
+│  → 不再回复（已经被无视，再说就尴尬了）           │
+└─────────────────────────────────────────────────┘
+```
+
+---
+
+### 系统全局视角：一天的运行概览
+
+以下是一个日活 4,000 条消息的群聊中，系统一天的典型运行数据：
+
+```
+┌─ 每日统计 ─────────────────────────────────────────┐
+│                                                     │
+│  Recording Pipeline:                                │
+│    flush 次数: 112 次                                │
+│    话题提取: 287 个话题（含 STALE/ARCHIVED）          │
+│    LLM 调用: ~224 次 (每次 flush 2 次调用)            │
+│    Token 消耗: ~920K                                 │
+│    费用 (Gemini Flash): $0.18                        │
+│                                                     │
+│  Topic Triage:                                       │
+│    评估话题数: 287                                    │
+│    判定介入: 18 (6.3%)                               │
+│    判定不介入: 269                                    │
+│                                                     │
+│  Engaged Topics:                                     │
+│    进入对话模式: 18 个话题                             │
+│    quickTriage 调用: 62 次                            │
+│    平均轮次: 3.4 轮/话题                              │
+│    Token 消耗: ~124K                                 │
+│    费用 (Gemini Flash): $0.02                        │
+│                                                     │
+│  Reply Pipeline:                                     │
+│    实际发出回复: 47 条                                │
+│    FULL_CODEACT: 3 次 (直接 @)                       │
+│    GUIDED: 38 次 (主动介入 + 简单 @)                  │
+│    ENFORCED: 6 次 (低 confidence)                    │
+│    Token 消耗: ~380K                                 │
+│    费用: $0.12 (GPT-4o-mini 主力)                    │
+│                                                     │
+│  退出统计:                                           │
+│    NATURAL_CONCLUSION: 9                             │
+│    MAX_TURNS: 4                                      │
+│    DIMINISHING_RETURNS: 2                            │
+│    SILENT_WITHDRAWAL (TIMEOUT): 2                    │
+│    IDENTITY_PROBING: 1                               │
+│    CROWDED_OUT: 0                                    │
+│                                                     │
+│  Feedback Loop:                                      │
+│    评估次数: 47                                       │
+│    positive: 31 (66%)                                │
+│    neutral: 12 (26%)                                 │
+│    negative: 4 (8%)                                  │
+│    Token 消耗: ~94K                                  │
+│                                                     │
+│  Playbook 生成 (每日 1 次):                           │
+│    模型: Claude Sonnet 4                             │
+│    Token 消耗: ~65K                                  │
+│    费用: $0.78                                       │
+│                                                     │
+│  ─────────────────────────────────────               │
+│  全日 Token 总消耗: ~1.58M                            │
+│  全日总费用: $1.10                                    │
+│  DailyBudget 余量: 21% (未触发 PASSIVE_ONLY)         │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+```
 
 ---
 
