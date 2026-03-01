@@ -36,8 +36,9 @@
 | 4.8 | API Docs 与配置补丁 | ✅ 完成 | Mtcute API docs fix (full prototype method reference, Object.keys 警告); Temperature 覆盖 fix |
 | 5.1 | Scene-Bound Sessions | ✅ 完成 | 单一 session + scope 过滤，见 Phase 5 总结 |
 | 6.0 | Memory V2 完全重写 | 📝 TODO | 三层记忆模型（短期/中期/长期）；等待独立设计文档确认后实施 |
-| 6.1 | Air-Reading Engine | 📝 规划中 | 初筛 + 快速路由 + 预热缓存；融合另一个架构的 Triage + Foraging 概念 |
-| 6.2 | Recording Pipeline | 📝 规划中 | 后台话题提取观察者；不回复只记录；双触发缓冲策略 |
+| 6.1 | Air-Reading Engine | 📝 规划中 | 双模态消息处理（观察模式/对话模式）；话题级 Triage；快速路由 + 预热缓存 |
+| 6.1.1 | Engaged Topic Handler | 📝 规划中 | 对话模式快速路径；逐条/短窗口处理；自然延迟模拟；退出机制 |
+| 6.2 | Recording Pipeline | 📝 规划中 | 后台话题提取（LLM 驱动）；50条/2min 双触发；强信号加速；TopicRegistry 维护 |
 | 6.3 | Reply Pipeline Framework | 📝 规划中 | Advisory / Guided / Enforced 三种模式；适配不同模型能力 |
 | 6.4 | High-Level Action API | 📝 规划中 | 弱模型小抄系统；actions.getContext / recallPerson / reply |
 | 6.5 | Feedback Loop | 📝 规划中 | 发言后 3 分钟评估群友反应；更新 engagement_score |
@@ -889,6 +890,7 @@ v0.4.0 — Phase 4 完成（稳定性与工具）= MVP
 | LanceDB | ⚠️ 待评估 | 取决于 Memory V2 的设计 |
 | chokidar 文件监听 | ❌ | 不用 Markdown 文件就不需要 |
 | XState 状态机 | ❌ | 话题状态简单，用 enum + 函数即可 |
+| RxJS bufferTime/bufferCount | ❌ 概念引入 | 用 array + timer + 强信号加速实现等价效果（见 Task 6.2） |
 | Langfuse 追踪 | ⚠️ 后续引入 | 对 LLM 调用可观测性有价值 |
 | `/forget` 隐私命令 | ⚠️ 后续引入 | 合规需要 |
 
@@ -910,54 +912,551 @@ v0.4.0 — Phase 4 完成（稳定性与工具）= MVP
 
 **依赖**：独立设计文档完成后，此 Task 的交付物、表结构和接口定义将在此处补充。
 
-#### Task 6.1 — Air-Reading Engine
+#### Task 6.1 — Air-Reading Engine [REVISED @Phase-6.1: 话题作为一等公民重构]
 
-**职责**：在事件从 NotificationCenter drain 出来之后、交给 CodeAct session 之前，进行结构化评估和路由。
+**职责**：在事件从 NotificationCenter drain 出来之后，进行结构化评估和路由。核心变化：**话题（Topic）而非消息（Message）是 Air-Reading Engine 的一等公民**。
+
+**核心设计变更**：
+
+系统存在两种截然不同的消息处理模式，由消息是否属于已介入（ENGAGED）话题决定：
+
+```
+                        消息到达
+                           │
+                    ┌──────┴──────┐
+                    │             │
+              属于 ENGAGED       属于其他话题
+              话题的消息？        （或无法归属）
+                    │             │
+                    ▼             ▼
+            ┌─────────────┐  ┌─────────────┐
+            │ 对话模式     │  │ 观察模式     │
+            │ (Engaged)   │  │ (Recording) │
+            │             │  │             │
+            │ 逐条/短窗口  │  │ 50条/2min   │
+            │ 即时处理     │  │ 批量处理     │
+            │ 见 Task 6.1.1│  │ 见 Task 6.2 │
+            │             │  │             │
+            │ 目标：       │  │ 目标：       │
+            │ 像正常人     │  │ 话题发现     │
+            │ 一样对话     │  │ 记忆积累     │
+            └─────────────┘  └─────────────┘
+```
 
 **核心组件**：
 
 1. **Fast Router（快速路由）**：
-   - 被直接 @、回复、私聊 → 标记为 `FAST_PATH`，跳过初筛
-   - 普通群聊消息 → 进入完整评估流水线
+   - 被直接 @、回复 agent 消息、私聊 → 标记为 `FAST_PATH`，跳过初筛
+   - 属于 ENGAGED 话题的消息 → 转交 Engaged Topic Handler（Task 6.1.1）
+   - 其他群聊消息 → 进入 Recording Pipeline 缓冲（Task 6.2）
 
-2. **Triage（初筛）**：
-   - 使用便宜模型（如 Gemini Flash / GPT-4o-mini）
+2. **Topic-Level Triage（话题级初筛）**：
+   - 由 Recording Pipeline 触发（每次 flush 提取出话题后）
+   - 对每个 ACTIVE 话题独立执行 Triage
+   - 使用便宜模型（Gemini Flash / GPT-4o-mini）
    - 输出结构化判断：`should_intervene`, `reason`, `intervention_type`, `confidence`
    - `confidence < 0.6` 一律不介入
    - intervention_type 枚举：FACTUAL_CORRECTION, KNOWLEDGE_GAP, QUESTION_ANSWER, RESOURCE_SHARING, CONFLICT_MEDIATION, CONSENSUS_SUMMARY, NOT_APPLICABLE
 
 3. **预热缓存（Preload）**：
-   - 初筛通过后，立即并行启动记忆检索（`memory.recall()`）
-   - 结果附加到事件对象上，后续 pipeline 直接使用
+   - Triage 通过后，立即并行启动记忆检索（`memory.recall()`）
+   - 结果附加到话题对象上，后续 pipeline 直接使用
 
-4. **话题状态机**：
-   - 状态枚举：NEW → PENDING_SEARCH → IGNORED / IGNORED_LOW_VALUE → INTERVENED → COOLDOWN → PENDING_FEEDBACK
-   - IGNORED 状态有 TTL（默认 10 分钟），过期自动回退为 NEW
-   - 话题内容显著偏移时（关键词重合度 < 30%）自动重置为 NEW
-
-5. **超时硬上限**：
-   - 整条评估管线最大 25 秒
+4. **超时硬上限**：
+   - 从 Recording Pipeline flush 到 Reply Pipeline 交付，整条链路最大 25 秒
    - 超时后静默，不发迟到消息
 
-**输出**：每个事件被标注 `decision`（PROCESS / IGNORE）和 `pipelineMode`（FULL_CODEACT / GUIDED / ENFORCED）。
+5. **TopicRegistry（话题注册表）**：
 
-#### Task 6.2 — Recording Pipeline
+   由 Recording Pipeline 维护的实时话题数据结构：
 
-**职责**：后台持续运行的观察者任务，将群聊消息结构化沉淀到记忆系统。与 agent 是否决定回复无关。
+   ```typescript
+   interface Topic {
+     id: string;                    // topic_<ulid>
+     chatId: number;
+     label: string;                 // 3-5 词的话题标签（LLM 生成）
+     keywords: string[];            // 关键词集合
+     participantIds: Set<number>;   // 参与者 user_id 集合
+     messageIds: number[];          // 属于此话题的消息 ID 列表
+     state: TopicState;
+     decision?: TriageDecision;     // 最近一次 Triage 的结果
+     parentTopicId?: string;        // 话题演变链（流变时指向原话题）
+
+     // 时间戳
+     createdAt: number;
+     lastActivityAt: number;
+     lastTriagedAt?: number;
+
+     // 对话模式专用字段（state=ENGAGED 时使用）
+     turnCount?: number;            // agent 已回复轮次
+     maxTurns?: number;             // 最大回复轮次
+     lastAgentReplyAt?: number;
+     primaryInterlocutor?: number;  // 主要对话对象
+     pendingMessages?: Message[];   // 待处理消息缓冲
+     exitSignals?: ExitSignal[];
+     irrelevantStreak?: number;     // 连续不相关消息计数
+
+     // 统计
+     messageCount: number;
+     interventionCount: number;
+
+     // 上下文快照（给 Triage 用）
+     recentContext: string;         // 最近几条消息的摘要（LLM 生成）
+   }
+   ```
+
+6. **话题状态机**：
+
+   ```
+                       ┌─────────────────────────────────┐
+                       │       Recording Pipeline        │
+                       │       (观察模式, 50条/2min)       │
+                       └────────────────┬────────────────┘
+                                        │ 话题提取完成
+                                        ▼
+                                 ┌─────────────┐
+                        ┌────────│    ACTIVE    │────────┐
+                        │        └──────┬──────┘        │
+                        │               │ Triage 触发    │ 无新消息 >15min
+                        │               ▼               ▼
+                        │        ┌─────────────┐  ┌──────────┐
+                        │        │   TRIAGING  │  │  STALE   │──→ ARCHIVED
+                        │        └──────┬──────┘  └──────────┘
+                        │          ┌────┴────┐
+                        │          │         │
+                        │       通过      不通过
+                        │          │         │
+                        │          ▼         ▼
+                        │   ┌───────────┐ ┌─────────────────┐
+                        │   │ PRELOADING│ │ IGNORED          │──(TTL 10min)──→ ACTIVE
+                        │   └─────┬─────┘ │ IGNORED_LOW_VALUE│──(TTL 10min)──→ STALE
+                        │         │       └─────────────────┘
+                        │         ▼
+                        │  ┌─────────────┐
+                        │  │  ENGAGED    │◄─── 对话模式开始
+                        │  │             │     (见 Task 6.1.1)
+                        │  └──────┬──────┘
+                        │         │
+                        │    退出信号触发
+                        │         │
+                        │         ▼
+                        │  ┌─────────────┐
+                        │  │  EXITING    │ ← 可能还有最后一句话要说
+                        │  └──────┬──────┘
+                        │         │ 最后回复发出 / 静默退出
+                        │         ▼
+                        │  ┌─────────────┐
+                        └──│  COOLDOWN   │──(5-30min 冷却)──→ ACTIVE
+                           └─────────────┘
+   ```
+
+   **状态说明**：
+   - `ACTIVE`：Recording Pipeline 持续有消息流入的话题
+   - `TRIAGING`：正在被 Triage LLM 评估
+   - `PRELOADING`：Triage 通过，正在预热缓存
+   - `ENGAGED`：agent 已介入，进入对话模式（消息走快速路径）
+   - `EXITING`：退出中，可能还有最后一条消息要发
+   - `COOLDOWN`：冷却期，不主动介入（持续时间根据退出原因动态调整）
+   - `IGNORED` / `IGNORED_LOW_VALUE`：Triage 判定不介入（TTL 过期后可重新评估）
+   - `STALE`：15 分钟无新消息
+   - `ARCHIVED`：2 小时无新消息，归入长期记忆
+
+7. **话题流变处理**：
+
+   当 Recording Pipeline 检测到话题内容发生显著偏移时（由 LLM 在话题提取时判断），采用三档处理：
+
+   | 判定 | 处理方式 |
+   |------|---------|
+   | **同一话题（延续）** | 归入已有话题，继承 state 和 decision |
+   | **话题演变（流变）** | 创建新话题节点，`parentTopicId` 指向原话题，state 重置为 ACTIVE 但携带上下文（如父话题曾被 IGNORED 的原因、或刚刚 INTERVENED 的冷却提示） |
+   | **全新话题** | 创建独立话题节点，完全独立的状态机 |
+
+   **话题演变时的 Decision 继承规则**：
+   ```typescript
+   function inheritDecision(parentTopic: Topic, childTopic: Topic): TopicState {
+     switch (parentTopic.state) {
+       case 'ENGAGED':
+       case 'COOLDOWN':
+         // 刚回复过/冷却中，演变话题应冷静一下
+         // Triage 时 confidence 阈值从 0.6 提高到 0.75
+         return { state: 'ACTIVE', cooldownBoost: true };
+
+       case 'IGNORED':
+       case 'IGNORED_LOW_VALUE':
+         // 之前判定不介入，演变话题正常评估
+         // 但传递 ignore 原因供 Triage 参考
+         return { state: 'ACTIVE', parentIgnoreReason: parentTopic.ignoreReason };
+
+       case 'EXITING':
+         // 正在退出，演变话题暂不介入
+         return { state: 'ACTIVE', cooldownBoost: true };
+
+       default:
+         return { state: 'ACTIVE' };
+     }
+   }
+   ```
+
+   > 注意：话题流变的判定完全依赖 LLM（Recording Pipeline 的话题提取环节），因为群聊中用户普遍不使用 reply_to_message，无法通过算法可靠地判断消息间的关联关系。
+
+**输出**：每个话题被标注 `decision`（ENGAGE / IGNORE）和 `pipelineMode`（FULL_CODEACT / GUIDED / ENFORCED）。只有 decision=ENGAGE 的话题才进入 Reply Pipeline。
+
+#### Task 6.1.1 — Engaged Topic Handler（对话模式） [NEW @Phase-6.1.1]
+
+**职责**：当 agent 已经介入一个话题（state=ENGAGED）后，该话题的后续消息走独立的快速路径，绕过 Recording Pipeline 的缓冲，实现自然的一问一答节奏。
+
+**设计动机**：Recording Pipeline 的 50 条 / 2 分钟缓冲策略为被动观察设计。一旦 agent 已介入对话，群友期望的是正常人的对话节奏（几秒到十几秒回复），而不是几分钟后才看到消息。
+
+**1. 消息归属判定（Engaged 话题）**
+
+由于群聊中用户普遍不使用 reply，对话模式下采用**乐观归属 + 回退机制**：
+
+```typescript
+function belongsToEngagedTopic(msg: Message, topic: EngagedTopic): 'CLEARLY_RELATED' | 'AMBIGUOUS' | 'CLEARLY_UNRELATED' {
+  // 1. 强信号：reply chain 指向 agent 消息或话题内消息
+  if (msg.replyToMessageId && topic.messageIds.includes(msg.replyToMessageId)) {
+    return 'CLEARLY_RELATED';
+  }
+
+  // 2. 时间窗口 + 参与者：agent 刚回复后 90 秒内，已知参与者的消息
+  const timeSinceAgentReply = Date.now() - topic.lastAgentReplyAt;
+  if (timeSinceAgentReply < 90_000 && topic.participantIds.has(msg.senderId)) {
+    return 'CLEARLY_RELATED';
+  }
+
+  // 3. 时间窗口 + 无其他活跃话题：60 秒内的任何消息
+  if (timeSinceAgentReply < 60_000 && !hasOtherActiveEngagedTopic(msg.chatId)) {
+    return 'AMBIGUOUS'; // 交给 quickTriage 最终判断
+  }
+
+  return 'CLEARLY_UNRELATED';
+}
+```
+
+**回退机制**：
+```typescript
+function onMessageDuringEngaged(msg: Message, topic: EngagedTopic) {
+  const relevance = belongsToEngagedTopic(msg, topic);
+
+  if (relevance === 'CLEARLY_RELATED') {
+    topic.pendingMessages.push(msg);
+    topic.irrelevantStreak = 0;
+    scheduleEngagedResponse(topic);
+
+  } else if (relevance === 'AMBIGUOUS') {
+    topic.pendingMessages.push({ ...msg, _ambiguous: true });
+    topic.irrelevantStreak = 0;
+    scheduleEngagedResponse(topic);
+
+  } else { // CLEARLY_UNRELATED
+    topic.irrelevantStreak++;
+    if (topic.irrelevantStreak >= 3) {
+      // 连续 3 条不相关消息 → 对话已被其他话题冲走
+      handleExit(topic, { type: 'CROWDED_OUT' });
+    }
+    // 不相关消息正常进入 Recording Pipeline 缓冲
+    recordingBuffer.push(msg);
+  }
+}
+```
+
+**2. 对话节奏模拟**
+
+正常人不会秒回，需要模拟自然的回复延迟：
+
+```typescript
+function calculateNaturalDelay(pending: Message[], topic: EngagedTopic): number {
+  const lastMsg = pending[pending.length - 1];
+
+  // 基础延迟：3-8 秒（模拟阅读+思考+打字）
+  let delay = 3000 + Math.random() * 5000;
+
+  // 短消息（表情、"哈哈"、"好的"）→ 回复可以快一点
+  if (lastMsg.text && lastMsg.text.length < 5) {
+    delay = 2000 + Math.random() * 3000;
+  }
+
+  // 长消息或复杂问题 → 多想一会儿
+  if (lastMsg.text && lastMsg.text.length > 100) {
+    delay = 8000 + Math.random() * 7000;
+  }
+
+  // 对方连续发了多条 → 给更多时间等对方说完
+  if (pending.length >= 2) {
+    delay = Math.max(delay, 5000 + Math.random() * 5000);
+  }
+
+  return delay;
+}
+```
+
+**调度机制**：如果在等待期间又有新消息到达，重置计时器（给对方说完的时间）。
+
+**3. 对话模式下的轻量级 Triage（quickTriage）**
+
+每轮处理不走完整 Recording Pipeline，而是一次合并的 cheap model 调用：
+
+```typescript
+async function processEngagedTurn(topic: EngagedTopic, messages: Message[]) {
+  // 1. 先检查非 LLM 退出信号（纯算法，见下方退出机制）
+  const exitSignal = evaluateExitConditions(topic, messages);
+  if (exitSignal) {
+    await handleExit(topic, exitSignal);
+    return;
+  }
+
+  // 2. quickTriage：一次 cheap model 调用同时判断多个维度
+  const triageResult = await quickTriage(topic, messages, {
+    checkIdentityProbing: true,    // 是否在试探 bot 身份
+    checkShouldContinue: true,     // 这轮还需要回吗
+    checkNaturalConclusion: true,  // 对话是否自然结束了
+    generateReplyHint: true,       // 如果要回，给一个方向提示
+  });
+
+  // 3. 根据 quickTriage 结果决定退出或继续
+  if (triageResult.identityProbing > 0.5) {
+    await handleExit(topic, { type: 'IDENTITY_PROBING', confidence: triageResult.identityProbing });
+    return;
+  }
+  if (triageResult.naturalConclusion || !triageResult.shouldContinue) {
+    await handleExit(topic, { type: 'NATURAL_CONCLUSION', reason: triageResult.reason });
+    return;
+  }
+
+  // 4. 通过 → Reply Pipeline 生成回复
+  topic.turnCount++;
+  await replyPipeline.process(topic, messages, triageResult.replyHint);
+}
+```
+
+**4. 退出机制**
+
+Agent 必须能自主决定或被引导退出一个话题。**不知道什么时候闭嘴的 chatbot 是最讨人厌的。**
+
+**退出信号体系（按优先级排序）**：
+
+| 优先级 | 信号类型 | 检测方式 | 退出风格 |
+|--------|---------|---------|---------|
+| **P0** | `MAX_TURNS`（硬上限） | `turnCount >= maxTurns` | NATURAL_END |
+| **P1** | `SOCIAL_PRESSURE`（社交压力） | 算法 + LLM："别说了"、"闭嘴"、多人表达不耐烦、所有人无视 agent | SILENT_WITHDRAWAL |
+| **P2** | `IDENTITY_PROBING`（身份探测） | LLM 判断（在 quickTriage 中）：试探是否是 bot、测试记忆、要求发自拍等 | FADE_OUT（高确信）/ GRADUAL_WITHDRAWAL（中确信） |
+| **P3** | `TIMEOUT`（超时） | `Date.now() - lastUserMessageAt > 3min` | SILENT_WITHDRAWAL |
+| **P4** | `DIMINISHING_RETURNS`（递减回报） | 最近 3 轮的 engagement 评分均值 < 0.5 | FADE_OUT |
+| **P5** | `TOPIC_DRIFT`（话题漂移） | 算法（关键词重合度）| 不再回复（交给 Recording Pipeline 重新评估） |
+| **P6** | `CROWDED_OUT`（被冲走） | 连续 3 条不相关消息 | SILENT_WITHDRAWAL |
+
+**MAX_TURNS 动态上限**：
+```typescript
+function getMaxTurns(topic: EngagedTopic): number {
+  let base = 5;
+  if (topic.participantIds.size <= 2) base = 6;       // 一对一可多聊几轮
+  if (topic.interventionType === 'QUESTION_ANSWER') base = 7;  // 问答场景
+  if (topic.interventionType === 'CASUAL_CHAT') base = 3;      // 闲聊少说几轮
+  return base;
+}
+```
+
+**身份探测的分级响应**：
+```typescript
+function handleIdentityProbing(topic: EngagedTopic, confidence: number): ExitStrategy {
+  if (confidence > 0.8) {
+    // 高确信：他们确定是 bot 了，开始"玩"bot
+    // → 立即优雅退出，长时间冷却
+    return { action: 'EXIT_GRACEFULLY', cooldownMinutes: 30, exitStyle: 'FADE_OUT' };
+  }
+  if (confidence > 0.5) {
+    // 中等确信：有人怀疑但不确定
+    // → 降低回复频率，提高 Triage 阈值，增加回复延迟
+    return {
+      action: 'REDUCE_ENGAGEMENT',
+      triageThresholdBoost: 0.2,
+      delayMultiplier: 2.0,
+      exitStyle: 'GRADUAL_WITHDRAWAL'
+    };
+  }
+  return { action: 'CONTINUE' };
+}
+```
+
+**退出行为风格**：
+
+| 风格 | 描述 | 适用场景 |
+|------|------|---------|
+| `NATURAL_END` | 最后一句话有收尾感（"确实"、总结性发言） | MAX_TURNS、NATURAL_CONCLUSION |
+| `FADE_OUT` | 简短回应（表情、"哈哈"）后不再说话 | IDENTITY_PROBING（高确信）、DIMINISHING_RETURNS |
+| `GRACEFUL_REDIRECT` | 把话题抛回群友（"你们觉得呢？"） | 可选的优雅退出 |
+| `SILENT_WITHDRAWAL` | 直接不回 | SOCIAL_PRESSURE、TIMEOUT、CROWDED_OUT |
+| `GRADUAL_WITHDRAWAL` | 逐渐降低回复频率和热情 | IDENTITY_PROBING（中确信） |
+
+**退出执行**：
+```typescript
+function executeExit(topic: EngagedTopic, style: ExitStyle): void {
+  switch (style) {
+    case 'NATURAL_END':
+      topic.nextReplyInstruction = 'wrap_up';
+      topic.exitAfterNextReply = true;
+      break;
+    case 'FADE_OUT':
+      topic.nextReplyInstruction = 'minimal_acknowledgment';
+      topic.exitAfterNextReply = true;
+      break;
+    case 'GRACEFUL_REDIRECT':
+      topic.nextReplyInstruction = 'redirect_to_others';
+      topic.exitAfterNextReply = true;
+      break;
+    case 'SILENT_WITHDRAWAL':
+    case 'GRADUAL_WITHDRAWAL':
+      topic.state = 'COOLDOWN';
+      break;
+  }
+}
+```
+
+**5. 对话模式额外成本**
+
+| 维度 | 估算 |
+|------|------|
+| 每轮 quickTriage | ~2,000 tokens（cheap model） |
+| 假设每天 15 个 ENGAGED 话题，各 4 轮 | ~120K tokens/天 |
+| 日费用（Gemini Flash） | **~$0.02** |
+
+**与 Recording Pipeline 的关系**：ENGAGED 话题的消息虽然走快速路径处理，但仍然会在下一次 Recording Pipeline flush 时被包含在内，用于记忆更新和话题摘要。两条路径互补，不冲突。
+
+#### Task 6.2 — Recording Pipeline [REVISED @Phase-6.2: LLM 驱动话题提取 + 强信号加速]
+
+**职责**：后台持续运行的观察者任务，将群聊消息结构化沉淀到记忆系统，**同时维护 TopicRegistry 供 Air-Reading Engine 消费**。与 agent 是否决定回复无关。
+
+**核心设计变更**：
+- 由于群聊中用户普遍不使用 reply_to_message，消息间的话题关联**必须依赖 LLM 分析**，不能仅靠算法
+- 缓冲策略从 40 条/5 分钟调整为 **50 条/2 分钟静默**，在成本和时效性间取得平衡
+- 新增强信号加速机制，避免高价值话题因缓冲延迟错过介入窗口
 
 **设计**：
 - 作为后台任务（`runtime.spawn`）运行在主进程中
-- 消息缓冲：双触发策略——满 40 条 OR 静默 5 分钟，取先到者（概念来自另一个架构的 RxJS bufferTime+bufferCount，但用简单的 array+timer 实现）
-- 两步话题切分：
-  1. 消息级话题标注（便宜模型）：利用 `reply_to_message_id` 作为聚类强信号
-  2. 按 tag 分组后结构化总结（便宜模型）
-- 输出写入 Memory V2 的话题表（topics）和个体画像更新
-- 同时更新向量索引
+- 消息缓冲：双触发策略——**满 50 条 OR 静默 2 分钟**，取先到者
+
+**每次 flush 的处理流程**：
+
+```
+消息缓冲 flush（50条 or 2min静默）
+    │
+    ▼
+Step 1: 话题聚类 + 标注（cheap model）
+    输入：全部缓冲消息 + 已有 TopicRegistry 中的 ACTIVE 话题列表
+    输出：每条消息的话题归属（已有话题 ID 或 NEW_TOPIC_n）
+    ≈ 3,250 input tokens → 700 output tokens
+    耗时：~1-2.5s
+    │
+    ▼
+Step 2: 按话题分组 + 摘要 + Triage（cheap model，一次调用）
+    输入：各话题的消息内容 + Playbook 片段 + 话题状态机上下文
+    输出：每个话题的摘要 + should_intervene + confidence + reason
+    ≈ 4,200 input tokens → 1,100 output tokens
+    耗时：~1.5-3s
+    │
+    ▼
+Step 3: 更新 TopicRegistry
+    - 新话题：创建节点，state=ACTIVE
+    - 已有话题：合并消息，更新 lastActivityAt
+    - 话题流变：由 Step 1 的 LLM 判定，创建子话题并设 parentTopicId
+    - Triage 通过的话题：state → PRELOADING → ENGAGED
+    耗时：~10ms
+    │
+    ▼
+Step 4: 写入 Memory V2 + 更新向量索引
+    - 话题摘要写入话题表
+    - PersonModel 增量更新
+    - Embedding 生成并写入向量索引
+    耗时：~0.3-0.8s
+```
+
+**强信号加速机制**：
+
+在不拆分 Pipeline 架构的前提下，检测到强信号时降低缓冲阈值：
+
+```typescript
+class RecordingPipeline {
+  private buffer: Message[] = [];
+  private normalThreshold = 50;
+  private eagerThreshold = 15;
+  private normalSilence = 120_000;  // 2 min
+  private eagerSilence = 30_000;    // 30 sec
+  private isEagerMode = false;
+
+  onMessage(msg: Message) {
+    // 先检查是否属于 ENGAGED 话题 → 转交 Engaged Topic Handler
+    for (const topic of engagedTopics.values()) {
+      if (belongsToEngagedTopic(msg, topic) !== 'CLEARLY_UNRELATED') {
+        engagedTopicHandler.onMessage(msg, topic);
+        // 仍然加入缓冲（用于后续记忆更新），但不影响触发逻辑
+        this.buffer.push(msg);
+        return;
+      }
+    }
+
+    this.buffer.push(msg);
+
+    // 正常触发
+    const threshold = this.isEagerMode ? this.eagerThreshold : this.normalThreshold;
+    const silence = this.isEagerMode ? this.eagerSilence : this.normalSilence;
+
+    if (this.buffer.length >= threshold || this.silenceTimer >= silence) {
+      this.flush();
+      return;
+    }
+
+    // 强信号检测 → 激活加速模式
+    if (this.hasStrongSignal(msg)) {
+      this.isEagerMode = true;
+      // 加速模式在下次 flush 后自动关闭
+    }
+  }
+
+  private hasStrongSignal(msg: Message): boolean {
+    return (
+      msg.text?.includes('?') ||
+      msg.text?.includes('？') ||
+      msg.text?.length > 200 ||           // 长消息往往是认真讨论
+      this.matchesHotTopicKeywords(msg)    // 命中已知热门话题关键词
+    );
+  }
+}
+```
+
+**强信号加速效果**：强信号出现后，响应延迟从正常的 2-12 分钟降低到 **30 秒-2 分钟**，且不增加 LLM 调用成本（只是更早触发本来就要做的 flush）。
+
+**延迟模型**：
+
+| 场景 | 缓冲等待 | Pipeline 处理 | 端到端 |
+|------|---------|-------------|--------|
+| 高峰（15 msg/min，正常模式） | ~3.3 min | ~4-6s | **~3.5 min** |
+| 高峰（强信号加速） | ~1 min | ~4-6s | **~1 min** |
+| 活跃（4 msg/min） | ~2 min（静默触发为主） | ~3-5s | **~2 min** |
+| 低谷（1 msg/min） | ~2 min（静默触发） | ~2-3s | **~2 min** |
+
+**成本估算（每日 4,000 条消息）**：
+
+| 维度 | 估算 |
+|------|------|
+| 每日 flush 次数 | ~100-130 次 |
+| 平均每次 tokens | ~9,250（大批次 ~10K，小批次 ~5K） |
+| 每日总 tokens | ~900K（input ~650K，output ~250K） |
+| Embedding tokens | ~66K |
+
+| 模型 | 日费用 | **月费用** |
+|------|--------|-----------|
+| Gemini 2.0 Flash | $0.17 | **~$5** |
+| GPT-4o-mini | $0.25 | **~$7.5** |
+| Claude 3.5 Haiku | $1.52 | **~$46** |
+| DeepSeek-V3 | $0.12 | **~$3.5** |
+
+**推荐选择 Gemini Flash 或 DeepSeek-V3**，月费控制在 $5 以内。
 
 **与 Compaction 的关系**：
 - Recording Pipeline 是**主动式**记忆积累（不管 agent 有没有参与对话都在记录）
 - Compaction 是**被动式**记忆提取（只在 agent 参与的 session 结束后触发）
 - 两者互补，不冲突
+- ENGAGED 话题的消息同时被两条路径处理：快速路径处理实时对话，Recording Pipeline 处理记忆写入
 
 #### Task 6.3 — Reply Pipeline Framework
 
@@ -1073,6 +1572,14 @@ declare const actions: {
 - 连续收到 negative 反馈 → 降低该群的主动介入频率
 - 特定用户的 negative 反馈 → 调整与该用户的交互策略
 
+**与退出机制的集成** [REVISED @Phase-6.5]：
+
+Feedback Loop 的评估结果直接反馈给 Engaged Topic Handler 的退出信号系统：
+
+- Feedback 评估发现 `sentiment = negative` → 向对应话题的 `exitSignals` 推入 `DIMINISHING_RETURNS` 信号
+- 连续收到 negative 反馈 → 除了降低该群主动介入频率，还降低该群所有话题的 `maxTurns`
+- 特定用户的 negative 反馈 → 如果该用户是 ENGAGED 话题的 `primaryInterlocutor`，立即触发退出评估
+
 #### Task 6.6 — Dry-Run System
 
 **职责**：在历史聊天记录上离线模拟 agent 行为，用于评估和调优决策流水线。
@@ -1114,8 +1621,8 @@ interface DryRunResult {
 ```
 
 **实现方式**：
-1. 通过 mtcute 拉取指定群的历史消息
-2. 按时间顺序回放，模拟事件到达
+1. 通过 mtcute 实时运行指定群的历史消息 / 读取导出的 JSON 格式聊天记录
+2. 等待消息到达，实时观察 / 按时间顺序回放，模拟事件到达
 3. 每条消息经过 Air-Reading Engine 评估
 4. 通过评估的消息进入 Reply Pipeline（但 `send: false` 时不实际发送）
 5. 记录所有决策和生成的回复
@@ -1129,7 +1636,10 @@ interface DryRunResult {
 
 **CLI 命令**：
 ```bash
+# 实时模式，运行时长7天
 npx tsx src/cli.ts dry-run --chat -100123456 --days 7 --model gpt-4o-mini --mode GUIDED
+# 历史记录模式，取最近三日
+npx tsx src/cli.ts dry-run --file chat.json --days 3 --model claude-opus-4-6 --mode FULL_CODEACT
 ```
 
 #### Task 6.7 — Model Router
@@ -1299,15 +1809,70 @@ interface Skill {
 
 #### Task 7.4 — Cost Control
 
+**全系统日费用估算基线**（基于 4,000 条消息/天） [NEW @Phase-7.4]：
+
+| 组件 | 触发频率 | 模型 | 每日 Token | 日费用（Gemini Flash） |
+|------|---------|------|-----------|---------------------|
+| Recording Pipeline | ~110 次/天 | Cheap | ~900K | ~$0.17 |
+| Engaged Topic quickTriage | ~60 轮/天 | Cheap | ~120K | ~$0.02 |
+| Reply Pipeline（实际生成回复） | ~10-25 次/天 | Mid-tier | ~200-500K | ~$0.10-0.25 |
+| Feedback Loop | ~10-25 次/天 | Cheap | ~50-100K | ~$0.02 |
+| Playbook 生成 | 1 次/天 | SOTA | ~50-80K | ~$0.50-1.00 |
+| Compaction | ~5-10 次/天 | Cheap/Mid | ~100-200K | ~$0.05-0.10 |
+| Embedding | ~330 次/天 | embedding-small | ~66K | ~$0.002 |
+| **合计** | — | — | **~1.5-2M** | **~$0.86-1.56** |
+
+**月费用范围**：
+- 仅 Cheap + Mid-tier 模型：**$10-20/月**
+- 含每日 SOTA Playbook 生成：**$25-50/月**
+
+**默认 DailyBudget 建议值**：
+```typescript
+const DEFAULT_DAILY_BUDGET: DailyBudget = {
+  maxTokens: 2_000_000,     // 基于上述估算的 ~1.5x 余量
+  maxAPICalls: 300,          // ~110 recording + ~60 engaged + ~25 reply + buffer
+  currentTokens: 0,
+  currentAPICalls: 0,
+  date: '',
+};
+```
 **职责**：控制 LLM API 调用成本。
+
+**全系统日费用估算基线**（基于 4,000 条消息/天） [NEW @Phase-7.4]：
+
+| 组件 | 触发频率 | 模型 | 每日 Token | 日费用（Gemini Flash） |
+|------|---------|------|-----------|---------------------|
+| Recording Pipeline | ~110 次/天 | Cheap | ~900K | ~$0.17 |
+| Engaged Topic quickTriage | ~60 轮/天 | Cheap | ~120K | ~$0.02 |
+| Reply Pipeline（实际生成回复） | ~10-25 次/天 | Mid-tier | ~200-500K | ~$0.10-0.25 |
+| Feedback Loop | ~10-25 次/天 | Cheap | ~50-100K | ~$0.02 |
+| Playbook 生成 | 1 次/天 | SOTA | ~50-80K | ~$0.50-1.00 |
+| Compaction | ~5-10 次/天 | Cheap/Mid | ~100-200K | ~$0.05-0.10 |
+| Embedding | ~330 次/天 | embedding-small | ~66K | ~$0.002 |
+| **合计** | — | — | **~1.5-2M** | **~$0.86-1.56** |
+
+**月费用范围**：
+- 仅 Cheap + Mid-tier 模型：**$10-20/月**
+- 含每日 SOTA Playbook 生成：**$25-50/月**
+
+**默认 DailyBudget 建议值**：
+```typescript
+const DEFAULT_DAILY_BUDGET: DailyBudget = {
+  maxTokens: 2_000_000,     // 基于上述估算的 ~1.5x 余量
+  maxAPICalls: 300,          // ~110 recording + ~60 engaged + ~25 reply + buffer
+  currentTokens: 0,
+  currentAPICalls: 0,
+  date: '',
+};
+```
 
 **每日预算控制器**：
 
 ```typescript
 interface DailyBudget {
-  maxTokens: number;         // 默认 500,000
+  maxTokens: number;       
   currentTokens: number;
-  maxAPICalls: number;       // 默认 200
+  maxAPICalls: number;   
   currentAPICalls: number;
   date: string;
 }
@@ -1354,8 +1919,9 @@ interface DailyBudget {
 | Task | 内容 | 依赖 | 估时 |
 |------|------|------|------|
 | 6.0 | Memory V2 完全重写 | 独立设计文档 | TODO |
-| 6.1 | Air-Reading Engine（初筛 + 快速路由 + 话题状态机） | NC | 3天 |
-| 6.2 | Recording Pipeline（后台话题提取） | 6.0 (或临时用现有 memory) | 3天 |
+| 6.1 | Air-Reading Engine（双模态路由 + TopicRegistry + 话题状态机） | NC | 4天 |
+| 6.1.1 | Engaged Topic Handler（对话模式 + 退出机制） | 6.1 | 3天 |
+| 6.2 | Recording Pipeline（LLM 话题提取 + 50条/2min + 强信号加速） | 6.0 (或临时用现有 memory) | 3天 |
 | 6.6 | Dry-Run System（历史回放评估） | 6.1 | 2天 |
 | 6.7 | Model Router（事件→模型+模式路由） | 6.1, config | 1天 |
 
@@ -1383,6 +1949,8 @@ interface DailyBudget {
 - Dry-Run 在历史聊天记录上运行，输出评估报告，误触发率 < 20%
 - Guided 模式下弱模型能稳定完成回复流程（不误发消息、不无限 debug）
 - Recording Pipeline 持续运行 24h 无异常，话题提取质量人工验证通过
+- Engaged Topic Handler 在对话模式下回复延迟 < 20 秒（含自然延迟），节奏自然
+- 退出机制验证：MAX_TURNS 硬上限生效、身份探测场景能触发退出、连续被无视后自动退出
 
 **Phase 7 验收标准**：
 - Playbook 每日自动生成，内容准确反映群聊动态
