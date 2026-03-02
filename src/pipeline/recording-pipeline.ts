@@ -220,7 +220,7 @@ export class RecordingPipeline extends EventEmitter {
             const groupedByChat = this.groupByChat(messages);
 
             for (const [chatId, chatMessages] of groupedByChat) {
-                const existingTopics = this.registry.getActive(chatId);
+                const existingTopics = this.registry.getByChat(chatId);
 
                 const clustering = await this.llmTopicClustering(chatMessages, existingTopics);
 
@@ -254,7 +254,7 @@ export class RecordingPipeline extends EventEmitter {
         existingTopics: Topic[]
     ): Promise<TopicClusteringResult> {
         const existingTopicsStr = existingTopics.length > 0
-            ? existingTopics.map(t => `- ${t.id}: "${t.label}" (关键词: ${t.keywords.join(", ")})`).join("\n")
+            ? existingTopics.map(t => `- ${t.id}: "${t.label}" [${t.state}] (关键词: ${t.keywords.join(", ")})`).join("\n")
             : "（暂无已有话题）";
 
         const messagesStr = messages.map(m =>
@@ -394,7 +394,13 @@ export class RecordingPipeline extends EventEmitter {
 
             if (!topic) continue;
 
-            // 应用 Triage 结果
+            // 只对 ACTIVE 状态的话题应用 Triage（已 IGNORED/ENGAGED 的不重复 triage）
+            if (topic.state !== "ACTIVE") {
+                log.debug("跳过已决策话题", { topicId: topic.id, state: topic.state, label: topic.label });
+                updatedTopics.push(topic);
+                continue;
+            }
+
             const triage = triageResult.topics.find(t => t.topicId === topicId);
             if (triage) {
                 const decision: TriageDecision = {
@@ -408,27 +414,20 @@ export class RecordingPipeline extends EventEmitter {
                 // 冷却增强：提高置信度阈值
                 const threshold = topic.cooldownBoost ? 0.75 : 0.6;
 
-                if (topic.state === "ACTIVE") {
-                    this.registry.transition(topic.id, "TRIAGING");
-                }
+                this.registry.transition(topic.id, "TRIAGING");
 
                 if (triage.should_intervene && triage.confidence >= threshold) {
                     this.registry.setDecision(topic.id, decision);
-                    if (topic.state === "TRIAGING") {
-                        this.registry.transition(topic.id, "PRELOADING");
-                        // 预热完成后直接进入 ENGAGED
-                        this.registry.transition(topic.id, "ENGAGED");
-                        this.emit("topic:triage-passed", topic, decision);
-                    }
+                    this.registry.transition(topic.id, "PRELOADING");
+                    this.registry.transition(topic.id, "ENGAGED");
+                    this.emit("topic:triage-passed", topic, decision);
                 } else {
                     this.registry.setDecision(topic.id, decision);
-                    if (topic.state === "TRIAGING") {
-                        const ignoreState = triage.confidence < 0.3
-                            ? "IGNORED_LOW_VALUE" as const
-                            : "IGNORED" as const;
-                        topic.ignoreReason = triage.reason;
-                        this.registry.transition(topic.id, ignoreState);
-                    }
+                    const ignoreState = triage.confidence < 0.3
+                        ? "IGNORED_LOW_VALUE" as const
+                        : "IGNORED" as const;
+                    topic.ignoreReason = triage.reason;
+                    this.registry.transition(topic.id, ignoreState);
                 }
             }
 
