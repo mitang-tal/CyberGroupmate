@@ -11,9 +11,9 @@
  * - 即使 agent 忘记存记忆，系统也会自动归档
  */
 
-import { callLLM, LLMConfig, ChatMessage } from "./llm.js";
-import { MemoryStoreV2 } from "./memory-v2/index.js";
-import { SessionResult } from "./session-runner.js";
+import { callLLM, LLMConfig, ChatMessage } from "../core/llm.js";
+import { MemoryStoreV2 } from "../memory-v2/index.js";
+import { SessionResult } from "../sandbox/session-runner.js";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
 // ─── 常量 ───

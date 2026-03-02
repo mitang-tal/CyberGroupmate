@@ -10,23 +10,23 @@
  * - 主循环中 drain 事件 → 组装 context → 运行 CodeAct session
  */
 
-import { NotificationCenter } from "./notification-center.js";
-import { Sandbox } from "./sandbox.js";
+import { NotificationCenter } from "./event/notification-center.js";
+import { Sandbox } from "./sandbox/sandbox.js";
 import { MemoryStoreV2 } from "./memory-v2/index.js";
-import { SceneManager } from "./scene-manager.js";
+import { SceneManager } from "./scenes/scene-manager.js";
 import { registerBuiltinScenes } from "./scenes/index.js";
-import { runCodeActSession, SessionResult } from "./session-runner.js";
-import { runCompaction } from "./compaction.js";
-import { loadConfig, AppConfig } from "./config.js";
-import { callLLM, ChatMessage } from "./llm.js";
-import type { LLMConfig } from "./config.js";
+import { runCodeActSession, SessionResult } from "./sandbox/session-runner.js";
+import { runCompaction } from "./event/compaction.js";
+import { loadConfig, AppConfig } from "./core/config.js";
+import { callLLM, ChatMessage } from "./core/llm.js";
+import type { LLMConfig } from "./core/config.js";
 import {
     TopicRegistry,
     RecordingPipeline,
     FastRouter,
     EngagedTopicHandler,
     ModelRouter,
-} from "./phase6/index.js";
+} from "./pipeline/index.js";
 import {
     readFileSync,
     writeFileSync,
@@ -35,7 +35,7 @@ import {
     appendFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { createLogger } from "./logger.js";
+import { createLogger } from "./core/logger.js";
 
 const log = createLogger("main");
 

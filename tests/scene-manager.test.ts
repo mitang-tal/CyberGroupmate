@@ -4,7 +4,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { SceneManager } from "../src/scene-manager.js";
+import { SceneManager } from "../src/scenes/scene-manager.js";
 import { registerBuiltinScenes } from "../src/scenes/index.js";
 
 describe("SceneManager", () => {

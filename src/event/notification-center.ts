@@ -19,7 +19,7 @@ import {
     FSWatcher,
 } from "node:fs";
 import { dirname } from "node:path";
-import { createLogger } from "./logger.js";
+import { createLogger } from "../core/logger.js";
 
 const log = createLogger("nc");
 

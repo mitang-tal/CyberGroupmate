@@ -14,8 +14,8 @@
  */
 
 import { EventEmitter } from "node:events";
-import { createLogger } from "../logger.js";
-import { callLLM, type LLMConfig, type ChatMessage } from "../llm.js";
+import { createLogger } from "../core/logger.js";
+import { callLLM, type LLMConfig, type ChatMessage } from "../core/llm.js";
 import type { TopicRegistry } from "./topic-registry.js";
 import type {
     Message,

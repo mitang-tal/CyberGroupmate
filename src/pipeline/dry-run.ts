@@ -12,8 +12,8 @@
  */
 
 import { readFileSync, existsSync, writeFileSync } from "node:fs";
-import { createLogger } from "../logger.js";
-import type { LLMConfig } from "../llm.js";
+import { createLogger } from "../core/logger.js";
+import type { LLMConfig } from "../core/llm.js";
 import { TopicRegistry } from "./topic-registry.js";
 import { RecordingPipeline } from "./recording-pipeline.js";
 import { EngagedTopicHandler } from "./engaged-topic-handler.js";

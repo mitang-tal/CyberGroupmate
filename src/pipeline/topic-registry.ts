@@ -12,7 +12,7 @@
  */
 
 import { EventEmitter } from "node:events";
-import { createLogger } from "../logger.js";
+import { createLogger } from "../core/logger.js";
 import type {
     Topic,
     TopicState,

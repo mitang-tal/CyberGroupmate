@@ -8,12 +8,12 @@
  * 3. 其他群聊消息 → 进入 RecordingPipeline 缓冲
  */
 
-import { createLogger } from "../logger.js";
+import { createLogger } from "../core/logger.js";
 import type { TopicRegistry } from "./topic-registry.js";
 import type { EngagedTopicHandler } from "./engaged-topic-handler.js";
 import type { RecordingPipeline } from "./recording-pipeline.js";
 import type { Message, RouteResult, EngagedRelevance } from "./types.js";
-import type { NotificationEvent } from "../notification-center.js";
+import type { NotificationEvent } from "../event/notification-center.js";
 
 const log = createLogger("fast-router");
 

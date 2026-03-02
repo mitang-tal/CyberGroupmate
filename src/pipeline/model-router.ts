@@ -9,8 +9,8 @@
  * - 简单场景（闲聊、共识总结）→ Cheap + ENFORCED
  */
 
-import { createLogger } from "../logger.js";
-import type { LLMConfig } from "../llm.js";
+import { createLogger } from "../core/logger.js";
+import type { LLMConfig } from "../core/llm.js";
 import type {
     Message,
     TriageDecision,

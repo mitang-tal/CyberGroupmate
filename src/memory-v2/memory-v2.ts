@@ -13,7 +13,7 @@
  * - 在 sandbox-worker.ts 中以精简版注入到 Agent 运行环境
  */
 
-import { createLogger } from "../logger.js";
+import { createLogger } from "../core/logger.js";
 import type {
     IMemoryStoreV2,
     MemoryEntry,

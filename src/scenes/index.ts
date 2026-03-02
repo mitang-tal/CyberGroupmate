@@ -8,7 +8,7 @@
  * 作为 agent 的 observation 返回给 LLM。
  */
 
-import { SceneManager } from "../scene-manager.js";
+import { SceneManager } from "./scene-manager.js";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";

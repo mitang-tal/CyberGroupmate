@@ -4,7 +4,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { BackgroundManager } from "../src/background-manager.js";
+import { BackgroundManager } from "../src/sandbox/background-manager.js";
 
 /** 辅助：等待若干毫秒 */
 function sleep(ms: number): Promise<void> {

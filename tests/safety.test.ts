@@ -10,7 +10,7 @@ import {
     PermissionError,
     checkForbiddenMethod,
     getForbiddenMethods,
-} from "../src/safety.js";
+} from "../src/core/safety.js";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";

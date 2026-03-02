@@ -11,13 +11,13 @@
  */
 
 import { Sandbox, ExecutionResult } from "./sandbox.js";
-import { NotificationCenter } from "./notification-center.js";
-import { callLLM, ChatMessage, LLMResponse } from "./llm.js";
-import type { LLMConfig } from "./config.js";
+import { NotificationCenter } from "../event/notification-center.js";
+import { callLLM, ChatMessage, LLMResponse } from "../core/llm.js";
+import type { LLMConfig } from "../core/config.js";
 import { appendFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { ulid } from "ulid";
-import { createLogger } from "./logger.js";
+import { createLogger } from "../core/logger.js";
 
 const log = createLogger("session");
 

@@ -6,7 +6,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseResponse } from "../src/session-runner.js";
+import { parseResponse } from "../src/sandbox/session-runner.js";
 
 describe("parseResponse", () => {
     it("should parse thinking only (no code blocks)", () => {

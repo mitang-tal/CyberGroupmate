@@ -12,14 +12,14 @@
  */
 
 import { createInterface } from "node:readline";
-import { Sandbox } from "./sandbox.js";
-import { NotificationCenter } from "./notification-center.js";
+import { Sandbox } from "./sandbox/sandbox.js";
+import { NotificationCenter } from "./event/notification-center.js";
 import { MemoryStoreV2 } from "./memory-v2/index.js";
-import { loadConfig } from "./config.js";
-import { createLogger } from "./logger.js";
+import { loadConfig } from "./core/config.js";
+import { createLogger } from "./core/logger.js";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { runDryRun, saveDryRunReport, type DryRunConfig } from "./phase6/index.js";
+import { runDryRun, saveDryRunReport, type DryRunConfig } from "./pipeline/index.js";
 
 const log = createLogger("cli");
 const DATA_DIR = "workspace";

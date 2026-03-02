@@ -4,7 +4,7 @@
 
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { NotificationCenter } from "../src/notification-center.js";
+import { NotificationCenter } from "../src/event/notification-center.js";
 import { readFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";

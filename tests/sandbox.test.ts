@@ -4,7 +4,7 @@
 
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
-import { Sandbox } from "../src/sandbox.js";
+import { Sandbox } from "../src/sandbox/sandbox.js";
 
 describe("Sandbox", () => {
     const sandboxes: Sandbox[] = [];
