@@ -1,8 +1,8 @@
 # CyberGroupmate — 项目实施方案
 
-> **文档版本**: 0.3.0
-> **最后更新**: 2026-02-27
-> **状态**: Phase 1-5 已实测，Phase 6-7 规划中。现在更多考虑工程化如何落地。
+> **文档版本**: 0.6.0
+> **最后更新**: 2026-03-02
+> **状态**: Phase 1-5 已完成，Phase 6A（Memory V2 Stub + Air-Reading Engine + Recording Pipeline + Dry-Run + Model Router）已完成，Phase 6B-7 规划中。
 
 ---
 
@@ -35,15 +35,16 @@
 | 4.7 | 跨进程通讯补丁 | ✅ 完成 | NC cross-process fix (buffer offset instead of string slice, fallback polling) |
 | 4.8 | API Docs 与配置补丁 | ✅ 完成 | Mtcute API docs fix (full prototype method reference, Object.keys 警告); Temperature 覆盖 fix |
 | 5.1 | Scene-Bound Sessions | ✅ 完成 | 单一 session + scope 过滤，见 Phase 5 总结 |
-| 6.0 | Memory V2 完全重写 | 📝 TODO | 三层记忆模型（短期/中期/长期）；等待独立设计文档确认后实施 |
-| 6.1 | Air-Reading Engine | 📝 规划中 | 双模态消息处理（观察模式/对话模式）；话题级 Triage；快速路由 + 预热缓存 |
-| 6.1.1 | Engaged Topic Handler | 📝 规划中 | 对话模式快速路径；逐条/短窗口处理；自然延迟模拟；退出机制 |
-| 6.2 | Recording Pipeline | 📝 规划中 | 后台话题提取（LLM 驱动）；50条/2min 双触发；强信号加速；TopicRegistry 维护 |
+| 6.0 | Memory V2 Stub 迁移 | ✅ 完成 | [REVISED @Phase-6.0] 先以 read-empty/write-discard stub 替换旧 memory.ts；创建 `src/memory-v2/` 模块（types + stub impl + barrel export）；更新所有引用（main/cli/compaction/sandbox-worker/scenes）；16/16 测试通过。真实 V2 数据层待接入。 |
+| 6.1 | Air-Reading Engine | ✅ 完成 | TopicRegistry 10 态状态机（ACTIVE→TRIAGING→PRELOADING→ENGAGED→EXITING→COOLDOWN→ARCHIVED 等）；超时清理（STALE 15min、ARCHIVED 2h）；话题流变继承。FastRouter 三路消息路由（FAST_PATH/@回复/私聊 → CodeAct；ENGAGED → 对话模式；其他 → Recording 缓冲）。 |
+| 6.1.1 | Engaged Topic Handler | ✅ 完成 | 消息归属判定（reply chain、时间窗口+参与者、乐观归属+回退）；自然延迟模拟 3-15s；quickTriage cheap model 多维判定（身份探测/是否继续/自然结束）；7 级退出信号（P0 MAX_TURNS → P6 CROWDED_OUT）；5 种退出风格（NATURAL_END/FADE_OUT/GRACEFUL_REDIRECT/SILENT_WITHDRAWAL/GRADUAL_WITHDRAWAL） |
+| 6.2 | Recording Pipeline | ✅ 完成 | 后台观察者 50 条/2min 双触发缓冲；强信号加速（15 条/30s eager mode）；4 步 flush（LLM 话题聚类 → LLM 摘要+Triage → TopicRegistry 更新 → Memory V2 写入 stub）；错误恢复（失败时消息放回缓冲头部） |
 | 6.3 | Reply Pipeline Framework | 📝 规划中 | Advisory / Guided / Enforced 三种模式；适配不同模型能力 |
 | 6.4 | High-Level Action API | 📝 规划中 | 弱模型小抄系统；actions.getContext / recallPerson / reply |
 | 6.5 | Feedback Loop | 📝 规划中 | 发言后 3 分钟评估群友反应；更新 engagement_score |
-| 6.6 | Dry-Run System | 📝 规划中 | 在历史聊天记录上回放模拟 agent 行为；离线评估 |
-| 6.7 | Model Router | 📝 规划中 | 根据事件复杂度选择模型 + pipeline 模式 |
+| 6.6 | Dry-Run System | ✅ 完成 | JSONL 历史消息加载 → 按时间模拟事件到达 → FastRouter+RecordingPipeline 处理 → JSON 评估报告输出；CLI `dry-run` 子命令（支持 --chat-id、--days 过滤）；saveDryRunReport 保存详细报告 |
+| 6.7 | Model Router | ✅ 完成 | 规则表驱动路由（7 条默认规则）；3 层模型映射（cheap/mid/sota）；复杂度评估（消息长度、是否含问题、多人讨论、介入类型）；可通过构造函数自定义规则和模型名称 |
+| — | 目录重组 | ✅ 完成 | src/ 重组为 core/（config/logger/llm/safety）、sandbox/（sandbox/worker/bgmgr/session-runner）、event/（nc/compaction）、scenes/（scene-mgr+类型）、pipeline/（原 phase6/）、memory-v2/、agent/（docs）；main.ts + cli.ts 保留顶层。所有 import 路径 + 测试已更新。 |
 | 7.1 | Playbook System | 📝 规划中 | SOTA 定期分析生成 GroupPlaybook；注入弱模型上下文 |
 | 7.2 | Skill Auto-Generation | 📝 规划中 | SOTA 介入失败场景 → 写代码/测试/类型 → 生成可复用 Skill |
 | 7.3 | CoT Template Distillation | 📝 规划中 | SOTA 提取典型场景思维链模板；弱模型直接套用 |
