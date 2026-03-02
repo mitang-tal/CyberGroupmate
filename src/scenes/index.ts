@@ -64,11 +64,12 @@ export function registerBuiltinScenes(sm: SceneManager): void {
     sm.register({
         name: "memory",
         description:
-            "记忆系统。搜索/存储记忆、管理群友画像、查看对话摘要、管理待办事项。",
+            "记忆系统 V2。统一检索(recall)、消息档案(browseHistory)、反思(reflect)、以及兼容的搜索/画像管理。",
         typeDefs: readTypeDefs("memory.d.ts"),
         contextSetup:
-            "你现在在 Memory 场景。memory 是 MemoryStore 实例。\n" +
-            "你可以搜索和存储记忆、查看和更新群友画像、管理待办事项。\n" +
-            "支持 FTS5 全文搜索和 CJK 中文搜索。",
+            "你现在在 Memory 场景。memory 是 MemoryStore 实例（V2 stub）。\n" +
+            "V2 新方法：recall()（语义检索）、browseHistory()（翻聊天记录）、reflect()（反思总结）。\n" +
+            "V1 兼容方法：search()、store()、getPerson()、updatePerson()、addTodo() 等仍可使用。\n" +
+            "注意：当前为占位实现，读操作返回空、写操作静默丢弃。后续接入真实数据层。",
     });
 }

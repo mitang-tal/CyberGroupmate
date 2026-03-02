@@ -233,7 +233,40 @@ async function executeCode(id: string, code: string): Promise<void> {
             ps: listTasks,
         };
 
-        const memory = {};
+        const memory = {
+            // V1 兼容方法（读空+写弃）
+            search: (_query: string, _limit?: number) => [],
+            store: (_content: string, _metadata?: Record<string, unknown>) => "stub-id",
+            getPerson: (_userId: string) => null,
+            updatePerson: (_userId: string, _updates: Record<string, unknown>) => {},
+            getRecentConversations: (_chatId?: string, _limit?: number) => [],
+            storeConversation: (_summary: Record<string, unknown>) => "stub-id",
+            getPendingTasks: (_includeCompleted?: boolean) => [],
+            addTodo: (_description: string, _dueDate?: string) => "stub-id",
+            rawQuery: (sql: string) => {
+                const trimmed = sql.trim().toUpperCase();
+                if (trimmed.startsWith("SELECT") || trimmed.startsWith("WITH")) return [];
+                return { changes: 0, lastInsertRowid: 0 };
+            },
+            close: () => {},
+            // V2 新方法（读空+写弃）
+            recall: async (_query: string, _options?: Record<string, unknown>) => ({
+                topics: [], facts: [], persons: [],
+            }),
+            browseHistory: async (_request: Record<string, unknown>) => ({
+                answer: "[Memory V2 stub] 消息档案尚未接入。",
+                segments: [], messagesRead: 0,
+            }),
+            reflect: async (_chatId: string) => ({
+                reflectedPeriod: { from: "", to: "" },
+                topicsSummary: [], personUpdates: [],
+                groupUpdates: "", newCoreFacts: [],
+                mergedEpisodes: 0, insights: "[Memory V2 stub] 反思功能尚未接入。",
+            }),
+            updatePersonProfile: async (_userId: string, _chatId: string) => ({
+                before: {}, after: {}, changes: "[Memory V2 stub] 画像更新功能尚未接入。",
+            }),
+        };
         const scene = {
             get current() { return globalSceneState; },
             enter: (name: string) => {
