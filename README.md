@@ -54,34 +54,11 @@ npm install
 cp config.example.yaml config.yaml
 ```
 
-编辑 `config.yaml`，至少需要设置：
+然后编辑 `config.yaml`
 
-```yaml
-llm:
-  provider: openai           # 或 "anthropic"
-  base_url: https://api.openai.com/v1
-  api_key: sk-xxxx           # 你的 API Key
-  model: gpt-4o              # 模型名称
+也可以通过**环境变量**覆盖部分设置（优先级：环境变量 > config.yaml > 默认值）：
 
-persona:
-  name: 赛博群友
-  description: 一个混在群里的 AI     # Agent 的人设描述
-
-telegram:
-  mode: bot                  # "bot" 或 "userbot"
-  bot_token: 123456:ABC-DEF  # Bot Token（bot 模式）
-  api_id: "12345678"         # API ID（userbot 模式）
-  api_hash: abcdef123456     # API Hash（userbot 模式）
-```
-
-也可以通过**环境变量**覆盖（优先级：环境变量 > config.yaml > 默认值）：
-
-```bash
-# LLM
-export LLM_PROVIDER=openai
-export LLM_BASE_URL=https://api.openai.com/v1
-export LLM_API_KEY=sk-xxxx
-export LLM_MODEL=gpt-4o
+```bash、
 
 # Telegram
 export TG_BOT_TOKEN=123456:ABC-DEF...
