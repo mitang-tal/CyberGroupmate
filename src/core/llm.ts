@@ -8,7 +8,7 @@
  */
 
 // 从 config.ts 重新导出，保持向后兼容
-export { type LLMConfig, loadLLMConfig } from "./config.js";
+export { type LLMConfig } from "./config.js";
 
 import type { LLMConfig } from "./config.js";
 
@@ -30,6 +30,8 @@ export interface LLMCallOptions {
     maxTokens?: number;
     /** 覆盖默认 model */
     model?: string;
+    /** Gemini thinking level: "none" | "low" | "medium" | "high" */
+    thinkingLevel?: string;
 }
 
 /** LLM 调用结果 */
@@ -68,13 +70,14 @@ export async function callLLM(
     const model = options?.model ?? config.model;
     const temperature = options?.temperature ?? config.temperature;
     const maxTokens = options?.maxTokens ?? config.maxTokens;
+    const thinkingLevel = options?.thinkingLevel ?? config.thinkingLevel;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
             if (config.provider === "anthropic") {
                 return await callAnthropic(messages, config, model, temperature, maxTokens);
             } else {
-                return await callOpenAI(messages, config, model, temperature, maxTokens);
+                return await callOpenAI(messages, config, model, temperature, maxTokens, thinkingLevel);
             }
         } catch (err: unknown) {
             const isRateLimit =
@@ -110,7 +113,8 @@ async function callOpenAI(
     config: LLMConfig,
     model: string,
     temperature: number,
-    maxTokens: number
+    maxTokens: number,
+    thinkingLevel?: string,
 ): Promise<LLMResponse> {
     const url = `${config.baseUrl.replace(/\/$/, "")}/chat/completions`;
 
@@ -129,6 +133,16 @@ async function callOpenAI(
             messages: messages.map(m => ({ role: m.role, content: m.content })),
             temperature,
             max_tokens: maxTokens,
+            // Gemini thinking 参数（OpenAI 兼容格式）
+            ...(thinkingLevel && thinkingLevel !== "none" ? {
+                thinking: {
+                    type: "enabled",
+                    budget_tokens: thinkingLevel === "low" ? 1024
+                        : thinkingLevel === "medium" ? 4096
+                        : thinkingLevel === "high" ? 16384
+                        : 4096,
+                },
+            } : {}),
         }),
     });
 

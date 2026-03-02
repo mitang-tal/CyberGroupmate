@@ -13,7 +13,7 @@
 
 import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { createLogger } from "../core/logger.js";
-import type { LLMConfig } from "../core/llm.js";
+import { resolveTierProfile, type AppConfig, type LLMConfig } from "../core/config.js";
 import { TopicRegistry } from "./topic-registry.js";
 import { RecordingPipeline } from "./recording-pipeline.js";
 import { EngagedTopicHandler } from "./engaged-topic-handler.js";
@@ -40,13 +40,30 @@ interface HistoryMessage {
 }
 
 /**
+ * 规范化 Telegram chat_id。
+ * Telegram 的超级群/频道 chat_id 应该是负数（-100xxxxxxxxxx）。
+ * 但从 Desktop 导出的 JSON 中，chat_id 可能是正数。
+ * 这里做规范化，确保群组/频道 ID 是负数。
+ *
+ * 判断逻辑：如果 chat_id > 0 且位数 >= 10，很可能是超级群 ID，需要取反。
+ * Telegram 用户 ID 通常 < 10亿（10位数跨界），而超级群 ID 通常都是 10 位以上。
+ */
+function normalizeChatId(chatId: number): number {
+    if (chatId > 0 && chatId > 1_000_000_000) {
+        // 很可能是超级群/频道 ID，需要取反
+        return -chatId;
+    }
+    return chatId;
+}
+
+/**
  * 运行 Dry-Run 评估
  */
 export async function runDryRun(
     config: DryRunConfig,
-    llmConfig: LLMConfig,
+    appConfig: AppConfig,
     persona: string = "赛博群友",
-    agentUserId: number = 0
+    agentUserId: number = 0,
 ): Promise<DryRunResult> {
     const startTime = Date.now();
     log.info("Dry-Run 开始", {
@@ -70,19 +87,50 @@ export async function runDryRun(
         };
     }
 
-    // ─── 初始化组件 ───
+    // ─── 初始化组件（按 tier 解析 profile）───
+    const cheapConfig = resolveTierProfile("cheap", appConfig);
+    const midConfig = resolveTierProfile("mid", appConfig);
+    const sotaConfig = resolveTierProfile("sota", appConfig);
+
     const registry = new TopicRegistry();
-    const recordingPipeline = new RecordingPipeline(registry, llmConfig, persona);
-    const engagedHandler = new EngagedTopicHandler(registry, llmConfig);
+    const recordingPipeline = new RecordingPipeline(registry, cheapConfig, persona);
+    const engagedHandler = new EngagedTopicHandler(registry, midConfig);
     const fastRouter = new FastRouter(registry, engagedHandler, recordingPipeline, agentUserId);
-    const modelRouter = new ModelRouter(llmConfig);
+    const modelRouter = new ModelRouter(midConfig, undefined, {
+        cheap: cheapConfig.model,
+        mid: midConfig.model,
+        sota: sotaConfig.model,
+    });
+
+    log.info("模型配置", {
+        cheap: `${cheapConfig.model} (${appConfig.modelTiers.cheap})`,
+        mid: `${midConfig.model} (${appConfig.modelTiers.mid})`,
+        sota: `${sotaConfig.model} (${appConfig.modelTiers.sota})`,
+    });
 
     const decisions: DryRunDecision[] = [];
     let totalTokens = 0;
 
+    // ─── 路由统计 ───
+    const routeStats = {
+        fast_path_mention: 0,
+        fast_path_reply: 0,
+        fast_path_private: 0,
+        fast_path_command: 0,
+        engaged: 0,
+        recording: 0,
+    };
+
     // 收集 triage 通过的话题
     recordingPipeline.on("topic:triage-passed", (topic, decision) => {
         const route = modelRouter.route(false, decision, []);
+        log.info("🎯 话题通过 Triage", {
+            topicId: topic.id,
+            label: topic.label,
+            intervention: decision.intervention_type,
+            confidence: decision.confidence,
+            reason: decision.reason,
+        });
         decisions.push({
             triggerMessage: {
                 from: "topic",
@@ -100,19 +148,39 @@ export async function runDryRun(
         });
     });
 
+    // 监听 flush 事件
+    recordingPipeline.on("flush:start", (count: number) => {
+        log.info("📦 Recording flush 开始", { messageCount: count });
+    });
+    recordingPipeline.on("flush:complete", (topics: any[]) => {
+        log.info("📦 Recording flush 完成", { topicCount: topics.length });
+    });
+    recordingPipeline.on("flush:error", (err: Error) => {
+        log.error("📦 Recording flush 失败", { error: err.message });
+    });
+
     // ─── 按时间顺序模拟消息到达 ───
     log.info("开始模拟", { totalMessages: messages.length });
 
     // 分批处理，每批最多 50 条
     const BATCH_SIZE = 50;
+    let processedCount = 0;
     for (let i = 0; i < messages.length; i += BATCH_SIZE) {
         const batch = messages.slice(i, i + BATCH_SIZE);
 
         for (const msg of batch) {
+            processedCount++;
             // 模拟消息到达
             const fastPathResults = fastRouter.routeMessage(msg);
 
             if (fastPathResults.type === "FAST_PATH") {
+                // 统计 FAST_PATH 原因
+                const reason = fastPathResults.reason;
+                if (reason === "direct_mention") routeStats.fast_path_mention++;
+                else if (reason === "reply_to_agent") routeStats.fast_path_reply++;
+                else if (reason === "private_chat") routeStats.fast_path_private++;
+                else routeStats.fast_path_command++;
+
                 decisions.push({
                     triggerMessage: {
                         from: msg.senderName,
@@ -120,12 +188,16 @@ export async function runDryRun(
                         time: new Date(msg.timestamp).toISOString(),
                     },
                     decision: "reply",
-                    reason: `FAST_PATH: ${fastPathResults.reason}`,
-                    pipelineTrace: ["FAST_PATH"],
+                    reason: `FAST_PATH: ${reason}`,
+                    pipelineTrace: ["FAST_PATH", reason],
                 });
+            } else if (fastPathResults.type === "ENGAGED") {
+                routeStats.engaged++;
+                // ENGAGED 消息不直接记录 decision，由 topic handler 处理
             } else {
-                // 消息进入 recording 缓冲
-                recordingPipeline.onMessage(msg);
+                routeStats.recording++;
+                // 直接添加到缓冲区（不触发自动 flush，由下方显式 flush 控制）
+                recordingPipeline.addMessageDirect(msg);
             }
         }
 
@@ -134,6 +206,18 @@ export async function runDryRun(
 
         // 清理超时话题
         registry.cleanup();
+
+        // 进度报告（每 1000 条）
+        if (processedCount % 1000 === 0 || processedCount === messages.length) {
+            log.info("进度", {
+                processed: processedCount,
+                total: messages.length,
+                pct: (processedCount / messages.length * 100).toFixed(1) + "%",
+                routeStats: { ...routeStats },
+                topics: registry.size,
+                buffer: recordingPipeline.bufferSize,
+            });
+        }
     }
 
     // 最终 flush
@@ -155,6 +239,23 @@ export async function runDryRun(
         wouldReply: result.wouldReply,
         wouldIgnore: result.wouldIgnore,
         timeMs: totalTimeMs,
+    });
+
+    // 路由统计
+    log.info("📊 路由统计", routeStats);
+    log.info("📊 话题注册表最终状态", {
+        totalTopics: registry.size,
+        allTopics: registry.getAll().map(t => ({
+            id: t.id,
+            label: t.label,
+            state: t.state,
+            msgCount: t.messageCount,
+            decision: t.decision ? {
+                intervene: t.decision.should_intervene,
+                type: t.decision.intervention_type,
+                confidence: t.decision.confidence,
+            } : null,
+        })),
     });
 
     // 清理
@@ -183,9 +284,10 @@ function loadHistoryMessages(config: DryRunConfig): Message[] {
                 try {
                     const hist = JSON.parse(line) as HistoryMessage;
                     if (config.chatId && hist.chat_id !== config.chatId) continue;
+                    const normalizedChatId = normalizeChatId(hist.chat_id);
                     messages.push({
                         id: hist.id,
-                        chatId: hist.chat_id,
+                        chatId: normalizedChatId,
                         senderId: hist.user_id,
                         senderName: hist.user_name,
                         text: hist.text,

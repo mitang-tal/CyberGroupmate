@@ -1,34 +1,67 @@
-# CyberGroupmate 配置文件
+# CyberGroupmate 配置文件示例
+# 复制为 config.yaml 后修改使用
 # 所有配置项都可以通过环境变量覆盖
 
-# ─── LLM 设置 ───
-llm:
-  # API 版本: "openai" | "anthropic"
-  # 环境变量: LLM_PROVIDER
-  provider: openai
+# ─── LLM Profiles ───
+# 定义多个 LLM 配置 profile，每个 profile 有独立的 provider/key/model
+# 在 model_tiers 中通过名称引用
+llm_profiles:
+  # 示例：Google Gemini
+  gemini-flash:
+    provider: openai
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    api_key: ""           # 或通过 LLM_API_KEY 环境变量设置
+    model: gemini-3-flash-preview
+    temperature: 0.7
+    max_tokens: 8192
 
-  # API 地址
-  # 环境变量: LLM_BASE_URL
-  # OpenAI: https://api.openai.com/v1
-  # Anthropic: https://api.anthropic.com/v1
-  # Moonshot: https://api.moonshot.ai/v1
-  base_url: https://api.moonshot.ai/v1
+  gemini-pro:
+    provider: openai
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    api_key: ""
+    model: gemini-3.1-pro-preview
+    temperature: 1
+    max_tokens: 8192
+    thinking_level: medium  # none | low | medium | high（Gemini 特有）
 
-  # API Key
-  # 环境变量: LLM_API_KEY (推荐用环境变量而非写在配置文件中)
-  api_key: ""
+  # 示例：Anthropic Claude
+  # claude:
+  #   provider: anthropic
+  #   base_url: https://api.anthropic.com/v1
+  #   api_key: ""
+  #   model: claude-sonnet-4-20250514
+  #   temperature: 0.7
+  #   max_tokens: 4096
 
-  # 模型名称
-  # 环境变量: LLM_MODEL
-  model: kimi-k2.5
+  # 示例：OpenAI
+  # openai:
+  #   provider: openai
+  #   base_url: https://api.openai.com/v1
+  #   api_key: ""
+  #   model: gpt-4o
+  #   temperature: 0.7
+  #   max_tokens: 4096
 
-  # 温度参数 (0.0-1.0)
-  # 环境变量: LLM_TEMPERATURE
-  temperature: 1
+  # 示例：Moonshot (OpenAI 兼容)
+  # moonshot:
+  #   provider: openai
+  #   base_url: https://api.moonshot.ai/v1
+  #   api_key: ""
+  #   model: kimi-k2.5
+  #   temperature: 1
+  #   max_tokens: 8192
 
-  # 最大输出 token 数
-  # 环境变量: LLM_MAX_TOKENS
-  max_tokens: 8192
+# ─── 模型层级 ───
+# 引用上方 profile 名称，不同场景使用不同层级的模型
+model_tiers:
+  # cheap — 后台分析：话题聚类、Triage、quickTriage
+  cheap: gemini-flash
+  # mid — 一般介入：问答、知识补充、事实纠正
+  mid: gemini-flash
+  # sota — 复杂场景：直接 @ 复杂问题、冲突调解
+  sota: gemini-pro
+  # vision — 未来扩展 (图片理解)
+  # vision: gemini-pro
 
 # ─── 人格设置 ───
 persona:
@@ -43,7 +76,7 @@ persona:
 
 # ─── 通知唤醒设置 ───
 notification:
-  # 触发紧急响应的词汇匹配列表（当有人发送包含这些词的消息时会跳过排班攒消息阶段，立即唤醒Agent）
+  # 触发紧急响应的词汇匹配列表
   urgent_words:
     - "@赛博群友"
     - "？"

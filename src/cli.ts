@@ -331,13 +331,23 @@ async function cmdConfig(): Promise<void> {
 
     const config = loadConfig(undefined, true);
 
-    console.log("\n\x1b[1mLLM 配置：\x1b[0m");
-    console.log(`  Provider:    ${config.llm.provider}`);
-    console.log(`  Base URL:    ${config.llm.baseUrl}`);
-    console.log(`  Model:       ${config.llm.model}`);
-    console.log(`  Temperature: ${config.llm.temperature}`);
-    console.log(`  Max Tokens:  ${config.llm.maxTokens}`);
-    console.log(`  API Key:     ${config.llm.apiKey ? "***" + config.llm.apiKey.slice(-4) : "(未设置)"}`);
+    console.log("\n\x1b[1mLLM Profiles：\x1b[0m");
+    for (const [name, profile] of Object.entries(config.llmProfiles)) {
+        console.log(`\n  \x1b[36m[${name}]\x1b[0m`);
+        console.log(`    Provider:       ${profile.provider}`);
+        console.log(`    Base URL:       ${profile.baseUrl}`);
+        console.log(`    Model:          ${profile.model}`);
+        console.log(`    Temperature:    ${profile.temperature}`);
+        console.log(`    Max Tokens:     ${profile.maxTokens}`);
+        console.log(`    Thinking Level: ${profile.thinkingLevel ?? "(未设置)"}`);
+        console.log(`    API Key:        ${profile.apiKey ? "***" + profile.apiKey.slice(-4) : "(未设置)"}`);
+    }
+
+    console.log("\n\x1b[1m模型层级：\x1b[0m");
+    for (const [tier, profileName] of Object.entries(config.modelTiers)) {
+        const profile = config.llmProfiles[profileName];
+        console.log(`  ${tier.padEnd(8)} → ${profileName} (${profile?.model ?? '⚠ profile 不存在'})`);
+    }
 
     console.log("\n\x1b[1mPersona：\x1b[0m");
     console.log(`  Name:        ${config.persona.name}`);
@@ -470,7 +480,7 @@ async function cmdDryRun(args: string[]): Promise<void> {
     const config: DryRunConfig = {
         chatId,
         daysBack,
-        model: appConfig.llm.model,
+        model: 'dry-run',
         pipelineMode: "GUIDED",
         send: false,
         source: "file",
@@ -479,7 +489,7 @@ async function cmdDryRun(args: string[]): Promise<void> {
 
     console.log(`🔄 Dry-Run 开始 (文件: ${filePath}, chatId: ${chatId || 'all'}, 天数: ${daysBack})`);
 
-    const result = await runDryRun(config, appConfig.llm, appConfig.persona?.description ?? "赛博群友");
+    const result = await runDryRun(config, appConfig, appConfig.persona?.description ?? "赛博群友");
 
     console.log("\n📊 Dry-Run 结果:");
     console.log(`  总消息数: ${result.totalMessages}`);

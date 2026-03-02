@@ -70,10 +70,10 @@ const TOPIC_CLUSTERING_PROMPT = `你是一个群聊消息话题分析器。
 - topicLabel 应为 3-5 个词，概括话题主旨
 - 只输出 JSON，不要其他内容`;
 
-const TOPIC_TRIAGE_PROMPT = `你是一个群聊 AI 助手的决策顾问。
-请分析每个话题，判断 AI 助手是否应该介入。
+const TOPIC_TRIAGE_PROMPT = `你是一个群聊 AI 智能体的决策顾问。
+请分析每个话题，判断 AI 智能体是否应该介入。
 
-AI 助手人设：{PERSONA}
+AI 智能体人设：{PERSONA}
 
 话题列表及其消息：
 {TOPIC_MESSAGES}
@@ -98,6 +98,7 @@ AI 助手人设：{PERSONA}
 - 优先介入：有人提问无人回答、事实性错误、群友求助
 - 谨慎介入：闲聊、八卦、争吵
 - 不介入：私密对话、敏感话题、已有专业人士在解答
+- 注意：群里可能有多个 AI 智能体或者 Bot，看清楚话题是否与人设中描述的那个智能体一致
 - 只输出 JSON，不要其他内容`;
 
 /**
@@ -270,8 +271,8 @@ export class RecordingPipeline extends EventEmitter {
         ];
 
         const response = await callLLM(llmMessages, this.llmConfig, {
-            temperature: 0.3,
-            maxTokens: 2000,
+            temperature: 0.5,
+            maxTokens: 65536,
         });
 
         try {
@@ -330,8 +331,8 @@ export class RecordingPipeline extends EventEmitter {
         ];
 
         const response = await callLLM(llmMessages, this.llmConfig, {
-            temperature: 0.3,
-            maxTokens: 2000,
+            temperature: 0.5,
+            maxTokens: 65536,
         });
 
         try {
@@ -448,6 +449,15 @@ export class RecordingPipeline extends EventEmitter {
             groups.set(msg.chatId, group);
         }
         return groups;
+    }
+
+    /**
+     * 直接添加消息到缓冲区（不触发定时器/自动 flush）
+     *
+     * 用于 dry-run 模式，由外部控制 flush 时机。
+     */
+    addMessageDirect(msg: Message): void {
+        this.buffer.push(msg);
     }
 
     /**

@@ -17,9 +17,8 @@ import { SceneManager } from "./scenes/scene-manager.js";
 import { registerBuiltinScenes } from "./scenes/index.js";
 import { runCodeActSession, SessionResult } from "./sandbox/session-runner.js";
 import { runCompaction } from "./event/compaction.js";
-import { loadConfig, AppConfig } from "./core/config.js";
+import { loadConfig, resolveTierProfile, type AppConfig, type LLMConfig } from "./core/config.js";
 import { callLLM, ChatMessage } from "./core/llm.js";
-import type { LLMConfig } from "./core/config.js";
 import {
     TopicRegistry,
     RecordingPipeline,
@@ -470,11 +469,10 @@ async function main(): Promise<void> {
     ensureDataDirs();
 
     const appConfig = loadConfig();
-    const llmConfig = appConfig.llm;
-    log.info("LLM 配置加载完成", {
-        provider: llmConfig.provider,
-        model: llmConfig.model,
-        baseUrl: llmConfig.baseUrl,
+    const llmConfig = resolveTierProfile("mid", appConfig);  // main session 使用 mid profile
+    log.info("LLM Profiles 加载完成", {
+        profiles: Object.keys(appConfig.llmProfiles).join(", "),
+        tiers: Object.entries(appConfig.modelTiers).map(([k, v]) => `${k}→${v}`).join(", "),
     });
     log.info("Telegram 配置", {
         mode: appConfig.telegram.mode,
@@ -491,9 +489,10 @@ async function main(): Promise<void> {
     registerBuiltinScenes(sceneManager);
 
     // ─── Phase 6: 初始化管线组件 ───
+    const cheapConfig = resolveTierProfile("cheap", appConfig);
     const topicRegistry = new TopicRegistry();
     const engagedHandler = new EngagedTopicHandler(topicRegistry, llmConfig);
-    const recordingPipeline = new RecordingPipeline(topicRegistry, llmConfig, appConfig.persona?.description ?? "赛博群友");
+    const recordingPipeline = new RecordingPipeline(topicRegistry, cheapConfig, appConfig.persona?.description ?? "赛博群友");
     const fastRouter = new FastRouter(topicRegistry, engagedHandler, recordingPipeline, 0);
     const modelRouter = new ModelRouter(llmConfig);
 

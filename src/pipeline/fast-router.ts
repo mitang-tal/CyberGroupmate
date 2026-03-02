@@ -149,13 +149,14 @@ export class FastRouter {
 
     /**
      * 检测是否被直接 @
+     *
+     * 注意：不再匹配所有 /command（这会导致大量误判）。
+     * 只检查明确的 @mention。
      */
     private isDirectMention(msg: Message): boolean {
-        // bot 模式下通常包含 /command 或 @botname
-        // userbot 模式下检测 mention entity
-        // 简化实现：检查消息中是否包含 agent 相关标记
-        return msg.text.includes(`@${this.agentUserId}`) ||
-               msg.text.startsWith("/");
+        if (this.agentUserId === 0) return false;  // dry-run 模式下没有 agent ID
+        // 检查 @userId 格式的提及
+        return msg.text.includes(`@${this.agentUserId}`);
     }
 
     /**

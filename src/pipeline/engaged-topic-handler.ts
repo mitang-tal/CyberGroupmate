@@ -32,11 +32,11 @@ const log = createLogger("engaged-handler");
 
 // ─── Prompt 模板 ───
 
-const QUICK_TRIAGE_PROMPT = `你是一个群聊 AI 助手的决策分析器。
-AI 助手正在参与一个对话，需要你判断以下维度：
+const QUICK_TRIAGE_PROMPT = `你是一个群聊 AI 智能体的决策分析器。
+AI 智能体正在参与一个对话，需要你判断以下维度：
 
 话题背景: {TOPIC_LABEL}
-AI 助手已回复 {TURN_COUNT} 轮，最大允许 {MAX_TURNS} 轮。
+AI 智能体已回复 {TURN_COUNT} 轮，最大允许 {MAX_TURNS} 轮。
 
 最近对话上下文：
 {CONTEXT}

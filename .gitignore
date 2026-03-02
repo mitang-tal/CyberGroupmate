@@ -24,3 +24,6 @@ Thumbs.db
 .idea/
 *.swp
 config.yaml
+
+# Temporal Project Files
+.tmp
