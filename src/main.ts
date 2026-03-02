@@ -12,7 +12,7 @@
 
 import { NotificationCenter } from "./notification-center.js";
 import { Sandbox } from "./sandbox.js";
-import { MemoryStore } from "./memory.js";
+import { MemoryStoreV2 } from "./memory-v2/index.js";
 import { SceneManager } from "./scene-manager.js";
 import { registerBuiltinScenes } from "./scenes/index.js";
 import { runCodeActSession, SessionResult } from "./session-runner.js";
@@ -20,6 +20,13 @@ import { runCompaction } from "./compaction.js";
 import { loadConfig, AppConfig } from "./config.js";
 import { callLLM, ChatMessage } from "./llm.js";
 import type { LLMConfig } from "./config.js";
+import {
+    TopicRegistry,
+    RecordingPipeline,
+    FastRouter,
+    EngagedTopicHandler,
+    ModelRouter,
+} from "./phase6/index.js";
 import {
     readFileSync,
     writeFileSync,
@@ -278,12 +285,19 @@ async function mainEventLoop(
     sandbox: Sandbox,
     nc: NotificationCenter,
     sceneManager: SceneManager,
-    memory: MemoryStore,
+    memory: MemoryStoreV2,
     llmConfig: LLMConfig,
     systemPrompt: string,
-    appConfig: AppConfig
+    appConfig: AppConfig,
+    fastRouter?: FastRouter,
+    topicRegistry?: TopicRegistry,
 ): Promise<void> {
     log.info("进入主事件循环");
+
+    // ─── Phase 6: 定时清理计时器 ───
+    if (topicRegistry) {
+        setInterval(() => topicRegistry.cleanup(), 60_000);
+    }
 
     // ─── 维护唯一的长生命周期 session ───
     const messages: ChatMessage[] = [];
@@ -303,6 +317,18 @@ async function mainEventLoop(
         }
 
         log.info(`收到 ${events.length} 个新事件`);
+
+        // ─── Phase 6: FastRouter 路由 ───
+        // FAST_PATH 消息进入 CodeAct session，其他由 Pipeline 异步处理
+        if (fastRouter) {
+            const fastPathMessages = fastRouter.routeEvents(events);
+            if (fastPathMessages.length === 0) {
+                // 没有需要立即处理的消息，全部由 Recording Pipeline 异步消费
+                log.debug("所有消息由 Recording Pipeline 处理，跳过 CodeAct session");
+                continue;
+            }
+            log.info(`FastRouter: ${fastPathMessages.length} 条 FAST_PATH，${events.length - fastPathMessages.length} 条进入 Pipeline`);
+        }
 
         // ─── 检查 sandbox 健康 ───
         if (!sandbox.isAlive()) {
@@ -460,11 +486,30 @@ async function main(): Promise<void> {
     const systemPrompt = loadSystemPrompt(appConfig);
     const nc = new NotificationCenter(EVENTS_PATH);
     const sandbox = new Sandbox();
-    const memory = new MemoryStore(join(DATA_DIR, "memory.db"));
+    const memory = new MemoryStoreV2(join(DATA_DIR, "memory.db"));
     const sceneManager = new SceneManager();
     registerBuiltinScenes(sceneManager);
 
-    log.info("组件初始化完成");
+    // ─── Phase 6: 初始化管线组件 ───
+    const topicRegistry = new TopicRegistry();
+    const engagedHandler = new EngagedTopicHandler(topicRegistry, llmConfig);
+    const recordingPipeline = new RecordingPipeline(topicRegistry, llmConfig, appConfig.persona?.description ?? "赛博群友");
+    const fastRouter = new FastRouter(topicRegistry, engagedHandler, recordingPipeline, 0);
+    const modelRouter = new ModelRouter(llmConfig);
+
+    // Phase 6 事件监听
+    recordingPipeline.on("topic:triage-passed", (topic: any, decision: any) => {
+        log.info("话题通过 Triage", { topicId: topic.id, label: topic.label, type: decision.intervention_type });
+    });
+    engagedHandler.on("engaged:response-ready", (topicId: string, msgs: any[], hint: string) => {
+        log.info("对话模式就绪", { topicId, messageCount: msgs.length, hint: hint.slice(0, 50) });
+        // TODO: 将 ENGAGED 消息送入 Reply Pipeline
+    });
+    engagedHandler.on("engaged:exit", (topicId: string, signal: any, style: string) => {
+        log.info("对话模式退出", { topicId, signal: signal.type, style });
+    });
+
+    log.info("组件初始化完成（含 Phase 6 管线）");
 
     // ─── 连接 sandbox 事件 ───
     sandbox.on("notify", (event: Record<string, unknown>) => {
@@ -517,7 +562,9 @@ async function main(): Promise<void> {
         memory,
         llmConfig,
         systemPrompt,
-        appConfig
+        appConfig,
+        fastRouter,
+        topicRegistry,
     );
 }
 

@@ -12,7 +12,7 @@
  */
 
 import { callLLM, LLMConfig, ChatMessage } from "./llm.js";
-import { MemoryStore } from "./memory.js";
+import { MemoryStoreV2 } from "./memory-v2/index.js";
 import { SessionResult } from "./session-runner.js";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
@@ -130,7 +130,7 @@ function parseCompactionResult(text: string): CompactionResult | null {
  */
 export async function runCompaction(
     session: SessionResult,
-    memory: MemoryStore,
+    memory: MemoryStoreV2,
     llmConfig: LLMConfig,
     chatId?: string,
     chatTitle?: string,

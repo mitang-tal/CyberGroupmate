@@ -14,11 +14,12 @@
 import { createInterface } from "node:readline";
 import { Sandbox } from "./sandbox.js";
 import { NotificationCenter } from "./notification-center.js";
-import { MemoryStore } from "./memory.js";
+import { MemoryStoreV2 } from "./memory-v2/index.js";
 import { loadConfig } from "./config.js";
 import { createLogger } from "./logger.js";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { runDryRun, saveDryRunReport, type DryRunConfig } from "./phase6/index.js";
 
 const log = createLogger("cli");
 const DATA_DIR = "workspace";
@@ -217,7 +218,7 @@ async function cmdMemory(args: string[]): Promise<void> {
         process.exit(1);
     }
 
-    const memory = new MemoryStore(dbPath);
+    const memory = new MemoryStoreV2(dbPath);
     const subCmd = args[0] ?? "help";
 
     switch (subCmd) {
@@ -401,7 +402,7 @@ async function cmdStatus(): Promise<void> {
     // Memory stats
     const dbPath = join(DATA_DIR, "memory.db");
     if (existsSync(dbPath)) {
-        const memory = new MemoryStore(dbPath);
+        const memory = new MemoryStoreV2(dbPath);
         try {
             const memCount = memory.rawQuery("SELECT COUNT(*) as cnt FROM memories") as Array<{ cnt: number }>;
             const personCount = memory.rawQuery("SELECT COUNT(*) as cnt FROM person_profiles") as Array<{ cnt: number }>;
@@ -444,6 +445,64 @@ const HELP = `
   TG_API_HASH=...                   Telegram API Hash
 `;
 
+/**
+ * dry-run — 历史回放评估
+ */
+async function cmdDryRun(args: string[]): Promise<void> {
+    const filePath = args[0];
+    if (!filePath || !existsSync(filePath)) {
+        console.log("用法: cyber-groupmate dry-run <history.jsonl> [--chat-id <id>] [--days <n>]");
+        console.log("\n  history.jsonl: 每行一个 JSON 的历史消息文件");
+        console.log("  格式: {id, chat_id, user_id, user_name, text, date, reply_to?}");
+        if (filePath && !existsSync(filePath)) {
+            console.log(`\n  ❌ 文件不存在: ${filePath}`);
+        }
+        process.exit(1);
+    }
+
+    const chatIdArg = args.indexOf("--chat-id");
+    const daysArg = args.indexOf("--days");
+    const chatId = chatIdArg >= 0 ? Number(args[chatIdArg + 1]) : 0;
+    const daysBack = daysArg >= 0 ? Number(args[daysArg + 1]) : 30;
+
+    const appConfig = loadConfig();
+
+    const config: DryRunConfig = {
+        chatId,
+        daysBack,
+        model: appConfig.llm.model,
+        pipelineMode: "GUIDED",
+        send: false,
+        source: "file",
+        filePath,
+    };
+
+    console.log(`🔄 Dry-Run 开始 (文件: ${filePath}, chatId: ${chatId || 'all'}, 天数: ${daysBack})`);
+
+    const result = await runDryRun(config, appConfig.llm, appConfig.persona?.description ?? "赛博群友");
+
+    console.log("\n📊 Dry-Run 结果:");
+    console.log(`  总消息数: ${result.totalMessages}`);
+    console.log(`  会回复: ${result.wouldReply} (${result.totalMessages > 0 ? (result.wouldReply / result.totalMessages * 100).toFixed(1) : 0}%)`);
+    console.log(`  会沉默: ${result.wouldIgnore}`);
+    console.log(`  耗时: ${result.totalTimeMs}ms`);
+
+    if (result.decisions.length > 0) {
+        console.log("\n  📝 回复决策列表:");
+        for (const d of result.decisions.slice(0, 20)) {
+            console.log(`    [${d.decision}] ${d.triggerMessage.from}: ${d.triggerMessage.text.slice(0, 60)} — ${d.reason}`);
+        }
+        if (result.decisions.length > 20) {
+            console.log(`    ... 还有 ${result.decisions.length - 20} 条`);
+        }
+    }
+
+    // 保存报告
+    const reportPath = filePath.replace(/\.jsonl?$/, "") + ".dry-run-report.json";
+    saveDryRunReport(result, reportPath);
+    console.log(`\n  💾 详细报告已保存到: ${reportPath}`);
+}
+
 async function main(): Promise<void> {
     const [_node, _script, command, ...args] = process.argv;
 
@@ -466,6 +525,10 @@ async function main(): Promise<void> {
             break;
         case "status":
             await cmdStatus();
+            break;
+        case "dry-run":
+        case "dryrun":
+            await cmdDryRun(args);
             break;
         default:
             console.log(HELP);
