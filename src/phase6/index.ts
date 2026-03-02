@@ -1,0 +1,39 @@
+/**
+ * phase6/index.ts — Phase 6 统一导出
+ *
+ * 提供 Phase 6A 所有组件的集中导入入口。
+ */
+
+// ─── 类型 ───
+export type {
+    Message,
+    TopicState,
+    Topic,
+    InterventionType,
+    PipelineMode,
+    TriageDecision,
+    ExitSignalType,
+    ExitSignal,
+    ExitStyle,
+    QuickTriageOptions,
+    QuickTriageResult,
+    RouteResult,
+    EngagedRelevance,
+    ModelRouteResult,
+    ModelRouteRule,
+    DryRunConfig,
+    DryRunDecision,
+    DryRunResult,
+    TopicClusteringResult,
+    TopicSummaryTriageResult,
+} from "./types.js";
+
+// ─── 核心组件 ───
+export { TopicRegistry } from "./topic-registry.js";
+export { RecordingPipeline } from "./recording-pipeline.js";
+export { FastRouter } from "./fast-router.js";
+export { EngagedTopicHandler } from "./engaged-topic-handler.js";
+export { ModelRouter } from "./model-router.js";
+
+// ─── Dry-Run ───
+export { runDryRun, saveDryRunReport } from "./dry-run.js";
