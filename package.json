@@ -9,11 +9,13 @@
     "start": "tsx src/main.ts",
     "dev": "tsx watch src/main.ts",
     "test": "tsx --test tests/**/*.test.ts",
-    "cli": "tsx src/cli.ts"
+    "cli": "tsx src/cli.ts",
+    "tg-convert": "tsx src/tools/tg-to-jsonl.ts"
   },
   "dependencies": {
     "@mtcute/node": "latest",
     "better-sqlite3": "^11.0.0",
+    "stream-json": "^1.9.1",
     "ulid": "^2.3.0",
     "yaml": "^2.8.2"
   },
