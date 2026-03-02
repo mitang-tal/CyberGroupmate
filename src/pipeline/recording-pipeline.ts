@@ -253,8 +253,20 @@ export class RecordingPipeline extends EventEmitter {
         messages: Message[],
         existingTopics: Topic[]
     ): Promise<TopicClusteringResult> {
-        const existingTopicsStr = existingTopics.length > 0
-            ? existingTopics.map(t => `- ${t.id}: "${t.label}" [${t.state}] (关键词: ${t.keywords.join(", ")})`).join("\n")
+        // 取最近 10 个话题（按活跃时间倒排），避免上下文过长
+        const recentTopics = existingTopics
+            .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
+            .slice(0, 10);
+
+        const existingTopicsStr = recentTopics.length > 0
+            ? recentTopics.map(t => {
+                const parts = [`- ${t.id}: "${t.label}" [${t.state}] (关键词: ${t.keywords.join(", ")})`];
+                parts.push(`  消息数: ${t.messageCount}, 参与人数: ${t.participantIds.size}`);
+                if (t.recentContext) {
+                    parts.push(`  最近消息:\n${t.recentContext.split("\n").map(l => `    ${l}`).join("\n")}`);
+                }
+                return parts.join("\n");
+            }).join("\n")
             : "（暂无已有话题）";
 
         const messagesStr = messages.map(m =>
