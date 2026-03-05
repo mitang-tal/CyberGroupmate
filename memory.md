@@ -6,8 +6,8 @@
 | **关联任务** | Phase 6.0 — Memory V2 完全重写 |
 | **作者** | arc |
 | **创建日期** | 2026-02-27 |
-| **最后更新** | 2026-02-27 |
-| **依赖** | `sqlite-vec`, `js-tiktoken`, `text-embedding-3-small` |
+| **最后更新** | 2026-03-05 |
+| **依赖** | `better-sqlite3`, `sqlite-vec`（Phase M4）, `js-tiktoken`（Phase M4）, `text-embedding-3-small`（Phase M4） |
 
 ## 目录
 
@@ -26,7 +26,8 @@
   - [3.2 情感记忆渐进合并](#32-情感记忆渐进合并)
   - [3.3 Reflection Skill](#33-中期记忆更新机制reflection-skill)
   - [3.4 SQLite 表结构](#34-sqlite-表结构)
-  - [3.5 Compaction 改造](#35-compaction-改造)
+  - [3.5 Compaction 与 Recording Pipeline 的职责划分](#35-compaction-与-recording-pipeline-的职责划分)
+  - [3.6 话题生命周期：从实时到持久](#36-话题生命周期从实时到持久)
 - [4. 统一检索入口 recall()](#4-统一检索入口-recall)
   - [4.1 Embedding 策略](#41-embedding-策略)
   - [4.2 事实分类 FactCategory](#42-事实分类-factcategory)
@@ -47,6 +48,7 @@
 
 | 版本 | 日期 | 变更内容 |
 |-----|------|---------|
+| v3.0 | 2026-03-05 | TopicNode 与 Pipeline Topic 双层融合；新增 Section 3.6 话题生命周期；Compaction/Recording Pipeline 职责划分；message_log 写入时机改为 Recording Pipeline |
 | v2.4 | 2026-02-27 | 邓巴分层 → 画像精度挂钩；SOTA model 直接调用 browseHistory；A.2 示例扩展 |
 | v2.3 | 2026-02-27 | 消息档案升级为一等模块（Section 5）；邓巴参数可配置；browseHistory 接口 |
 | v2.2 | 2026-02-27 | js-tiktoken BPE 精确 token 计算；MergedPeriod → MergedMemory；程序化 activeHours |
@@ -287,15 +289,19 @@ llm:
 
 #### 话题节点 (TopicNode)
 
+> [!IMPORTANT]
+> TopicNode 是话题的**持久化形式**，存储在 SQLite `topics` 表中，供 `recall()` 和 `browseHistory()` 检索。与之对应，`pipeline/types.ts` 中的 `Topic` 是话题的**运行时形式**，存在于 TopicRegistry 内存中，驱动实时决策（状态机、Triage、Engaged 对话模式）。两者通过 `pipelineTopicId` 关联。详见 [Section 3.6](#36-话题生命周期从实时到持久)。
+
 ```typescript
 interface TopicNode {
-  id: string;                    // UUID v4
+  id: string;                    // UUID v4（持久化主键）
+  pipelineTopicId?: string;      // 对应 Pipeline TopicRegistry 的运行时 ID
   chatId: string;                // 所属群组
-  label: string;                 // 话题标签（如 "新番推荐"）
-  summary: string;               // 话题摘要（1-3句话）
-  keyPoints: string[];           // 关键要点
+  label: string;                 // 话题标签（如 "新番推荐"，LLM 生成）
+  summary: string;               // 话题摘要（1-3句话，来自 Recording Pipeline Step 2）
+  keyPoints: string[];           // 关键要点（来自 Recording Pipeline Step 2）
   participants: string[];        // 参与者 userId 列表
-  messageRange: {                // 原始消息范围（便于回溯）
+  messageRange: {                // 原始消息范围（便于用 message_log 回溯）
     firstMessageId: number;
     lastMessageId: number;
     count: number;
@@ -303,9 +309,11 @@ interface TopicNode {
   startedAt: string;             // 话题开始时间
   endedAt: string | null;        // 话题结束时间（null=仍在进行）
   sentiment: 'positive' | 'neutral' | 'negative' | 'mixed';
-  relatedTopicIds: string[];     // 关联话题（话题-话题关联）
-  tags: string[];                // 自动提取的标签
-  embedding?: Float32Array;      // 向量表示（用于语义检索）
+  relatedTopicIds: string[];     // 关联话题（话题演变链）
+  keywords: string[];            // 关键词（与 Pipeline Topic.keywords 共享）
+  wasEngaged: boolean;           // 该话题是否曾被 Agent 介入
+  interventionCount: number;     // Agent 介入次数
+  embedding?: Float32Array;      // 向量表示（用于语义检索，Phase M4）
   createdAt: string;
   updatedAt: string;
 }
@@ -667,14 +675,16 @@ declare const memorySkills: {
 ### 3.4 SQLite 表结构
 
 ```sql
--- 话题节点
+-- 话题节点（持久化形式，由 Recording Pipeline flush Step 4 写入）
 CREATE TABLE topics (
   id TEXT PRIMARY KEY,            -- UUID v4
+  pipeline_topic_id TEXT,         -- 对应 Pipeline TopicRegistry 的运行时 ID（upsert 条件）
   chat_id TEXT NOT NULL,
   label TEXT NOT NULL,
   summary TEXT NOT NULL DEFAULT '',
   key_points TEXT NOT NULL DEFAULT '[]',
   participants TEXT NOT NULL DEFAULT '[]',
+  keywords TEXT NOT NULL DEFAULT '[]',  -- 关键词（来自 Pipeline Topic.keywords）
   first_message_id INTEGER,
   last_message_id INTEGER,
   message_count INTEGER DEFAULT 0,
@@ -682,12 +692,14 @@ CREATE TABLE topics (
   ended_at TEXT,
   sentiment TEXT DEFAULT 'neutral',
   related_topic_ids TEXT DEFAULT '[]',
-  tags TEXT DEFAULT '[]',
-  embedding BLOB,                 -- 向量表示（sqlite-vec，由 text-embedding-3-small 等 embedding API 生成）
+  was_engaged BOOLEAN DEFAULT 0,  -- Agent 是否曾介入该话题
+  intervention_count INTEGER DEFAULT 0,  -- Agent 介入次数
+  embedding BLOB,                 -- 向量表示（Phase M4: sqlite-vec + text-embedding-3-small）
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
 CREATE INDEX idx_topics_chat_date ON topics(chat_id, started_at);
+CREATE INDEX idx_topics_pipeline_id ON topics(pipeline_topic_id);
 
 -- 个体身份（全局，跨群）
 CREATE TABLE person_identities (
@@ -779,16 +791,247 @@ CREATE INDEX idx_facts_subject ON core_facts(subject);
 CREATE INDEX idx_facts_category ON core_facts(category);
 ```
 
-### 3.5 Compaction 改造
+### 3.5 Compaction 与 Recording Pipeline 的职责划分
 
-现有的 `compaction.ts` 保留，输出目标改为 Memory V2：
+> [!IMPORTANT]
+> Recording Pipeline 是 `topics` 表的**主要写入者**（每次 flush 都 upsert）。Compaction **不再创建话题节点**，而是聚焦于提炼 Agent session 中产生的事实和画像更新。
+
+| 维度 | Recording Pipeline（flush Step 4） | Compaction（session 结束后） |
+|------|-----------------------------------|---------------------------|
+| 触发时机 | 每次 flush（50 条 / 2 分钟） | 每个 CodeAct session 结束后 |
+| 话题来源 | LLM 聚类生成，**所有**群聊消息 | 仅 Agent 参与的 session 消息 |
+| 写入 `topics` 表 | **upsert**（主写入者） | 仅补充已有 topic 的 `sentiment` |
+| 写入 `core_facts` 表 | ✗ 不写 | ✅ 提炼新事实（主写入者） |
+| 写入 `person_*` 表 | 程序化字段（messageCount, lastSeenAt） | LLM 生成的画像更新（traits, interests） |
+| 写入 `message_log` 表 | ✅ 批量写入原始消息 | ✗ 不写 |
+
+**Compaction 改造后的流程**：
+1. 查找 session 时间范围内的已有 topics（通过 `started_at`/`ended_at` 重叠）
+2. 为匹配的 topics 补充 `sentiment`（如果 Recording Pipeline 未标注）
+3. 从 session 对话中提炼 `core_facts`（分类为 `FactCategory`）
+4. 更新 `person_identities` 和 `person_group_profiles`（LLM 画像更新）
+
+输出目标映射（保留旧字段迁移参考）：
 
 | 原输出 | 新输出 |
 |--------|--------|
 | `memories` 表 | `core_facts` 表 |
 | `person_profiles` 表 | `person_identities` + `person_group_profiles` |
-| `conversation_log` 表 | `topics` 表 |
+| `conversation_log` 表 | 不再写入（由 Recording Pipeline 负责） |
 | `todos` 表 | 保留不变 |
+
+### 3.6 话题生命周期：从实时到持久
+
+Pipeline Topic（内存）和 TopicNode（SQLite）不是两个独立的数据结构，而是**同一个话题在不同生命阶段的表现形式**。
+
+```
+消息到达 → Recording Pipeline 缓冲
+    │
+    ▼ flush 触发（50条 / 2分钟静默）
+Pipeline Topic 创建/更新（内存 TopicRegistry）
+    │
+    ├── flush Step 2: LLM 生成 summary + keyPoints
+    │
+    ▼ flush Step 4
+TopicNode upsert 到 SQLite topics 表
+    │
+    ├── Pipeline Topic 继续在内存中驱动决策
+    │   (ACTIVE → TRIAGING → ENGAGED → COOLDOWN → ...)
+    │
+    ▼ ARCHIVED (2h 无活动)
+Pipeline Topic 从内存删除
+TopicNode 保留在 SQLite，永久可被 recall() / browseHistory() 检索
+```
+
+**写入时机**：
+- **增量 upsert**：每次 Recording Pipeline flush 时，用 `pipeline_topic_id` 作为 upsert 条件，将当前 summary/keyPoints/participants/messageRange 写入 topics 表
+- **终态标记**：话题 ARCHIVED 时，标记 `ended_at`，此后不再更新
+
+**字段来源映射**：
+
+| TopicNode 字段 | 来源 |
+|---------------|------|
+| `summary`, `keyPoints` | Recording Pipeline Step 2 LLM 输出（每次 flush 覆盖） |
+| `keywords` | Pipeline Topic 的 `keywords`（LLM 话题聚类时生成） |
+| `participants` | Pipeline Topic 的 `participantIds`（程序化累积） |
+| `messageRange` | Pipeline Topic 的 `messageIds` 首尾 + `messageCount` |
+| `wasEngaged`, `interventionCount` | Pipeline Topic 的状态机和对话记录 |
+| `sentiment` | Compaction 补充 或 Recording Pipeline LLM 标注 |
+
+#### 完整示例：一个话题从诞生到回忆
+
+**群聊「二次元研究所」中讨论京都旅行攻略**
+
+**Step 1：消息到达，Pipeline Topic 诞生**
+
+```
+14:00  alice: 有人去过京都岚山吗
+14:01  bob: 去过，秋天红叶超美
+14:02  carol: 从大阪过去要多久啊
+14:03  alice: 对，交通是不是很复杂
+...（共 18 条消息）
+14:15  [2 分钟静默] → Recording Pipeline flush 触发
+```
+
+fush Step 1-3 完成后，此时**只有 Pipeline Topic 存在于内存中**：
+
+```typescript
+// TopicRegistry 内存中的 Pipeline Topic
+{
+  id: "topic_m3k_0001",              // 短 ID，运行时自增
+  chatId: -100123456,                // number 类型
+  label: "京都岚山旅行攻略",
+  keywords: ["京都", "岚山", "交通"],
+  participantIds: Set { 111, 222, 333 },
+  messageIds: [501, 502, ..., 518],
+  state: "ACTIVE",                   // 10 态状态机
+  recentContext: "alice: 有人去过...\nbob: 去过...",
+  createdAt: 1709647200000,          // 毫秒时间戳
+  lastActivityAt: 1709648100000,
+  messageCount: 18,
+  turnCount: 0,                      // ENGAGED 专属字段（暂时空着）
+  pendingMessages: [],
+  exitSignals: [],
+  interventionCount: 0,
+}
+```
+
+flush Step 4 **同时 upsert 到 SQLite**，TopicNode 诞生：
+
+```sql
+INSERT INTO topics (id, pipeline_topic_id, chat_id, label, summary, key_points,
+                    participants, keywords, first_message_id, last_message_id,
+                    message_count, started_at, ended_at, sentiment,
+                    was_engaged, intervention_count, created_at, updated_at)
+VALUES (
+  'a1b2c3d4-...',                     -- UUID 持久化主键
+  'topic_m3k_0001',                   -- 指回 Pipeline Topic
+  '-100123456',                       -- string 类型
+  '京都岚山旅行攻略',
+  'alice 想去岚山，大家在讨论交通方式和景点',
+  '["讨论从大阪到岚山的交通","红叶季节推荐"]',
+  '["111","222","333"]',
+  '["京都","岚山","交通"]',
+  501, 518, 18,
+  '2026-03-05T14:00:00Z', NULL,       -- ended_at=NULL，话题仍在进行
+  'neutral',
+  0, 0,                               -- 还没被 Agent 介入
+  '2026-03-05T14:15:00Z', '2026-03-05T14:15:00Z'
+);
+```
+
+此时系统中同一个话题有**两份表示**：
+
+| | Pipeline Topic（内存） | TopicNode（SQLite） |
+|---|---|---|
+| **用途** | FastRouter 路由消息、Triage 判断要不要介入 | `recall("京都")` 能搜到、`browseHistory` 能定位 |
+| **活跃** | ✅ 正在被状态机驱动 | ✅ 已可被检索 |
+
+**Step 2：Triage 通过，Agent 介入**
+
+```
+14:16  Triage: confidence=0.78, KNOWLEDGE_GAP → ENGAGED
+14:18  Agent 回复："坐阪急到桂站转岚电最快，大概50分钟"
+14:19  alice: "哦哦谢谢！"
+14:20  carol: "竹林早上去 get✓"
+```
+
+Pipeline Topic 状态变更（只在内存）：
+
+```typescript
+{
+  state: "ENGAGED",                   // ACTIVE→TRIAGING→PRELOADING→ENGAGED
+  turnCount: 1,
+  lastAgentReplyAt: 1709648280000,
+  primaryInterlocutor: 111,           // alice
+  pendingMessages: [msg_alice, msg_carol],
+  interventionCount: 1,
+}
+```
+
+> TopicNode 此时**不更新**——要等下一次 Recording Pipeline flush 才 upsert。
+
+**Step 3：对话结束，再次 flush，TopicNode 增量更新**
+
+```
+14:21  Agent 第 2 轮回复
+14:23  bob: "对对 岚电不贵"
+14:25  话题自然结束 → ENGAGED → EXITING → COOLDOWN
+14:25-15:00 群里讨论其他话题（共 35 条新消息缓冲）
+15:02  [2 分钟静默] → Recording Pipeline 再次 flush
+```
+
+flush Step 4 再次 upsert，更新摘要和介入信息：
+
+```sql
+UPDATE topics SET
+  summary = 'alice 想去京都岚山，Agent 回答了交通方式（阪急转岚电），
+             大家补充了票价和竹林推荐',
+  key_points = '["阪急转岚电约50分钟","关西周游券可用阪急","竹林早上人少推荐"]',
+  last_message_id = 536,
+  message_count = 36,
+  participants = '["111","222","333","444"]',
+  was_engaged = 1,                    -- Agent 参与过
+  intervention_count = 2,             -- 回复了 2 轮
+  updated_at = '2026-03-05T15:02:00Z'
+WHERE pipeline_topic_id = 'topic_m3k_0001';
+```
+
+**Step 4：归档——Pipeline Topic 消亡，TopicNode 永存**
+
+```
+17:02  距最后活动 2h → TopicRegistry.cleanup()
+       STALE → ARCHIVED → 最终 upsert
+```
+
+```sql
+UPDATE topics SET
+  ended_at = '2026-03-05T15:02:00Z',
+  sentiment = 'positive',
+  updated_at = '2026-03-05T17:02:00Z'
+WHERE pipeline_topic_id = 'topic_m3k_0001';
+```
+
+次日 17:02 Pipeline Topic 从内存 Map 中删除。**TopicNode 永久保存在 SQLite。**
+
+**Step 5：三天后——TopicNode 被回忆**
+
+```
+3月8日 20:00  charlie: @Agent 之前谁推荐过岚山交通方式来着？
+```
+
+Agent 调用 `recall()`：
+
+```typescript
+const result = await memory.recall("岚山 交通", { chatId: "-100123456", daysBack: 7 });
+// → 命中 TopicNode:
+//   label: "京都岚山旅行攻略"
+//   summary: "alice 想去京都岚山，Agent 回答了交通方式..."
+//   wasEngaged: true → Agent 知道自己参与过！
+
+// 需要原始消息？调用 browseHistory
+const detail = await memory.browseHistory({
+  intent: "之前推荐的岚山交通方式",
+  hints: { topicId: "a1b2c3d4-..." },
+});
+// → 通过 messageRange(501-536) 从 message_log 拉取原始对话
+```
+
+**总结：生命周期时间轴**
+
+```
+时间轴  14:00    14:15    14:18    15:02    17:02    次日      3天后
+        │        │        │        │        │        │         │
+Pipeline│ 创建    │        │ ENGAGED │        │ARCHIVED│ 删除    │
+Topic   │ ACTIVE │ flush  │ 介入    │ flush  │ 终态   │ 从内存  │
+(内存)  ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━●         │
+        │        │        │        │        │                  │
+TopicNode        │ INSERT │        │ UPDATE │ UPDATE │         │ recall()
+(SQLite)│        ●━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━●
+                 │ 首次   │        │ 更新   │ended_at│         │ 命中
+```
+
+Pipeline Topic 是**蜉蝣**——活几小时后消失。TopicNode 是**化石**——Pipeline Topic 留下的持久化印记，永久可检索。
 
 ---
 
@@ -926,6 +1169,7 @@ CREATE TABLE message_log (
   message_id INTEGER NOT NULL,
   chat_id TEXT NOT NULL,
   user_id TEXT NOT NULL,
+  display_name TEXT NOT NULL DEFAULT '',
   text TEXT NOT NULL DEFAULT '',
   reply_to_message_id INTEGER,
   timestamp TEXT NOT NULL,
@@ -935,7 +1179,14 @@ CREATE INDEX idx_msglog_chat_time ON message_log(chat_id, timestamp);
 CREATE INDEX idx_msglog_user ON message_log(user_id, timestamp);
 ```
 
-消息写入时机：NotificationCenter 收到 Telegram 消息事件时立即写入，零延迟。
+**消息写入时机**：Recording Pipeline 在每次 flush 时**批量写入**。
+
+虽然存在 2 分钟的缓冲延迟，但 `browseHistory()` 的使用场景（回忆过去的对话）不需要实时性。对于正在进行的对话，Pipeline Topic 的 `recentContext` 和 Context Briefing 已提供实时上下文。
+
+> Recording Pipeline flush Step 4 的完整写入列表：
+> 1. `message_log` 表 ← 批量写入缓冲区中的原始消息
+> 2. `topics` 表 ← upsert 话题节点（见 [Section 3.6](#36-话题生命周期从实时到持久)）
+> 3. `person_group_profiles` 表 ← 程序化更新 messageCount, lastSeenAt, activeHours
 
 ### 5.3 HistoryBrowseRequest / HistoryBrowseResult
 
