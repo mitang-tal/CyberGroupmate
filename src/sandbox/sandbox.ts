@@ -92,7 +92,7 @@ export class Sandbox extends EventEmitter {
             throw new Error("Sandbox already started");
         }
 
-        const workerPath = join(this.projectRoot, "src", "sandbox-worker.ts");
+        const workerPath = join(this.projectRoot, "src", "sandbox", "sandbox-worker.ts");
 
         this.child = spawn("npx", ["tsx", workerPath], {
             stdio: ["pipe", "pipe", "pipe"],

@@ -18,15 +18,10 @@ export type {
     GroupModel,
     CoreFact,
     FactCategory,
+    MessageLogEntry,
     RecallOptions,
     RecallResult,
     HistoryBrowseRequest,
     HistoryBrowseResult,
     ReflectionResult,
-
-    // V1 兼容类型
-    MemoryEntry,
-    PersonProfile,
-    ConversationSummary,
-    TodoItem,
 } from "./types.js";

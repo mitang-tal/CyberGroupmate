@@ -492,7 +492,7 @@ async function main(): Promise<void> {
     const cheapConfig = resolveTierProfile("cheap", appConfig);
     const topicRegistry = new TopicRegistry();
     const engagedHandler = new EngagedTopicHandler(topicRegistry, llmConfig);
-    const recordingPipeline = new RecordingPipeline(topicRegistry, cheapConfig, appConfig.persona?.description ?? "赛博群友");
+    const recordingPipeline = new RecordingPipeline(topicRegistry, cheapConfig, appConfig.persona?.description ?? "赛博群友", memory);
     const fastRouter = new FastRouter(topicRegistry, engagedHandler, recordingPipeline, 0);
     const modelRouter = new ModelRouter(llmConfig);
 
@@ -506,6 +506,10 @@ async function main(): Promise<void> {
     });
     engagedHandler.on("engaged:exit", (topicId: string, signal: any, style: string) => {
         log.info("对话模式退出", { topicId, signal: signal.type, style });
+    });
+    topicRegistry.on("topic:archived", (topic: any) => {
+        memory.finalizeTopic(topic.id);
+        log.debug("话题归档，标记 ended_at", { topicId: topic.id, label: topic.label });
     });
 
     log.info("组件初始化完成（含 Phase 6 管线）");

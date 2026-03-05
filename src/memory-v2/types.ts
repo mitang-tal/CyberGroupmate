@@ -24,21 +24,23 @@ export type FactCategory =
 
 // ─── 话题节点 ───
 
-/** 话题节点 — 中期记忆的核心数据结构 */
+/** 话题节点 — 中期记忆的持久化形式（SQLite topics 表） */
 export interface TopicNode {
-    /** UUID v4 */
+    /** UUID v4（持久化主键） */
     id: string;
+    /** 对应 Pipeline TopicRegistry 的运行时 ID */
+    pipelineTopicId?: string;
     /** 所属群组 */
     chatId: string;
-    /** 话题标签（如 "新番推荐"） */
+    /** 话题标签（如 "新番推荐"，LLM 生成） */
     label: string;
-    /** 话题摘要（1-3句话） */
+    /** 话题摘要（1-3句话，来自 Recording Pipeline Step 2） */
     summary: string;
-    /** 关键要点 */
+    /** 关键要点（来自 Recording Pipeline Step 2） */
     keyPoints: string[];
     /** 参与者 userId 列表 */
     participants: string[];
-    /** 原始消息范围 */
+    /** 原始消息范围（便于用 message_log 回溯） */
     messageRange: {
         firstMessageId: number;
         lastMessageId: number;
@@ -50,11 +52,15 @@ export interface TopicNode {
     endedAt: string | null;
     /** 情感倾向 */
     sentiment: "positive" | "neutral" | "negative" | "mixed";
-    /** 关联话题 ID 列表 */
+    /** 关联话题 ID 列表（话题演变链） */
     relatedTopicIds: string[];
-    /** 自动提取的标签 */
-    tags: string[];
-    /** 向量表示（语义检索用） */
+    /** 关键词（与 Pipeline Topic.keywords 共享） */
+    keywords: string[];
+    /** 该话题是否曾被 Agent 介入 */
+    wasEngaged: boolean;
+    /** Agent 介入次数 */
+    interventionCount: number;
+    /** 向量表示（语义检索用，Phase M4） */
     embedding?: Float32Array;
     /** 创建时间 (ISO 8601) */
     createdAt: string;
@@ -313,133 +319,90 @@ export interface ReflectionResult {
     insights: string;
 }
 
-// ─── 旧接口兼容类型 ───
+// ─── 消息日志条目 ───
 
-/** 通用记忆条目（V1 兼容） */
-export interface MemoryEntry {
-    /** 记忆 ID (ULID) */
-    id: string;
-    /** 记忆内容 */
-    content: string;
-    /** 元数据 */
-    metadata: Record<string, unknown>;
-    /** 时间戳 (ISO 8601) */
-    timestamp: string;
-}
-
-/** 群友画像（V1 兼容） */
-export interface PersonProfile {
-    /** 用户 ID */
-    userId: string;
-    /** 显示名称 */
-    displayName?: string;
-    /** 笔记/备注 */
-    notes?: string;
-    /** 个性特征标签 */
-    traits?: string[];
-    /** 最后交互时间 (ISO 8601) */
-    lastInteraction?: string;
-    /** 其他自定义字段 */
-    [key: string]: unknown;
-}
-
-/** 对话摘要（V1 兼容） */
-export interface ConversationSummary {
-    /** 摘要 ID (ULID) */
-    id: string;
-    /** 聊天 ID */
+/** message_log 表的写入条目 */
+export interface MessageLogEntry {
+    /** Telegram 消息 ID */
+    messageId: number;
+    /** 所属群组 */
     chatId: string;
-    /** 聊天标题 */
-    chatTitle: string;
-    /** 对话摘要文本 */
-    summary: string;
-    /** 关键要点 */
-    keyPoints: string[];
-    /** 时间戳 (ISO 8601) */
+    /** 发送者 userId */
+    userId: string;
+    /** 发送者显示名称 */
+    displayName: string;
+    /** 消息文本 */
+    text: string;
+    /** 回复目标消息 ID */
+    replyToMessageId?: number;
+    /** 消息时间 (ISO 8601) */
     timestamp: string;
-}
-
-/** 待办事项（V1 兼容） */
-export interface TodoItem {
-    /** 待办 ID (ULID) */
-    id: string;
-    /** 描述 */
-    description: string;
-    /** 创建时间 (ISO 8601) */
-    createdAt: string;
-    /** 截止日期 (ISO 8601, 可选) */
-    dueDate?: string;
-    /** 是否已完成 */
-    done: boolean;
 }
 
 // ─── MemoryStoreV2 接口 ───
 
 /**
- * MemoryStoreV2 — Memory V2 接口
+ * IMemoryStoreV2 — Memory V2 纯 V2 接口
  *
- * 包含旧接口的全部方法（V1 向后兼容）和新的 V2 方法。
- * 当前为占位实现（读空+写弃），后续接入真实数据层。
+ * 不保留任何 V1 兼容方法。直接面向 memory.md v3.0 设计。
+ * 分为三类方法：
+ * - 写入方法（由 Recording Pipeline / Compaction / Reflection 调用）
+ * - 检索方法（由 Agent CodeAct session 调用）
+ * - 生命周期方法
  */
 export interface IMemoryStoreV2 {
-    // ─── V1 兼容方法 ───
+    // ─── 写入方法 ───
 
-    /** 搜索记忆（全文搜索 + CJK 子串匹配） */
-    search(query: string, limit?: number): MemoryEntry[];
+    /** 按 pipeline_topic_id upsert 话题节点到 SQLite topics 表 */
+    upsertTopic(pipelineTopicId: string, data: Partial<TopicNode>): string;
 
-    /** 存入一条记忆 */
-    store(content: string, metadata?: Record<string, unknown>): string;
+    /** 标记话题结束（设置 ended_at），由 ARCHIVED 事件触发 */
+    finalizeTopic(pipelineTopicId: string): void;
 
-    /** 获取群友画像 */
-    getPerson(userId: string): PersonProfile | null;
+    /** 批量写入原始消息到 message_log 表 */
+    storeMessageBatch(messages: MessageLogEntry[]): void;
 
-    /** 更新群友画像（merge 模式） */
-    updatePerson(userId: string, updates: Partial<PersonProfile>): void;
+    /** 写入核心事实到 core_facts 表 */
+    storeFact(subject: string, content: string, category: FactCategory, source?: string): string;
 
-    /** 获取最近的对话摘要 */
-    getRecentConversations(chatId?: string, limit?: number): ConversationSummary[];
+    /** upsert 个体身份（全局，跨群） */
+    upsertPersonIdentity(userId: string, data: Partial<PersonIdentity>): void;
 
-    /** 存入对话摘要 */
-    storeConversation(summary: Omit<ConversationSummary, "id" | "timestamp">): string;
+    /** upsert 个体群内画像（每群独立） */
+    upsertPersonGroupProfile(userId: string, chatId: string, data: Partial<PersonGroupProfile>): void;
 
-    /** 获取待办事项 */
-    getPendingTasks(includeCompleted?: boolean): TodoItem[];
+    /** upsert 群组画像 */
+    upsertGroupModel(chatId: string, data: Partial<GroupModel>): void;
 
-    /** 添加待办事项 */
-    addTodo(description: string, dueDate?: string): string;
+    /** 获取群组画像 */
+    getGroupModel(chatId: string): GroupModel | null;
 
-    /** 直接执行 SQL 查询 */
-    rawQuery(sql: string, ...params: unknown[]): unknown;
+    /** 写入交互记录到 interactions 表 */
+    storeInteraction(episode: Omit<InteractionEpisode, "id">): string;
 
-    /** 关闭数据库连接 */
-    close(): void;
-
-    // ─── V2 新方法 ───
+    // ─── 检索方法 ───
 
     /**
      * 统一记忆检索入口
-     * 使用向量搜索 + 关键词搜索混合检索
+     * M1: FTS5 关键词搜索；M4 升级为向量 + FTS5 混合检索
      */
     recall(query: string, options?: RecallOptions): Promise<RecallResult>;
 
     /**
      * 消息档案检索
-     * 话题索引引导 + 模糊搜索 + 上下文窗口 + cheap model 深度阅读
+     * M1: 关键词匹配 topics → message_log 拉消息
+     * M4 升级为 LLM 意图解析 + 向量搜索 + 深度阅读
      */
     browseHistory(request: HistoryBrowseRequest): Promise<HistoryBrowseResult>;
 
     /**
      * 对指定群组进行反思总结
-     * 读取上次反思以来的 topics 和 interactions，生成结构化总结
+     * M1: stub；M2 实现真实 Reflection
      */
     reflect(chatId: string): Promise<ReflectionResult>;
 
-    /**
-     * 更新某人在某群的画像
-     */
-    updatePersonProfile(userId: string, chatId: string): Promise<{
-        before: Partial<PersonGroupProfile>;
-        after: Partial<PersonGroupProfile>;
-        changes: string;
-    }>;
+    // ─── 生命周期 ───
+
+    /** 关闭数据库连接 */
+    close(): void;
 }

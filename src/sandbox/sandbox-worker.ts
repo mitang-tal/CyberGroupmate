@@ -234,37 +234,41 @@ async function executeCode(id: string, code: string): Promise<void> {
         };
 
         const memory = {
-            // V1 兼容方法（读空+写弃）
-            search: (_query: string, _limit?: number) => [],
-            store: (_content: string, _metadata?: Record<string, unknown>) => "stub-id",
-            getPerson: (_userId: string) => null,
-            updatePerson: (_userId: string, _updates: Record<string, unknown>) => {},
-            getRecentConversations: (_chatId?: string, _limit?: number) => [],
-            storeConversation: (_summary: Record<string, unknown>) => "stub-id",
-            getPendingTasks: (_includeCompleted?: boolean) => [],
-            addTodo: (_description: string, _dueDate?: string) => "stub-id",
-            rawQuery: (sql: string) => {
-                const trimmed = sql.trim().toUpperCase();
-                if (trimmed.startsWith("SELECT") || trimmed.startsWith("WITH")) return [];
-                return { changes: 0, lastInsertRowid: 0 };
-            },
-            close: () => {},
-            // V2 新方法（读空+写弃）
+            // V2 API — sandbox 进程中的代理存根
+            // 当前返回空结果；后续通过 IPC 桥接到 Host 端的 MemoryStoreV2
+
+            /**
+             * 统一记忆检索
+             * @example const result = await memory.recall("京都 旅行");
+             */
             recall: async (_query: string, _options?: Record<string, unknown>) => ({
-                topics: [], facts: [], persons: [],
+                topics: [] as unknown[],
+                facts: [] as unknown[],
+                persons: [] as unknown[],
             }),
+
+            /**
+             * 消息档案检索
+             * @example const result = await memory.browseHistory({ intent: "之前谁推荐过岚山" });
+             */
             browseHistory: async (_request: Record<string, unknown>) => ({
-                answer: "[Memory V2 stub] 消息档案尚未接入。",
-                segments: [], messagesRead: 0,
+                answer: "",
+                segments: [] as unknown[],
+                messagesRead: 0,
             }),
+
+            /**
+             * 对指定群组进行反思总结
+             * @example const result = await memory.reflect("-100123");
+             */
             reflect: async (_chatId: string) => ({
                 reflectedPeriod: { from: "", to: "" },
-                topicsSummary: [], personUpdates: [],
-                groupUpdates: "", newCoreFacts: [],
-                mergedEpisodes: 0, insights: "[Memory V2 stub] 反思功能尚未接入。",
-            }),
-            updatePersonProfile: async (_userId: string, _chatId: string) => ({
-                before: {}, after: {}, changes: "[Memory V2 stub] 画像更新功能尚未接入。",
+                topicsSummary: [] as unknown[],
+                personUpdates: [] as unknown[],
+                groupUpdates: "",
+                newCoreFacts: [] as string[],
+                mergedEpisodes: 0,
+                insights: "[Memory V2] Reflection 将在 Phase M2 实现。",
             }),
         };
         const scene = {

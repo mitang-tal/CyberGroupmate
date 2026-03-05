@@ -222,101 +222,86 @@ async function cmdMemory(args: string[]): Promise<void> {
     const subCmd = args[0] ?? "help";
 
     switch (subCmd) {
-        case "search": {
+        case "recall": {
             const query = args.slice(1).join(" ");
             if (!query) {
-                log.error('用法: memory search <关键词>');
+                log.error('用法: memory recall <关键词>');
                 break;
             }
-            const results = memory.search(query, 20);
-            if (results.length === 0) {
+            const result = await memory.recall(query);
+            if (result.topics.length === 0 && result.facts.length === 0) {
                 log.info("无搜索结果");
             } else {
-                for (const r of results) {
-                    console.log(`\n\x1b[36m[${r.id}]\x1b[0m ${r.timestamp}`);
-                    console.log(r.content);
-                    if (Object.keys(r.metadata).length > 0) {
-                        console.log(`\x1b[90m${JSON.stringify(r.metadata)}\x1b[0m`);
+                if (result.topics.length > 0) {
+                    console.log(`\n\x1b[1m话题 (${result.topics.length}):\x1b[0m`);
+                    for (const t of result.topics) {
+                        console.log(`  \x1b[36m[${t.id.slice(0, 8)}]\x1b[0m ${t.label} — ${t.summary.slice(0, 80)}`);
+                        console.log(`    ${t.startedAt} | 参与者: ${t.participants.join(", ")}`);
                     }
                 }
-                log.info(`共 ${results.length} 条结果`);
-            }
-            break;
-        }
-
-        case "person": {
-            const userId = args[1];
-            if (!userId) {
-                log.error('用法: memory person <userId>');
-                break;
-            }
-            const person = memory.getPerson(userId);
-            if (!person) {
-                log.info("未找到该用户", { userId });
-            } else {
-                console.log(JSON.stringify(person, null, 2));
-            }
-            break;
-        }
-
-        case "conversations": {
-            const chatId = args[1];
-            const convos = memory.getRecentConversations(chatId, 20);
-            if (convos.length === 0) {
-                log.info("无对话记录");
-            } else {
-                for (const c of convos) {
-                    console.log(
-                        `\n\x1b[36m[${c.id}]\x1b[0m ${c.chatTitle} — ${c.timestamp}`
-                    );
-                    console.log(c.summary);
-                    if (c.keyPoints.length > 0) {
-                        console.log(`\x1b[90m要点: ${c.keyPoints.join(", ")}\x1b[0m`);
+                if (result.facts.length > 0) {
+                    console.log(`\n\x1b[1m事实 (${result.facts.length}):\x1b[0m`);
+                    for (const f of result.facts) {
+                        console.log(`  [${f.category}] ${f.content} (关于: ${f.subject})`);
                     }
                 }
             }
             break;
         }
 
-        case "todos": {
-            const todos = memory.getPendingTasks(args[1] === "--all");
-            if (todos.length === 0) {
-                log.info("无待办事项");
+        case "browse": {
+            const intent = args.slice(1).join(" ");
+            if (!intent) {
+                log.error('用法: memory browse <意图描述>');
+                break;
+            }
+            const result = await memory.browseHistory({ intent });
+            if (result.segments.length === 0) {
+                log.info("无匹配的消息段落");
             } else {
-                for (const t of todos) {
-                    const status = t.done ? "✅" : "⬜";
-                    const due = t.dueDate ? ` (截止: ${t.dueDate})` : "";
-                    console.log(`${status} ${t.description}${due}  \x1b[90m${t.id}\x1b[0m`);
+                if (result.answer) {
+                    console.log(`\n\x1b[1m回答:\x1b[0m ${result.answer}`);
                 }
+                for (const seg of result.segments) {
+                    console.log(`\n\x1b[36m[${seg.topicLabel}]\x1b[0m ${seg.timeRange.from} ~ ${seg.timeRange.to}`);
+                    for (const m of seg.messages) {
+                        console.log(`  ${m.displayName}: ${m.text.slice(0, 100)}`);
+                    }
+                }
+                console.log(`\n总共阅读 ${result.messagesRead} 条消息`);
             }
             break;
         }
 
-        case "sql": {
-            const sql = args.slice(1).join(" ");
-            if (!sql) {
-                log.error('用法: memory sql <SQL语句>');
-                break;
-            }
+        case "status": {
+            // V2 表统计
             try {
-                const result = memory.rawQuery(sql);
-                console.log(JSON.stringify(result, null, 2));
-            } catch (err: unknown) {
-                const errorMsg = err instanceof Error ? err.message : String(err);
-                log.error("SQL 执行失败", { error: errorMsg });
+                const db = (memory as any).db;
+                const topicCount = (db.prepare("SELECT COUNT(*) as cnt FROM topics").get() as any)?.cnt ?? 0;
+                const factCount = (db.prepare("SELECT COUNT(*) as cnt FROM core_facts").get() as any)?.cnt ?? 0;
+                const msgCount = (db.prepare("SELECT COUNT(*) as cnt FROM message_log").get() as any)?.cnt ?? 0;
+                const personCount = (db.prepare("SELECT COUNT(*) as cnt FROM person_identities").get() as any)?.cnt ?? 0;
+                const profileCount = (db.prepare("SELECT COUNT(*) as cnt FROM person_group_profiles").get() as any)?.cnt ?? 0;
+
+                console.log(`\n\x1b[1m=== Memory V2 统计 ===\x1b[0m\n`);
+                console.log(`  话题:     ${topicCount} 个`);
+                console.log(`  事实:     ${factCount} 条`);
+                console.log(`  消息日志: ${msgCount} 条`);
+                console.log(`  用户身份: ${personCount} 个`);
+                console.log(`  群内画像: ${profileCount} 个`);
+            } catch {
+                log.warn("无法读取 memory 统计");
             }
             break;
         }
 
         default:
             console.log(`
-\x1b[1mMemory 子命令：\x1b[0m
+\x1b[1mMemory V2 子命令：\x1b[0m
 
-  search <关键词>       搜索记忆
-  person <userId>       查看群友画像
-  conversations [chatId] 查看对话摘要
-  todos [--all]         查看待办事项
-  sql <SQL>             执行原始 SQL 查询
+  recall <关键词>        搜索记忆（话题 + 事实）
+  browse <意图描述>      浏览历史消息
+  status                查看 Memory V2 统计
       `);
     }
 
@@ -414,16 +399,17 @@ async function cmdStatus(): Promise<void> {
     if (existsSync(dbPath)) {
         const memory = new MemoryStoreV2(dbPath);
         try {
-            const memCount = memory.rawQuery("SELECT COUNT(*) as cnt FROM memories") as Array<{ cnt: number }>;
-            const personCount = memory.rawQuery("SELECT COUNT(*) as cnt FROM person_profiles") as Array<{ cnt: number }>;
-            const convoCount = memory.rawQuery("SELECT COUNT(*) as cnt FROM conversation_log") as Array<{ cnt: number }>;
-            const todoCount = memory.rawQuery("SELECT COUNT(*) as cnt FROM todos WHERE done = 0") as Array<{ cnt: number }>;
+            const db = (memory as any).db;
+            const topicCount = (db.prepare("SELECT COUNT(*) as cnt FROM topics").get() as any)?.cnt ?? 0;
+            const factCount = (db.prepare("SELECT COUNT(*) as cnt FROM core_facts").get() as any)?.cnt ?? 0;
+            const msgCount = (db.prepare("SELECT COUNT(*) as cnt FROM message_log").get() as any)?.cnt ?? 0;
+            const personCount = (db.prepare("SELECT COUNT(*) as cnt FROM person_identities").get() as any)?.cnt ?? 0;
 
-            console.log(`\n\x1b[1m=== Memory 统计 ===\x1b[0m\n`);
-            console.log(`  记忆:     ${memCount[0]?.cnt ?? 0} 条`);
-            console.log(`  群友画像: ${personCount[0]?.cnt ?? 0} 个`);
-            console.log(`  对话摘要: ${convoCount[0]?.cnt ?? 0} 条`);
-            console.log(`  待办事项: ${todoCount[0]?.cnt ?? 0} 条 (未完成)`);
+            console.log(`\n\x1b[1m=== Memory V2 统计 ===\x1b[0m\n`);
+            console.log(`  话题:     ${topicCount} 个`);
+            console.log(`  事实:     ${factCount} 条`);
+            console.log(`  消息日志: ${msgCount} 条`);
+            console.log(`  用户身份: ${personCount} 个`);
         } catch {
             log.warn("无法读取 memory 统计");
         }

@@ -12,19 +12,19 @@
 
 ---
 
-## Phase M1：SQLite 数据层（4天）
+## Phase M1：SQLite 数据层（4天）✅
 
 > stub → 真实 CRUD，让数据跑通全链路。
 
-### M1.1 清理 V1 接口 + types.ts 重构（0.5天）
+### M1.1 清理 V1 接口 + types.ts 重构（0.5天）✅
 
 **文件**：`src/memory-v2/types.ts`
 
-- [ ] 删除 V1 兼容类型：`MemoryEntry`, `PersonProfile`, `ConversationSummary`, `TodoItem`
-- [ ] 删除 `IMemoryStoreV2` 中的 V1 方法签名：`search`, `store`, `getPerson`, `updatePerson`, `getRecentConversations`, `storeConversation`, `getPendingTasks`, `addTodo`, `rawQuery`, `close`
-- [ ] `TopicNode` 增加字段：`pipelineTopicId?: string`, `wasEngaged: boolean`, `interventionCount: number`
-- [ ] `TopicNode.tags` 重命名为 `keywords`
-- [ ] `IMemoryStoreV2` 新增 V2 方法签名：
+- [x] 删除 V1 兼容类型：`MemoryEntry`, `PersonProfile`, `ConversationSummary`, `TodoItem`
+- [x] 删除 `IMemoryStoreV2` 中的 V1 方法签名：`search`, `store`, `getPerson`, `updatePerson`, `getRecentConversations`, `storeConversation`, `getPendingTasks`, `addTodo`, `rawQuery`, `close`
+- [x] `TopicNode` 增加字段：`pipelineTopicId?: string`, `wasEngaged: boolean`, `interventionCount: number`
+- [x] `TopicNode.tags` 重命名为 `keywords`
+- [x] `IMemoryStoreV2` 新增 V2 方法签名：
   - `init(): void` — 建表
   - `upsertTopic(pipelineTopicId: string, data: Partial<TopicNode>): string`
   - `finalizeTopic(pipelineTopicId: string): void` — 标记 ended_at
@@ -36,114 +36,100 @@
   - `getGroupModel(chatId: string): GroupModel | null`
   - `storeInteraction(episode: Omit<InteractionEpisode, 'id'>): string`
   - `close(): void`
-- [ ] 新增 `MessageLogEntry` 类型：
-  ```typescript
-  interface MessageLogEntry {
-    messageId: number; chatId: string; userId: string;
-    displayName: string; text: string;
-    replyToMessageId?: number; timestamp: string;
-  }
-  ```
+- [x] 新增 `MessageLogEntry` 类型
 
 **文件**：`src/memory-v2/index.ts`
 
-- [ ] 清理导出：删除 V1 类型导出，新增 `MessageLogEntry` 导出
+- [x] 清理导出：删除 V1 类型导出，新增 `MessageLogEntry` 导出
 
-### M1.2 memory-v2.ts 全面重写（1天）
+### M1.2 memory-v2.ts 全面重写（1天）✅
 
 **文件**：`src/memory-v2/memory-v2.ts`
 
-- [ ] 引入 `better-sqlite3`，constructor 调用 `this.init()`
-- [ ] `init()`：7 张表 + FTS5 虚拟表
-  - `topics`（含 `pipeline_topic_id`, `keywords`, `was_engaged`, `intervention_count`）
-  - `person_identities`
-  - `person_group_profiles`
-  - `group_models`
-  - `interactions`
-  - `core_facts`
-  - `message_log`（含 `display_name`）
-  - FTS5: `topics_fts(label, summary, keywords)`, `core_facts_fts(content, subject)`
-- [ ] 删除全部 V1 stub 方法（store/search/getPerson/updatePerson/...）
-- [ ] 实现 `upsertTopic(pipelineTopicId, data)` — INSERT OR UPDATE by pipeline_topic_id
-- [ ] 实现 `finalizeTopic(pipelineTopicId)` — UPDATE ended_at = NOW, SET sentiment if provided
-- [ ] 实现 `storeMessageBatch(messages)` — INSERT OR IGNORE 批量
-- [ ] 实现 `storeFact(subject, content, category, source?)` — INSERT core_facts
-- [ ] 实现 `upsertPersonIdentity(userId, data)` — INSERT OR UPDATE
-- [ ] 实现 `upsertPersonGroupProfile(userId, chatId, data)` — INSERT OR UPDATE
-- [ ] 实现 `upsertGroupModel(chatId, data)` — INSERT OR UPDATE
-- [ ] 实现 `getGroupModel(chatId)` — SELECT
-- [ ] 实现 `storeInteraction(episode)` — INSERT interactions
-- [ ] 实现 `recall(query, opts)` — FTS5 搜 core_facts + topics，按 chatId/daysBack 过滤
-- [ ] 实现 `browseHistory(request)` — 按 keywords 匹配 topics → message_log 拉消息 → 拼接返回
-- [ ] `reflect(chatId)` — 保持 stub（M2 实现）
-- [ ] `close()` — `this.db.close()`
+- [x] 引入 `better-sqlite3`，constructor 调用 `this.initTables()`
+- [x] `initTables()`：7 张表 + FTS5 虚拟表（独立模式）
+- [x] 删除全部 V1 stub 方法
+- [x] 实现 `upsertTopic` — INSERT OR UPDATE by pipeline_topic_id
+- [x] 实现 `finalizeTopic` — UPDATE ended_at
+- [x] 实现 `storeMessageBatch` — INSERT OR IGNORE 批量
+- [x] 实现 `storeFact` — INSERT core_facts + FTS5 同步
+- [x] 实现 `upsertPersonIdentity` — INSERT OR UPDATE
+- [x] 实现 `upsertPersonGroupProfile` — INSERT OR UPDATE
+- [x] 实现 `upsertGroupModel` / `getGroupModel`
+- [x] 实现 `storeInteraction` — INSERT interactions
+- [x] 实现 `recall` — FTS5 + LIKE fallback（修复了 CJK 文本支持）
+- [x] 实现 `browseHistory` — 关键词匹配 topics → message_log 拉消息
+- [x] `reflect` — stub（M2 实现）
+- [x] `close` — `this.db.close()`
 
-### M1.3 Recording Pipeline Step 4 接入（0.5天）
+### M1.3 Recording Pipeline Step 4 接入（0.5天）✅
 
 **文件**：`src/pipeline/recording-pipeline.ts`
 
-- [ ] 构造器增加 `memory: MemoryStoreV2` 参数
-- [ ] Step 4 实现：
-  ```
-  for each updatedTopic:
-    memory.upsertTopic(topic.id, {
-      chatId: String(chatId),
-      label, summary, keyPoints, keywords,
-      participants: [...participantIds].map(String),
-      messageRange: { first, last, count },
-      wasEngaged: state==='ENGAGED' || interventionCount > 0,
-      interventionCount
-    })
-  memory.storeMessageBatch(messages → MessageLogEntry[])
-  for each unique participant:
-    memory.incrementPersonStats(userId, chatId, count)
-  ```
-- [ ] 删除 Step 4 的 stub 日志
+- [x] 构造器增加 `memory?: MemoryStoreV2` 参数
+- [x] Step 4 实现：upsertTopic + storeMessageBatch + upsertPersonIdentity
+- [x] 删除 Step 4 的 stub 日志
 
-### M1.4 main.ts 接线（0.25天）
+### M1.4 main.ts 接线（0.25天）✅
 
 **文件**：`src/main.ts`
 
-- [ ] L495: `RecordingPipeline` 构造器传入 `memory` 实例
-- [ ] 监听 `topic:archived` 事件 → `memory.finalizeTopic(topic.id)`
+- [x] L495: `RecordingPipeline` 构造器传入 `memory` 实例
+- [x] 监听 `topic:archived` 事件 → `memory.finalizeTopic(topic.id)`
 
-### M1.5 TopicRegistry ARCHIVED 钩子（0.25天）
+### M1.5 TopicRegistry ARCHIVED 钩子（0.25天）✅
 
 **文件**：`src/pipeline/topic-registry.ts`
 
-- [ ] 确认 cleanup() 中 STALE→ARCHIVED 已 emit `topic:archived`（当前代码 L188-190 已有，确认即可）
+- [x] 确认 cleanup() 中 STALE→ARCHIVED 已 emit `topic:archived`（L188-190 已有）
 
-### M1.6 Compaction V2 改造（0.5天）
+### M1.6 Compaction V2 改造（0.5天）✅
 
 **文件**：`src/event/compaction.ts`
 
-- [ ] 修改 COMPACTION_PROMPT：输出增加 `category`（FactCategory）和 `subject` 字段
-- [ ] 替换写入调用：
+- [x] 修改 COMPACTION_PROMPT：输出增加 `category`（FactCategory）和 `subject` 字段
+- [x] 替换写入调用：
   - ~~`memory.store(fact)`~~ → `memory.storeFact(subject, content, category)`
   - ~~`memory.updatePerson()`~~ → `memory.upsertPersonIdentity()` + `memory.upsertPersonGroupProfile()`
   - ~~`memory.storeConversation()`~~ → 删除（topics 由 Recording Pipeline 负责）
-  - ~~`memory.addTodo()`~~ → 暂时删除（后续按需以 V2 方式还原）
+  - ~~`memory.addTodo()`~~ → 删除
 
-### M1.7 sandbox-worker.ts 内存 API 改造（0.25天）
+### M1.7 sandbox-worker.ts + cli.ts 内存 API 改造（0.25天）✅
 
 **文件**：`src/sandbox/sandbox-worker.ts`
 
-- [ ] L236-269 `memory` 对象全面替换为 V2 接口：
-  ```typescript
-  const memory = {
-    recall: async (query, options?) => ({ topics: [], facts: [], persons: [] }),
-    browseHistory: async (request) => ({ answer: "[stub]", segments: [], messagesRead: 0 }),
-    reflect: async (chatId) => ({ ... }),
-    // Agent 不直接调用 storeFact / upsertTopic 等写方法，
-    // 写入由 Recording Pipeline 和 Compaction 系统自动完成
-  };
-  ```
-- [ ] 删除 V1 方法（search/store/getPerson/updatePerson/rawQuery 等）
+- [x] L236-269 `memory` 对象替换为 V2 接口：`recall`, `browseHistory`, `reflect`
+- [x] 删除 V1 方法（search/store/getPerson/updatePerson/rawQuery 等）
 
-### M1.8 测试（0.5天）
+**文件**：`src/cli.ts`
 
-**测试框架**：`node:test` + `assert/strict`（与现有 `tests/memory.test.ts` 一致）
-**数据库**：每个 test suite 使用 `/tmp/test-memory-v2-<suite>.db`，`afterEach` 中 `close()` + `unlinkSync()`
+- [x] memory 子命令替换为 V2：`recall`/`browse`/`status`
+- [x] cmdStatus 统计查询 V2 表
+
+**额外修复**：`src/sandbox/sandbox.ts`
+
+- [x] 修复 pre-existing 路径 bug：`src/sandbox-worker.ts` → `src/sandbox/sandbox-worker.ts`
+
+### M1.8 测试（0.5天）✅
+
+**测试框架**：`node:test` + `assert/strict`（与现有 `tests/` 一致）
+**数据库**：`tests/helpers/test-db.ts` 提供 `createTestMemory(name)` / `cleanupTestMemory()` — 每个 suite 独立 DB
+
+#### 测试基础设施 [NEW]
+
+- `tests/helpers/test-db.ts` — 共享 DB 生命周期 + `seedTestData()` 种子数据（3话题/12消息/5事实/3用户/1群组）
+- `tests/scripts/bootstrap-dryrun-db.ts` — 独立脚本，创建预填充的轻量 DB 供手动 dry-run 验证
+  - 用法: `npx tsx tests/scripts/bootstrap-dryrun-db.ts [output-path]`
+  - 默认输出到 `workspace/test-memory.db`
+
+#### 实际测试结果：`tests/memory-v2.test.ts`（34 个测试用例，全部通过）
+
+13 suites, 34 tests — **100% pass** (duration ~320ms)
+
+#### FTS5 Bug 修复（测试中发现）
+
+- **FTS5 content-sync → 独立模式**：content-sync 模式下 DELETE 操作导致 "database disk image is malformed"
+- **recall() LIKE fallback**：FTS5 unicode61 对中文分词效果差，0 结果时需自动回退 LIKE
 
 #### 文件：`tests/memory-v2.test.ts`（覆盖现有 V1 stub 测试）
 
@@ -236,8 +222,11 @@ describe("Compaction V2 写入")
 └─ it("画像写入 person_group_profiles")       → upsertPersonGroupProfile 被调用，字段正确
 ```
 
-- [ ] 删除旧测试文件 `tests/memory.test.ts`（V1 stub 测试）
-- [ ] 运行全量回归 `npx tsx --test tests/**/*.test.ts`
+- [x] 删除旧测试文件 `tests/memory.test.ts`（V1 stub 测试）
+- [ ] `tests/recording-pipeline-memory.test.ts` — 待 M2/M3 与 LLM mock 一起实现
+- [ ] `tests/compaction-v2.test.ts` — 待 M2/M3 与 LLM mock 一起实现
+- [x] `tsc --noEmit` 0 错误
+- [ ] sandbox tests 12/12 fail — **pre-existing bug**（目录重构 commit `e9c53c5` 引入，非 M1 回归）
 
 ---
 

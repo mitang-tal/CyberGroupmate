@@ -2,8 +2,13 @@
  * compaction.ts — Session 压缩与归档
  *
  * 每个 CodeAct session 结束后，调用 LLM 生成结构化摘要，
- * 自动写入 conversation_log、memories、person_profiles 表，
+ * 将事实写入 core_facts、画像写入 person_group_profiles，
  * 并更新 agent-state.md。
+ *
+ * Memory V2 改造：
+ * - 事实 → storeFact()（带 category/subject）
+ * - 画像 → upsertPersonIdentity() + upsertPersonGroupProfile()
+ * - 对话摘要/待办 → 由 Recording Pipeline topics 覆盖，此处不再写入
  *
  * 在整体架构中的位置：
  * - main.ts 在每个 session 结束后调用 runCompaction
@@ -33,38 +38,49 @@ const COMPACTION_PROMPT = `你是一个信息提取助手。请分析以下对�
 {
   "summary": "对话摘要（1-3 句话）",
   "keyPoints": ["关键要点1", "关键要点2"],
-  "newFacts": ["新发现的事实1", "新发现的事实2"],
+  "newFacts": [
+    {
+      "subject": "这个事实关于谁（userId 或 chatId 或通用主题）",
+      "content": "事实内容",
+      "category": "分类（biographical/preference/anecdote/opinion/plan/relationship/general）"
+    }
+  ],
   "personUpdates": [
     {
       "userId": "用户ID",
       "displayName": "显示名称",
-      "notes": "新了解到的信息",
-      "traits": ["性格特征"]
+      "traits": ["性格特征"],
+      "interests": ["兴趣话题"],
+      "communicationStyle": "说话风格描述"
     }
   ],
-  "todos": ["待办事项1"],
   "agentStateUpdate": "agent 状态更新建议（如心情变化、新关注点等）"
 }
 
 注意：
 - 如果某个字段没有内容，使用空数组 [] 或空字符串 ""
 - personUpdates 中的 userId 如果不知道就用 displayName 代替
+- newFacts 中 category 必须是以上枚举值之一
 - 保持简洁，只记录重要信息`;
 
 // ─── 类型 ───
 
-/** Compaction 结果的结构 */
+/** Compaction 结果的结构（V2） */
 interface CompactionResult {
     summary: string;
     keyPoints: string[];
-    newFacts: string[];
+    newFacts: Array<{
+        subject: string;
+        content: string;
+        category: string;
+    }>;
     personUpdates: Array<{
         userId: string;
         displayName?: string;
-        notes?: string;
         traits?: string[];
+        interests?: string[];
+        communicationStyle?: string;
     }>;
-    todos: string[];
     agentStateUpdate: string;
 }
 
@@ -158,44 +174,40 @@ export async function runCompaction(
             return;
         }
 
-        // ─── 写入 conversation_log ───
-        if (result.summary) {
-            memory.storeConversation({
-                chatId: chatId ?? "unknown",
-                chatTitle: chatTitle ?? "unknown",
-                summary: result.summary,
-                keyPoints: result.keyPoints ?? [],
-            });
-        }
-
-        // ─── 写入 memories ───
+        // ─── V2: 事实 → core_facts ───
         for (const fact of result.newFacts ?? []) {
-            if (fact.trim()) {
-                memory.store(fact, {
-                    source: "compaction",
-                    sessionId: session.sessionId,
-                    chatId,
-                });
+            if (typeof fact === "object" && fact.content?.trim()) {
+                const validCategories = ["biographical", "preference", "anecdote", "opinion", "plan", "relationship", "general"];
+                const category = validCategories.includes(fact.category) ? fact.category : "general";
+                memory.storeFact(
+                    fact.subject || chatId || "unknown",
+                    fact.content,
+                    category as any,
+                    `compaction:${session.sessionId}`,
+                );
             }
         }
 
-        // ─── 更新 person_profiles ───
+        // ─── V2: 画像 → person_identities + person_group_profiles ───
         for (const person of result.personUpdates ?? []) {
             if (person.userId || person.displayName) {
                 const id = person.userId || person.displayName || "unknown";
-                memory.updatePerson(id, {
-                    displayName: person.displayName,
-                    notes: person.notes,
-                    traits: person.traits,
-                    lastInteraction: new Date().toISOString(),
-                });
-            }
-        }
 
-        // ─── 添加 todos ───
-        for (const todo of result.todos ?? []) {
-            if (todo.trim()) {
-                memory.addTodo(todo);
+                // 更新全局身份
+                memory.upsertPersonIdentity(id, {
+                    displayName: person.displayName || id,
+                    lastSeenAt: new Date().toISOString(),
+                });
+
+                // 如果有 chatId，更新群内画像
+                if (chatId) {
+                    memory.upsertPersonGroupProfile(id, chatId, {
+                        ...(person.traits?.length ? { traits: person.traits } : {}),
+                        ...(person.interests?.length ? { interests: person.interests } : {}),
+                        ...(person.communicationStyle ? { communicationStyle: person.communicationStyle } : {}),
+                        lastSeenAt: new Date().toISOString(),
+                    });
+                }
             }
         }
 
@@ -206,8 +218,7 @@ export async function runCompaction(
 
         console.log(
             `[Compaction] 完成: ${result.newFacts?.length ?? 0} facts, ` +
-            `${result.personUpdates?.length ?? 0} person updates, ` +
-            `${result.todos?.length ?? 0} todos`
+            `${result.personUpdates?.length ?? 0} person updates`
         );
     } catch (err: unknown) {
         const errorMsg = err instanceof Error ? err.message : String(err);

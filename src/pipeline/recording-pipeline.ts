@@ -17,6 +17,7 @@
 import { EventEmitter } from "node:events";
 import { createLogger } from "../core/logger.js";
 import { callLLM, type LLMConfig, type ChatMessage } from "../core/llm.js";
+import type { MemoryStoreV2 } from "../memory-v2/index.js";
 import type { TopicRegistry } from "./topic-registry.js";
 import type {
     Message,
@@ -120,7 +121,8 @@ export class RecordingPipeline extends EventEmitter {
     constructor(
         private registry: TopicRegistry,
         private llmConfig: LLMConfig,
-        private personaDescription: string = "赛博群友"
+        private personaDescription: string = "赛博群友",
+        private memory?: MemoryStoreV2,
     ) {
         super();
     }
@@ -230,9 +232,60 @@ export class RecordingPipeline extends EventEmitter {
                 // ─── Step 3: 更新 TopicRegistry ───
                 const updatedTopics = this.updateRegistry(chatId, chatMessages, clustering, triageResult);
 
-                // ─── Step 4: Memory V2 写入（当前为 stub，静默丢弃） ───
-                // TODO: 接入真实 Memory V2 数据层后实现
-                log.debug("Memory V2 写入（stub）", { topicCount: updatedTopics.length });
+                // ─── Step 4: Memory V2 写入 ───
+                if (this.memory) {
+                    // 写入话题节点
+                    for (const topic of updatedTopics) {
+                        const triage = triageResult.topics.find(t => t.topicId === topic.id);
+                        this.memory.upsertTopic(topic.id, {
+                            chatId: String(chatId),
+                            label: topic.label,
+                            summary: triage?.summary ?? "",
+                            keyPoints: triage?.keyPoints ?? [],
+                            keywords: topic.keywords,
+                            participants: [...topic.participantIds].map(String),
+                            messageRange: {
+                                firstMessageId: topic.messageIds[0] ?? 0,
+                                lastMessageId: topic.messageIds.at(-1) ?? 0,
+                                count: topic.messageCount,
+                            },
+                            startedAt: new Date(topic.createdAt).toISOString(),
+                            wasEngaged: topic.state === "ENGAGED" || topic.interventionCount > 0,
+                            interventionCount: topic.interventionCount,
+                        });
+                    }
+
+                    // 批量写入原始消息到 message_log
+                    this.memory.storeMessageBatch(chatMessages.map(m => ({
+                        messageId: m.id,
+                        chatId: String(m.chatId),
+                        userId: String(m.senderId),
+                        displayName: m.senderName,
+                        text: m.text,
+                        replyToMessageId: m.replyToMessageId,
+                        timestamp: new Date(m.timestamp).toISOString(),
+                    })));
+
+                    // 更新参与者身份信息
+                    const seenUsers = new Set<number>();
+                    for (const m of chatMessages) {
+                        if (!seenUsers.has(m.senderId)) {
+                            seenUsers.add(m.senderId);
+                            this.memory.upsertPersonIdentity(String(m.senderId), {
+                                displayName: m.senderName,
+                                lastSeenAt: new Date(m.timestamp).toISOString(),
+                            });
+                        }
+                    }
+
+                    log.debug("Memory V2 写入完成", {
+                        topicCount: updatedTopics.length,
+                        messageCount: chatMessages.length,
+                        userCount: seenUsers.size,
+                    });
+                } else {
+                    log.debug("Memory V2 写入（无 memory 实例，跳过）", { topicCount: updatedTopics.length });
+                }
 
                 this.emit("flush:complete", updatedTopics);
             }
