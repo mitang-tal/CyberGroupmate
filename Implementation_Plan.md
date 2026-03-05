@@ -895,23 +895,28 @@ v0.4.0 — Phase 4 完成（稳定性与工具）= MVP
 | Langfuse 追踪 | ⚠️ 后续引入 | 对 LLM 调用可观测性有价值 |
 | `/forget` 隐私命令 | ⚠️ 后续引入 | 合规需要 |
 
-#### Task 6.0 — Memory V2 完全重写 [TODO]
+#### Task 6.0 — Memory V2 完全重写 [PLANNED — 详见 memory.md v3.0 + subtask.md]
 
-**状态**：设计中，等待独立设计文档确认后实施。
+**状态**：设计文档已完成（`memory.md` v3.0），实施计划已拆分为 4 个子阶段（M1-M4）。
 
-**已确认的方向**：
-- 现有的三张扁平表（`memories`, `person_profiles`, `conversation_log`）全部废弃重建
-- 新结构应支持三层记忆模型：
-  - **短期记忆（Working Memory）**：当前 session 的上下文，已有 scope 机制基本满足
-  - **中期记忆（Episodic + Social Memory）**：话题节点、个体画像（PersonModel）、群组模型（GroupModel）、交互日志、话题-用户/话题-话题关联图谱
-  - **长期记忆（Semantic / Identity）**：核心事实、Playbook、人格本体
-- 个体画像应支持邓巴数分层（Tier 1 核心 ≤15人，Tier 2 熟悉 ≤50人，Tier 3 认识 ≤150人，Tier 4 陌生人）
-- 向量搜索引入（sqlite-vec 或 LanceDB 待评估）
-- 统一检索入口 `recall()`：向量冷启动 → 受限 BFS 图遍历 → Token 预算控制
-- Compaction 保留但输出目标改为写入新的三层结构
-- 存储引擎继续使用 SQLite（关联查询优势 + 已有基础），可选提供 Markdown 导出命令用于 Obsidian 检视
+**设计文档**：`memory.md` — 三层记忆模型（短期 Compaction / 中期 Episodic+Social / 长期 Semantic），Pipeline Topic↔TopicNode 双层架构，统一检索 `recall()`，消息档案 `browseHistory()`。
 
-**依赖**：独立设计文档完成后，此 Task 的交付物、表结构和接口定义将在此处补充。
+**核心架构决策**（v3.0 已确认）：
+- Pipeline Topic（内存运行时）与 TopicNode（SQLite 持久化）双层架构，通过 `pipeline_topic_id` 关联
+- Recording Pipeline 是 `topics` 表的主写入者（每次 flush 时 upsert），Compaction 聚焦于 `core_facts` 提炼
+- `message_log` 由 Recording Pipeline 批量写入（非 NC 层）
+- 向量搜索（`sqlite-vec`）和精确 token 计算（`js-tiktoken`）延迟到 Phase M4
+
+**4 个子阶段**：
+
+| 子阶段 | 内容 | 估时 | 依赖 |
+|--------|------|------|------|
+| **M1** | SQLite 数据层：stub→真实 CRUD，7 张表，FTS5 搜索，Recording Pipeline Step 4 落盘，Compaction V2 改造 | 4 天 | NC |
+| **M2** | Reflection Skill：cheap model 反思引擎，情感记忆合并（周→月），邓巴精度控制 | 3 天 | M1 |
+| **M3** | 智能 Context Compaction：token budget + 话题感知压缩，替换 rolling truncation | 3 天 | M1 |
+| **M4** | 向量搜索：sqlite-vec + embedding，recall() 混合检索，browseHistory LLM 深度阅读 | 4 天 | M1+M2 |
+
+**详细子任务**见 `subtask.md`。
 
 #### Task 6.1 — Air-Reading Engine [REVISED @Phase-6.1: 话题作为一等公民重构]
 
@@ -1915,16 +1920,19 @@ interface DailyBudget {
 
 ### Phase 6-7 实施路线图
 
-#### Phase 6A：基础管线 + Dry-Run（~2 周）
+#### Phase 6A：基础管线 + Dry-Run + Memory V2（~3 周）
 
-| Task | 内容 | 依赖 | 估时 |
-|------|------|------|------|
-| 6.0 | Memory V2 完全重写 | 独立设计文档 | TODO |
-| 6.1 | Air-Reading Engine（双模态路由 + TopicRegistry + 话题状态机） | NC | 4天 |
-| 6.1.1 | Engaged Topic Handler（对话模式 + 退出机制） | 6.1 | 3天 |
-| 6.2 | Recording Pipeline（LLM 话题提取 + 50条/2min + 强信号加速） | 6.0 (或临时用现有 memory) | 3天 |
-| 6.6 | Dry-Run System（历史回放评估） | 6.1 | 2天 |
-| 6.7 | Model Router（事件→模型+模式路由） | 6.1, config | 1天 |
+| Task | 内容 | 依赖 | 估时 | 状态 |
+|------|------|------|------|------|
+| 6.1 | Air-Reading Engine（双模态路由 + TopicRegistry + 话题状态机） | NC | 4天 | ✅ 完成 |
+| 6.1.1 | Engaged Topic Handler（对话模式 + 退出机制） | 6.1 | 3天 | ✅ 完成 |
+| 6.2 | Recording Pipeline（LLM 话题提取 + 50条/2min + 强信号加速） | 6.1 | 3天 | ✅ 完成 |
+| 6.6 | Dry-Run System（历史回放评估） | 6.1 | 2天 | ✅ 完成 |
+| 6.7 | Model Router（事件→模型+模式路由） | 6.1, config | 1天 | ✅ 完成 |
+| **6.0-M1** | **Memory V2 数据层**（SQLite 建表 + CRUD + Recording Pipeline 落盘） | 6.2 | **4天** | 🔜 |
+| **6.0-M2** | **Reflection Skill**（反思引擎 + 情感合并 + 邓巴精度） | M1 | **3天** | |
+| **6.0-M3** | **智能 Context Compaction**（token budget + 话题保护） | M1 | **3天** | |
+| **6.0-M4** | **向量搜索 + Deep Recall**（sqlite-vec + embedding + browseHistory） | M1+M2 | **4天** | |
 
 #### Phase 6B：Reply Pipeline + Action API（~2 周）
 
