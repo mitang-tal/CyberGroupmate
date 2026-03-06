@@ -232,39 +232,69 @@ describe("Compaction V2 写入")
 
 ## Phase M2：Reflection Skill + 情感记忆合并（3天）
 
-### M2.1 Reflection 引擎核心（1天）
+### M2.1 Reflection 引擎核心（1天）✅
 
 **文件**：`src/memory-v2/reflection.ts` [NEW]
 
-- [ ] `runReflection(chatId, memory, llmConfig): Promise<ReflectionResult>`
-- [ ] Step 1：查 `group_models.last_reflected_at` 之后的 topics + interactions
-- [ ] Step 2：统计每个活跃用户的消息数、主动发起率、活跃时段
-- [ ] Step 3：调 cheap model → 结构化 JSON（画像增量 / 邓巴调整 / core_facts / group 氛围）
-- [ ] Step 4：解析 → 写入 `person_group_profiles` / `core_facts` / `group_models`
-- [ ] Step 5：更新 `group_models.last_reflected_at`
+- [x] `runReflection(chatId, memory, llmConfig, reflectionConfig?): Promise<ReflectionResult>`
+- [x] Step 1：查 `group_models.last_reflected_at` 之后的 topics + interactions
+- [x] Step 2：统计每个活跃用户的消息数、主动发起率、活跃时段
+- [x] Step 3：调 cheap model → 结构化 JSON（画像增量 / 邓巴调整 / core_facts / group 氛围）
+- [x] Step 4：解析 → 写入 `person_group_profiles` / `core_facts` / `group_models`
+- [x] Step 5：更新 `group_models.last_reflected_at`
+- [x] `ReflectionConfig` 独立配置接口（temperature / maxTokens / model 可覆盖）
+- [x] `parseReflectionJSON()` 支持纯 JSON + markdown 代码块 + 宽松模式
+- [x] `buildReflectionPrompt()` 含邓巴分层指引和事实分类说明
 
-### M2.2 情感记忆合并（0.5天）
+**query helpers** (memory-v2.ts)：
+- [x] `getTopicsSince(chatId, since)`
+- [x] `getInteractionsSince(chatId, since)`
+- [x] `getProfilesForChat(chatId)`
+
+**prompt 外部化** (`system-prompts/`)：
+- [x] `reflection-system.md` — Reflection system prompt 从 reflection.ts 抽出
+- [x] `compaction-system.md` — Compaction system prompt 从 compaction.ts 抽出
+- [x] 两个文件均使用 lazy-cache + fallback 加载模式
+
+### M2.2 情感记忆合并（0.5天）✅
 
 **文件**：`src/memory-v2/reflection.ts`
 
-- [ ] `mergeEpisodes(userId, chatId, memory)`：
+- [x] `mergeEpisodes(userId, chatId, memory)`：
   - >7天 InteractionEpisode → MergedMemory(week)
   - >30天 week → MergedMemory(month)
+  - >90天 month → MergedMemory(quarter)
+  - >365天 quarter → MergedMemory(year)
   - 只保留 significance > 0.7 的 highlights
-- [ ] 在 `runReflection()` 末尾调用
+- [x] 在 `runReflection()` Step 4d 末尾调用
+- [x] 辅助函数：`groupByPeriod()`, `cascadeMerge()`, `computeOverallSentiment()`, `getPeriodKey()`
+- [x] LLM 辅助分析：`analyzeMergeWithLLM()` + `analyzeCascadeMergeWithLLM()`
+  - cheap model 综合分析 overallSentiment / highlights / relationshipTrend
+  - LLM 失败时自动回退到规则合并
+  - `mergeEpisodes()` 现为 async，接受 `llmConfig` + `reflectionConfig`
+- [x] `system-prompts/merge-episodes-system.md` — 合并分析 prompt
 
-### M2.3 邓巴分层精度控制（0.5天）
+### M2.3 邓巴分层精度控制（0.5天）✅
 
 **文件**：`src/memory-v2/reflection.ts`
 
-- [ ] `trimProfileByTier(profile)`：Tier 1→10/10/15, Tier 2→6/6/8, Tier 3→3/3/3, Tier 4→1/1/1
-- [ ] 写回画像前应用裁剪
+- [x] `trimProfileByTier(userId, chatId, memory)`：
+  - Tier 1 (核心)→traits:10, interests:15, episodes:14天
+  - Tier 2 (熟悉)→traits:6, interests:10, episodes:7天
+  - Tier 3 (认识)→traits:3, interests:5, episodes:3天
+  - Tier 4 (陌生)→traits:1, interests:2, episodes:1天
+- [x] 在 `runReflection()` Step 4e 写回画像前应用裁剪
+- [x] `TIER_LIMITS` 配置表（来自 memory.md §3.2.4）
 
 ### M2.4 系统集成（0.5天）
 
-- [ ] `memory-v2.ts`: `reflect()` 从 stub → 调用 `runReflection()`
-- [ ] `main.ts`: `setInterval`（5分钟）冷场触发检查
-- [ ] `cli.ts`: 新增 `memory reflect --chat <id>` 子命令
+- [x] `memory-v2.ts`: `reflect()` 从 stub → 调用 `runReflection()` (dynamic import)
+- [x] `main.ts`: `setInterval`（5分钟）冷场触发检查 + `lastActivityPerChat` 活跃追踪
+  - 冷场阈值: `config.agent.reflection.silence_threshold` 默认 7200s (2h)
+  - `reflectionInProgress` Set 防重入
+- [x] `cli.ts`: 新增 `memory reflect --chat <id>` 子命令
+  - 使用 `resolveTierProfile("cheap")` 获取 LLMConfig
+  - 输出 personUpdates / newFacts / mergedEpisodes / insights / topicsSummary
 
 ### M2.5 测试（0.5天）
 

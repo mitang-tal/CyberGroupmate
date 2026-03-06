@@ -10,6 +10,8 @@
  * - 场景类型定义 scenes/memory.d.ts 的实际对应类型
  */
 
+import type { LLMConfig } from "../core/config.js";
+
 // ─── 事实分类 ───
 
 /** 核心事实的分类枚举 */
@@ -395,11 +397,20 @@ export interface IMemoryStoreV2 {
      */
     browseHistory(request: HistoryBrowseRequest): Promise<HistoryBrowseResult>;
 
+    /** 获取指定 chatId 在 since 之后的 topics */
+    getTopicsSince(chatId: string, since: string): TopicNode[];
+
+    /** 获取指定 chatId 在 since 之后的 interactions */
+    getInteractionsSince(chatId: string, since: string): InteractionEpisode[];
+
+    /** 获取指定 chatId 的所有群内画像 */
+    getProfilesForChat(chatId: string): PersonGroupProfile[];
+
     /**
      * 对指定群组进行反思总结
-     * M1: stub；M2 实现真实 Reflection
+     * 调用 runReflection() 执行 5 步流程
      */
-    reflect(chatId: string): Promise<ReflectionResult>;
+    reflect(chatId: string, llmConfig: LLMConfig, reflectionConfig?: Record<string, unknown>): Promise<ReflectionResult>;
 
     // ─── 生命周期 ───
 

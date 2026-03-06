@@ -13,12 +13,14 @@
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { createLogger } from "../core/logger.js";
+import type { LLMConfig } from "../core/config.js";
 import type {
     IMemoryStoreV2,
     TopicNode,
     PersonIdentity,
     PersonGroupProfile,
     InteractionEpisode,
+    MergedMemory,
     GroupModel,
     CoreFact,
     FactCategory,
@@ -402,6 +404,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             values.push(userId);
 
             this.db.prepare(`UPDATE person_identities SET ${sets.join(", ")} WHERE user_id = ?`).run(...values);
+            log.debug("upsertPersonIdentity: UPDATE", { userId, fields: sets.length - 1 });
         } else {
             this.db.prepare(`
                 INSERT INTO person_identities (user_id, display_name, aliases, total_message_count, last_seen_at, first_seen_at, updated_at)
@@ -415,6 +418,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
                 data.firstSeenAt ?? ts,
                 ts,
             );
+            log.debug("upsertPersonIdentity: INSERT", { userId, displayName: data.displayName ?? "" });
         }
     }
 
@@ -471,6 +475,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
                 data.firstSeenAt ?? ts,
                 ts,
             );
+            log.debug("upsertPersonGroupProfile: INSERT", { userId, chatId, tier: data.dunbarTier ?? 4 });
         }
     }
 
@@ -501,6 +506,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             values.push(chatId);
 
             this.db.prepare(`UPDATE group_models SET ${sets.join(", ")} WHERE chat_id = ?`).run(...values);
+            log.debug("upsertGroupModel: UPDATE", { chatId, fields: sets.length - 1 });
         } else {
             this.db.prepare(`
                 INSERT INTO group_models (
@@ -526,12 +532,16 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
                 data.lastReflectedAt ?? null,
                 ts,
             );
+            log.debug("upsertGroupModel: INSERT", { chatId, title: data.chatTitle ?? "" });
         }
     }
 
     getGroupModel(chatId: string): GroupModel | null {
         const row = this.db.prepare("SELECT * FROM group_models WHERE chat_id = ?").get(chatId) as Record<string, unknown> | undefined;
-        if (!row) return null;
+        if (!row) {
+            log.debug("getGroupModel: 未找到", { chatId });
+            return null;
+        }
 
         return {
             chatId: row.chat_id as string,
@@ -789,18 +799,66 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         return { answer, segments, messagesRead: totalMessagesRead };
     }
 
-    async reflect(chatId: string): Promise<ReflectionResult> {
-        // M1: stub, M2 实现真实 Reflection
-        log.debug("[stub] reflect", { chatId });
-        return {
-            reflectedPeriod: { from: now(), to: now() },
-            topicsSummary: [],
-            personUpdates: [],
-            groupUpdates: "",
-            newCoreFacts: [],
-            mergedEpisodes: 0,
-            insights: "[Memory V2 M1] Reflection 功能将在 Phase M2 实现。",
-        };
+    // ─── Reflection 查询方法 ───
+
+    getTopicsSince(chatId: string, since: string): TopicNode[] {
+        const rows = this.db.prepare(
+            "SELECT * FROM topics WHERE chat_id = ? AND started_at >= ? ORDER BY started_at ASC"
+        ).all(chatId, since) as Record<string, unknown>[];
+        log.debug("getTopicsSince", { chatId, since, count: rows.length });
+        return rows.map(r => this.rowToTopicNode(r));
+    }
+
+    getInteractionsSince(chatId: string, since: string): InteractionEpisode[] {
+        const rows = this.db.prepare(
+            "SELECT * FROM interactions WHERE chat_id = ? AND created_at >= ? ORDER BY created_at ASC"
+        ).all(chatId, since) as Record<string, unknown>[];
+        log.debug("getInteractionsSince", { chatId, since, count: rows.length });
+        return rows.map(r => ({
+            id: r.id as string,
+            date: r.created_at as string,
+            topicId: (r.topic_id as string) ?? null,
+            type: r.type as InteractionEpisode["type"],
+            summary: r.summary as string,
+            sentiment: (r.sentiment as InteractionEpisode["sentiment"]) ?? "neutral",
+            significance: (r.significance as number) ?? 0.5,
+        }));
+    }
+
+    getProfilesForChat(chatId: string): PersonGroupProfile[] {
+        const rows = this.db.prepare(
+            "SELECT * FROM person_group_profiles WHERE chat_id = ? ORDER BY message_count DESC"
+        ).all(chatId) as Record<string, unknown>[];
+        const profiles = rows.map(r => ({
+            userId: r.user_id as string,
+            chatId: r.chat_id as string,
+            dunbarTier: (r.dunbar_tier as PersonGroupProfile["dunbarTier"]) ?? 4,
+            dunbarReason: (r.dunbar_reason as string) ?? "",
+            traits: fromJSON<string[]>(r.traits as string, []),
+            interests: fromJSON<string[]>(r.interests as string, []),
+            communicationStyle: (r.communication_style as string) ?? "",
+            relationToAgent: (r.relation_to_agent as string) ?? "",
+            recentEpisodes: fromJSON<InteractionEpisode[]>(r.recent_episodes as string, []),
+            mergedMemory: fromJSON<MergedMemory[]>(r.merged_memory as string, []),
+            messageCount: (r.message_count as number) ?? 0,
+            lastSeenAt: (r.last_seen_at as string) ?? "",
+            activeHours: fromJSON<number[]>(r.active_hours as string, []),
+            firstSeenAt: (r.first_seen_at as string) ?? "",
+            updatedAt: (r.updated_at as string) ?? "",
+        }));
+        log.debug("getProfilesForChat", { chatId, count: profiles.length });
+        return profiles;
+    }
+
+    // ─── Reflection (M2.4: 调用 reflection.ts) ───
+
+    async reflect(
+        chatId: string,
+        llmConfig: LLMConfig,
+        reflectionConfig?: Record<string, unknown>,
+    ): Promise<ReflectionResult> {
+        const { runReflection } = await import("./reflection.js");
+        return runReflection(chatId, this, llmConfig, reflectionConfig as any);
     }
 
     // ─── 生命周期 ───

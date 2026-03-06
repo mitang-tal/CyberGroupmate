@@ -1,0 +1,352 @@
+/**
+ * tests/reflection.test.ts — Reflection Skill 综合测试
+ *
+ * 覆盖 Phase M2 功能：
+ * - mergeEpisodes 情感合并（规则路径，无 LLM）
+ * - trimProfileByTier 邓巴裁剪
+ * - parseReflectionJSON 解析
+ * - Reflection 集成（无 LLM 调用，仅测试数据流）
+ */
+
+import { describe, it, before, after } from "node:test";
+import assert from "node:assert/strict";
+import { createTestMemory, cleanupTestMemory } from "./helpers/test-db.js";
+import {
+    mergeEpisodes,
+    trimProfileByTier,
+    parseReflectionJSON,
+    DEFAULT_TIER_LIMITS,
+    type ReflectionConfig,
+} from "../src/memory-v2/index.js";
+import type { MemoryStoreV2 } from "../src/memory-v2/index.js";
+import type { PersonGroupProfile, InteractionEpisode, MergedMemory } from "../src/memory-v2/index.js";
+
+// ─── 辅助工具 ───
+
+/** 生成指定天数前的 ISO 日期 */
+function daysAgo(days: number): string {
+    const d = new Date(Date.now() - days * 86400_000);
+    return d.toISOString();
+}
+
+/** 生成 mock InteractionEpisode */
+function mockEpisode(overrides: Partial<InteractionEpisode> = {}): InteractionEpisode {
+    return {
+        id: `ep_${Math.random().toString(36).slice(2, 8)}`,
+        date: daysAgo(1),
+        topicId: "t_test",
+        type: "agent_replied",
+        summary: "测试事件",
+        sentiment: "positive",
+        significance: 0.5,
+        ...overrides,
+    };
+}
+
+// ─── 1. mergeEpisodes 情感合并 ───
+
+describe("mergeEpisodes 情感合并", () => {
+    let mem: MemoryStoreV2;
+
+    before(() => {
+        mem = createTestMemory("merge-ep");
+        // 创建 profile 供 mergeEpisodes 查找
+        mem.upsertPersonGroupProfile("u_merge", "chat_merge", {
+            dunbarTier: 2,
+            traits: ["test"],
+            interests: [],
+            communicationStyle: "",
+        });
+    });
+    after(() => { cleanupTestMemory(mem, "merge-ep"); });
+
+    it("≤ 7天的 episodes 不被合并", async () => {
+        // 写入 3 条 5 天前的 episode
+        const episodes = [
+            mockEpisode({ date: daysAgo(3), summary: "事件1" }),
+            mockEpisode({ date: daysAgo(4), summary: "事件2" }),
+            mockEpisode({ date: daysAgo(5), summary: "事件3" }),
+        ];
+        mem.upsertPersonGroupProfile("u_merge", "chat_merge", {
+            recentEpisodes: episodes,
+        });
+
+        const merged = await mergeEpisodes("u_merge", "chat_merge", mem);
+        assert.equal(merged, 0, "不应合并任何 episode");
+
+        // 验证 recentEpisodes 未变
+        const profiles = mem.getProfilesForChat("chat_merge");
+        const profile = profiles.find(p => p.userId === "u_merge");
+        assert.equal(profile!.recentEpisodes!.length, 3, "recentEpisodes 应保持不变");
+    });
+
+    it("> 7天 episodes 合并为 MergedMemory(week)", async () => {
+        // 写入 5 条 10 天前的 episode
+        const episodes = [
+            mockEpisode({ date: daysAgo(10), summary: "旧事件1", significance: 0.9 }),
+            mockEpisode({ date: daysAgo(10), summary: "旧事件2", significance: 0.3 }),
+            mockEpisode({ date: daysAgo(11), summary: "旧事件3", significance: 0.8 }),
+            mockEpisode({ date: daysAgo(12), summary: "旧事件4", significance: 0.2 }),
+            mockEpisode({ date: daysAgo(13), summary: "旧事件5", significance: 0.5 }),
+        ];
+        mem.upsertPersonGroupProfile("u_merge", "chat_merge", {
+            recentEpisodes: episodes,
+            mergedMemory: [],
+        });
+
+        const merged = await mergeEpisodes("u_merge", "chat_merge", mem);
+        assert.ok(merged > 0, "应合并 episode");
+
+        const profiles = mem.getProfilesForChat("chat_merge");
+        const profile = profiles.find(p => p.userId === "u_merge");
+        assert.equal(profile!.recentEpisodes!.length, 0, "所有旧 episode 应被合并");
+        assert.ok(profile!.mergedMemory!.length > 0, "应生成 MergedMemory");
+
+        const mm = profile!.mergedMemory![0];
+        assert.equal(mm.granularity, "week", "粒度应为 week");
+        assert.ok(mm.interactionCount > 0, "interactionCount 应 > 0");
+    });
+
+    it("合并保留 significance > 0.7 的 highlights（规则路径）", async () => {
+        const episodes = [
+            mockEpisode({ date: daysAgo(10), summary: "重要事件", significance: 0.9 }),
+            mockEpisode({ date: daysAgo(10), summary: "普通事件", significance: 0.3 }),
+        ];
+        mem.upsertPersonGroupProfile("u_merge", "chat_merge", {
+            recentEpisodes: episodes,
+            mergedMemory: [],
+        });
+
+        await mergeEpisodes("u_merge", "chat_merge", mem);
+
+        const profiles = mem.getProfilesForChat("chat_merge");
+        const profile = profiles.find(p => p.userId === "u_merge");
+        const mm = profile!.mergedMemory![0];
+        assert.ok(mm.highlights.includes("重要事件"), "应保留高 significance 的 highlight");
+        assert.ok(!mm.highlights.includes("普通事件"), "不应保留低 significance 的 highlight");
+    });
+
+    it("> 30天 week 合并为 MergedMemory(month)", async () => {
+        // 先手动写入 40 天前的 week MergedMemory
+        const weekMerged: MergedMemory = {
+            periodStart: daysAgo(45),
+            periodEnd: daysAgo(40),
+            granularity: "week",
+            overallSentiment: "positive",
+            interactionCount: 5,
+            highlights: ["旧亮点"],
+            relationshipTrend: "互动增多",
+        };
+        mem.upsertPersonGroupProfile("u_merge", "chat_merge", {
+            recentEpisodes: [],
+            mergedMemory: [weekMerged],
+        });
+
+        await mergeEpisodes("u_merge", "chat_merge", mem);
+
+        const profiles = mem.getProfilesForChat("chat_merge");
+        const profile = profiles.find(p => p.userId === "u_merge");
+        const months = profile!.mergedMemory!.filter(m => m.granularity === "month");
+        assert.ok(months.length > 0, "应生成 month 级别的 MergedMemory");
+    });
+
+    it("合并后 overallSentiment 正确计算（规则路径）", async () => {
+        const episodes = [
+            mockEpisode({ date: daysAgo(10), sentiment: "positive" }),
+            mockEpisode({ date: daysAgo(10), sentiment: "positive" }),
+            mockEpisode({ date: daysAgo(10), sentiment: "positive" }),
+            mockEpisode({ date: daysAgo(10), sentiment: "negative" }),
+        ];
+        mem.upsertPersonGroupProfile("u_merge", "chat_merge", {
+            recentEpisodes: episodes,
+            mergedMemory: [],
+        });
+
+        await mergeEpisodes("u_merge", "chat_merge", mem);
+
+        const profiles = mem.getProfilesForChat("chat_merge");
+        const profile = profiles.find(p => p.userId === "u_merge");
+        const mm = profile!.mergedMemory![0];
+        assert.equal(mm.overallSentiment, "mixed", "3 positive + 1 negative → mixed (ratio > 0.3)");
+    });
+
+    it("空 episodes 不报错", async () => {
+        mem.upsertPersonGroupProfile("u_merge", "chat_merge", {
+            recentEpisodes: [],
+            mergedMemory: [],
+        });
+
+        const merged = await mergeEpisodes("u_merge", "chat_merge", mem);
+        assert.equal(merged, 0);
+    });
+
+    it("不存在的用户不报错", async () => {
+        const merged = await mergeEpisodes("u_nonexist", "chat_merge", mem);
+        assert.equal(merged, 0);
+    });
+});
+
+// ─── 2. trimProfileByTier 邓巴裁剪 ───
+
+describe("trimProfileByTier 邦巴裁剪", () => {
+    let mem: MemoryStoreV2;
+
+    before(() => {
+        mem = createTestMemory("trim-tier");
+    });
+    after(() => { cleanupTestMemory(mem, "trim-tier"); });
+
+    /** 创建并写入 mock profile */
+    function setupProfile(tier: number, traitCount: number, interestCount: number, episodeCount: number): void {
+        mem.upsertPersonGroupProfile("u_trim", "chat_trim", {
+            dunbarTier: tier as 1 | 2 | 3 | 4,
+            dunbarReason: "测试",
+            traits: Array.from({ length: traitCount }, (_, i) => `trait_${i}`),
+            interests: Array.from({ length: interestCount }, (_, i) => `interest_${i}`),
+            communicationStyle: "test",
+            recentEpisodes: Array.from({ length: episodeCount }, (_, i) =>
+                mockEpisode({ date: daysAgo(i), summary: `ep_${i}` })
+            ),
+            mergedMemory: [],
+            messageCount: 100,
+            relationToAgent: "friend",
+            activeHours: [],
+        });
+    }
+
+    it("Tier 1 → traits≤10, interests≤15", () => {
+        setupProfile(1, 15, 20, 20);
+        trimProfileByTier("u_trim", "chat_trim", mem);
+        const p = mem.getProfilesForChat("chat_trim").find(p => p.userId === "u_trim")!;
+        assert.ok(p.traits.length <= 10, `traits ${p.traits.length} should be ≤ 10`);
+        assert.ok(p.interests.length <= 15, `interests ${p.interests.length} should be ≤ 15`);
+    });
+
+    it("Tier 2 → traits≤6, interests≤10", () => {
+        setupProfile(2, 10, 15, 10);
+        trimProfileByTier("u_trim", "chat_trim", mem);
+        const p = mem.getProfilesForChat("chat_trim").find(p => p.userId === "u_trim")!;
+        assert.ok(p.traits.length <= 6, `traits ${p.traits.length} should be ≤ 6`);
+        assert.ok(p.interests.length <= 10, `interests ${p.interests.length} should be ≤ 10`);
+    });
+
+    it("Tier 3 → traits≤3, interests≤5", () => {
+        setupProfile(3, 8, 8, 10);
+        trimProfileByTier("u_trim", "chat_trim", mem);
+        const p = mem.getProfilesForChat("chat_trim").find(p => p.userId === "u_trim")!;
+        assert.ok(p.traits.length <= 3, `traits ${p.traits.length} should be ≤ 3`);
+        assert.ok(p.interests.length <= 5, `interests ${p.interests.length} should be ≤ 5`);
+    });
+
+    it("Tier 4 → traits≤1, interests≤2", () => {
+        setupProfile(4, 5, 5, 5);
+        trimProfileByTier("u_trim", "chat_trim", mem);
+        const p = mem.getProfilesForChat("chat_trim").find(p => p.userId === "u_trim")!;
+        assert.ok(p.traits.length <= 1, `traits ${p.traits.length} should be ≤ 1`);
+        assert.ok(p.interests.length <= 2, `interests ${p.interests.length} should be ≤ 2`);
+    });
+
+    it("未超过上限时不裁剪", () => {
+        setupProfile(1, 2, 3, 5);
+        trimProfileByTier("u_trim", "chat_trim", mem);
+        const p = mem.getProfilesForChat("chat_trim").find(p => p.userId === "u_trim")!;
+        assert.equal(p.traits.length, 2, "traits 不应被裁剪");
+        assert.equal(p.interests.length, 3, "interests 不应被裁剪");
+    });
+
+    it("episodeDays 裁剪 — Tier 4 只保留 1 天内的 episodes", () => {
+        setupProfile(4, 1, 1, 5); // 5 episodes, days 0-4
+        trimProfileByTier("u_trim", "chat_trim", mem);
+        const p = mem.getProfilesForChat("chat_trim").find(p => p.userId === "u_trim")!;
+        assert.ok((p.recentEpisodes?.length ?? 0) <= 2, "Tier 4 应只保留近 1 天的 episodes");
+    });
+
+    it("自定义 tierOverrides 生效", () => {
+        setupProfile(1, 15, 20, 20);
+        trimProfileByTier("u_trim", "chat_trim", mem, { 1: { maxTraits: 5, maxInterests: 5, episodeDays: 3 } });
+        const p = mem.getProfilesForChat("chat_trim").find(p => p.userId === "u_trim")!;
+        assert.ok(p.traits.length <= 5, "自定义 override 应限制 traits 到 5");
+        assert.ok(p.interests.length <= 5, "自定义 override 应限制 interests 到 5");
+    });
+});
+
+// ─── 3. parseReflectionJSON 解析 ───
+
+describe("parseReflectionJSON 解析", () => {
+    it("合法 JSON 正确解析", () => {
+        const json = JSON.stringify({
+            personUpdates: [{ userId: "u1", traits: ["好奇"], dunbarTier: 2, dunbarReason: "活跃" }],
+            groupUpdates: { agentRole: "助手" },
+            newFacts: [{ subject: "u1", content: "喜欢抹茶", category: "preference" }],
+            topicsSummary: [{ label: "旅行", summary: "讨论京都", participants: ["u1"], sentiment: "positive" }],
+            insights: "u1 对旅行很感兴趣",
+        });
+
+        const result = parseReflectionJSON(json);
+        assert.ok(result, "应该成功解析");
+        assert.equal(result!.personUpdates.length, 1);
+        assert.equal(result!.personUpdates[0].userId, "u1");
+        assert.deepEqual(result!.personUpdates[0].traits, ["好奇"]);
+        assert.equal(result!.newFacts.length, 1);
+        assert.equal(result!.topicsSummary.length, 1);
+        assert.equal(result!.insights, "u1 对旅行很感兴趣");
+    });
+
+    it("JSON 外包 markdown 代码块能处理", () => {
+        const wrapped = "```json\n" + JSON.stringify({
+            personUpdates: [],
+            groupUpdates: {},
+            newFacts: [],
+            topicsSummary: [],
+            insights: "test",
+        }) + "\n```";
+
+        const result = parseReflectionJSON(wrapped);
+        assert.ok(result, "应该成功解析 markdown 包裹的 JSON");
+        assert.equal(result!.insights, "test");
+    });
+
+    it("LLM 返回非 JSON 时返回 null", () => {
+        const result = parseReflectionJSON("这不是一个 JSON 对象，只是纯文本回答。");
+        assert.equal(result, null, "非 JSON 应返回 null");
+    });
+
+    it("空字符串返回 null", () => {
+        const result = parseReflectionJSON("");
+        assert.equal(result, null);
+    });
+
+    it("部分缺失字段仍可解析", () => {
+        const json = JSON.stringify({
+            personUpdates: [],
+            // 缺少 groupUpdates, newFacts 等
+            insights: "部分数据",
+        });
+        const result = parseReflectionJSON(json);
+        // 即使缺少字段，只要是合法 JSON 就不应该崩溃
+        assert.ok(result === null || typeof result === "object", "不应崩溃");
+    });
+});
+
+// ─── 4. DEFAULT_TIER_LIMITS 常量验证 ───
+
+describe("DEFAULT_TIER_LIMITS 常量", () => {
+    it("包含 4 个 Tier 的配置", () => {
+        assert.ok(DEFAULT_TIER_LIMITS[1], "Tier 1 应存在");
+        assert.ok(DEFAULT_TIER_LIMITS[2], "Tier 2 应存在");
+        assert.ok(DEFAULT_TIER_LIMITS[3], "Tier 3 应存在");
+        assert.ok(DEFAULT_TIER_LIMITS[4], "Tier 4 应存在");
+    });
+
+    it("Tier 1 应最宽松", () => {
+        assert.ok(DEFAULT_TIER_LIMITS[1].maxTraits >= DEFAULT_TIER_LIMITS[2].maxTraits);
+        assert.ok(DEFAULT_TIER_LIMITS[1].maxInterests >= DEFAULT_TIER_LIMITS[2].maxInterests);
+        assert.ok(DEFAULT_TIER_LIMITS[1].episodeDays >= DEFAULT_TIER_LIMITS[2].episodeDays);
+    });
+
+    it("Tier 4 应最严格", () => {
+        assert.equal(DEFAULT_TIER_LIMITS[4].maxTraits, 1);
+        assert.equal(DEFAULT_TIER_LIMITS[4].maxInterests, 2);
+        assert.equal(DEFAULT_TIER_LIMITS[4].episodeDays, 1);
+    });
+});

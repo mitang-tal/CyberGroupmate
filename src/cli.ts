@@ -15,7 +15,7 @@ import { createInterface } from "node:readline";
 import { Sandbox } from "./sandbox/sandbox.js";
 import { NotificationCenter } from "./event/notification-center.js";
 import { MemoryStoreV2 } from "./memory-v2/index.js";
-import { loadConfig } from "./core/config.js";
+import { loadConfig, resolveTierProfile } from "./core/config.js";
 import { createLogger } from "./core/logger.js";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -295,12 +295,48 @@ async function cmdMemory(args: string[]): Promise<void> {
             break;
         }
 
+        case "reflect": {
+            const chatId = args[1] === "--chat" ? args[2] : args[1];
+            if (!chatId) {
+                log.error('用法: memory reflect --chat <chatId>');
+                break;
+            }
+            const cfg = loadConfig();
+            const llmConfig = resolveTierProfile("cheap", cfg);
+            log.info(`开始对群组 ${chatId} 执行 Reflection...`);
+            try {
+                const result = await memory.reflect(chatId, llmConfig);
+                console.log(`\n\x1b[1m=== Reflection 结果 ===\x1b[0m\n`);
+                console.log(`  时段: ${result.reflectedPeriod.from} → ${result.reflectedPeriod.to}`);
+                console.log(`  画像更新: ${result.personUpdates.length} 人`);
+                for (const pu of result.personUpdates) {
+                    console.log(`    - ${pu.userId}: ${pu.changes}`);
+                }
+                console.log(`  新事实: ${result.newCoreFacts.length} 条`);
+                for (const f of result.newCoreFacts) {
+                    console.log(`    - ${f}`);
+                }
+                console.log(`  合并 episodes: ${result.mergedEpisodes}`);
+                console.log(`  反思建议: ${result.insights}`);
+                if (result.topicsSummary.length > 0) {
+                    console.log(`  话题摘要:`);
+                    for (const ts of result.topicsSummary) {
+                        console.log(`    - ${ts.label}: ${ts.summary} (情感:${ts.sentiment})`);
+                    }
+                }
+            } catch (err) {
+                log.error("Reflection 失败", { error: String(err) });
+            }
+            break;
+        }
+
         default:
             console.log(`
 \x1b[1mMemory V2 子命令：\x1b[0m
 
   recall <关键词>        搜索记忆（话题 + 事实）
   browse <意图描述>      浏览历史消息
+  reflect --chat <id>  手动触发 Reflection
   status                查看 Memory V2 统计
       `);
     }

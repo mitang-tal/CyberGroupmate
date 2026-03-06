@@ -298,6 +298,37 @@ async function mainEventLoop(
         setInterval(() => topicRegistry.cleanup(), 60_000);
     }
 
+    // ─── Phase M2.4: Reflection 冷场触发 ───
+    const silenceThreshold = (appConfig as any).agent?.reflection?.silence_threshold ?? 7200; // 默认 2h
+    const lastActivityPerChat = new Map<string, number>();
+    const reflectionInProgress = new Set<string>();
+
+    setInterval(async () => {
+        const now = Date.now();
+        for (const [chatId, lastActive] of lastActivityPerChat) {
+            const silentSec = (now - lastActive) / 1000;
+            if (silentSec >= silenceThreshold && !reflectionInProgress.has(chatId)) {
+                reflectionInProgress.add(chatId);
+                log.info("冷场触发 Reflection", { chatId, silentSec: Math.floor(silentSec) });
+                try {
+                    const result = await memory.reflect(chatId, llmConfig);
+                    log.info("Reflection 完成", {
+                        chatId,
+                        period: `${result.reflectedPeriod.from} → ${result.reflectedPeriod.to}`,
+                        personUpdates: result.personUpdates.length,
+                        newFacts: result.newCoreFacts.length,
+                        merged: result.mergedEpisodes,
+                    });
+                } catch (err) {
+                    log.error("Reflection 失败", { chatId, error: String(err) });
+                } finally {
+                    reflectionInProgress.delete(chatId);
+                    lastActivityPerChat.delete(chatId); // 重置计时
+                }
+            }
+        }
+    }, 300_000); // 每 5 分钟检查一次
+
     // ─── 维护唯一的长生命周期 session ───
     const messages: ChatMessage[] = [];
 
@@ -316,6 +347,12 @@ async function mainEventLoop(
         }
 
         log.info(`收到 ${events.length} 个新事件`);
+
+        // 更新各 chat 的最后活跃时间（用于 Reflection 冷场触发）
+        for (const ev of events) {
+            const chatId = (ev as any).chatId ?? (ev as any).chat_id;
+            if (chatId) lastActivityPerChat.set(String(chatId), Date.now());
+        }
 
         // ─── Phase 6: FastRouter 路由 ───
         // FAST_PATH 消息进入 CodeAct session，其他由 Pipeline 异步处理

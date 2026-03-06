@@ -20,6 +20,7 @@ import { callLLM, LLMConfig, ChatMessage } from "../core/llm.js";
 import { MemoryStoreV2 } from "../memory-v2/index.js";
 import { SessionResult } from "../sandbox/session-runner.js";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 
 // ─── 常量 ───
 
@@ -31,37 +32,22 @@ const LAST_N_MESSAGES = 10;
 
 // ─── Compaction Prompt ───
 
-const COMPACTION_PROMPT = `你是一个信息提取助手。请分析以下对话记录，提取结构化信息。
+const PROMPTS_DIR = join(process.cwd(), "system-prompts");
 
-请输出严格的 JSON 格式（不要包含 markdown 代码块标记），包含以下字段：
+let _compactionPrompt: string | null = null;
 
-{
-  "summary": "对话摘要（1-3 句话）",
-  "keyPoints": ["关键要点1", "关键要点2"],
-  "newFacts": [
-    {
-      "subject": "这个事实关于谁（userId 或 chatId 或通用主题）",
-      "content": "事实内容",
-      "category": "分类（biographical/preference/anecdote/opinion/plan/relationship/general）"
+function getCompactionPrompt(): string {
+    if (!_compactionPrompt) {
+        try {
+            _compactionPrompt = readFileSync(
+                join(PROMPTS_DIR, "compaction-system.md"), "utf-8"
+            ).trim();
+        } catch {
+            _compactionPrompt = "你是一个信息提取助手。请分析以下对话记录，提取结构化信息。请输出严格的 JSON 格式。";
+        }
     }
-  ],
-  "personUpdates": [
-    {
-      "userId": "用户ID",
-      "displayName": "显示名称",
-      "traits": ["性格特征"],
-      "interests": ["兴趣话题"],
-      "communicationStyle": "说话风格描述"
-    }
-  ],
-  "agentStateUpdate": "agent 状态更新建议（如心情变化、新关注点等）"
+    return _compactionPrompt;
 }
-
-注意：
-- 如果某个字段没有内容，使用空数组 [] 或空字符串 ""
-- personUpdates 中的 userId 如果不知道就用 displayName 代替
-- newFacts 中 category 必须是以上枚举值之一
-- 保持简洁，只记录重要信息`;
 
 // ─── 类型 ───
 
@@ -159,7 +145,7 @@ export async function runCompaction(
     const sessionText = extractSessionText(session);
 
     const messages: ChatMessage[] = [
-        { role: "system", content: COMPACTION_PROMPT },
+        { role: "system", content: getCompactionPrompt() },
         { role: "user", content: `以下是对话记录：\n\n${sessionText}` },
     ];
 

@@ -553,6 +553,14 @@ interface MergedMemory {
 
 合并操作在 **Reflection Skill** 触发时执行（见 3.3），不需要单独的定时任务。
 
+> [!IMPORTANT]
+> 每一层合并都使用 **cheap model** 对事件进行综合分析，而非简单机械分组。LLM 负责：
+> - 综合判断 `overallSentiment`（而非简单多数投票）
+> - 提炼真正值得记忆的 `highlights`（而非仅按 significance 阈值过滤）
+> - 生成有画面感的 `relationshipTrend` 描述（如"从陌生变得熟悉，开始开玩笑"）
+>
+> LLM 调用失败时自动回退到规则合并，保证系统健壮性。合并分析 prompt 位于 `system-prompts/merge-episodes-system.md`。
+
 ### 3.3 中期记忆更新机制：Reflection Skill
 
 > [!WARNING]

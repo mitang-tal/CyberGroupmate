@@ -526,22 +526,7 @@ describe("browseHistory", () => {
     });
 });
 
-// ─── 12. reflect() M2 stub ───
-
-describe("reflect (M2 stub)", () => {
-    let mem: MemoryStoreV2;
-
-    before(() => { mem = createTestMemory("reflect"); });
-    after(() => { cleanupTestMemory(mem, "reflect"); });
-
-    it("should return a placeholder reflection result", async () => {
-        const result = await mem.reflect("-100");
-        assert.ok(result.reflectedPeriod);
-        assert.deepEqual(result.topicsSummary, []);
-        assert.deepEqual(result.personUpdates, []);
-        assert.equal(result.mergedEpisodes, 0);
-    });
-});
+// reflect() 测试已移至 tests/reflection.test.ts
 
 // ─── 13. close / 生命周期 ───
 
