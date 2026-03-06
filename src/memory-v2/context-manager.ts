@@ -1,24 +1,8 @@
-/**
- * context-manager.ts — 智能 Context Compaction
- *
- * 基于 token 预算的上下文管理模块，替换 main.ts 中的粗暴 rolling truncation。
- * 核心功能：
- * 1. CJK 感知的 token 估算（无外部依赖）
- * 2. 基于预算的 compaction 触发判断
- * 3. 消息分段分类（system prompt / briefing / candidates / recent）
- * 4. 话题保护（reply chain + ENGAGED 话题 + 最近 N 条）
- * 5. cheap model 生成 Context Briefing 并重组消息数组
- *
- * 在整体架构中的位置：
- * - 被 main.ts 在每个 session 结束后调用，替代 rolling truncation
- * - 读取 ChatMessage 接口（src/core/llm.ts）
- * - 可选读取 TopicRegistry ENGAGED 话题做保护判断
- */
-
 import { createLogger } from "../core/logger.js";
 import { callLLM, type ChatMessage, type LLMConfig } from "../core/llm.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { encodingForModel } from "js-tiktoken";
 
 const log = createLogger("context-mgr");
 
@@ -77,30 +61,63 @@ export interface ProtectionResult {
 
 /**
  * CJK 统一表意文字 + 常用标点范围
- * 覆盖：中文、日文汉字、韩文汉字、CJK 扩展 A/B
  */
 const CJK_REGEX = /[\u2E80-\u9FFF\uF900-\uFAFF\uFE30-\uFE4F\u{20000}-\u{2FA1F}]/gu;
 
-// ─── Token 估算 ───
+// ─── Token 计算 ───
+
+/** 惰性初始化的 tiktoken encoder (cl100k_base, GPT-4 / embedding 模型) */
+let _encoder: ReturnType<typeof encodingForModel> | null = null;
+let _encoderFailed = false;
+
+function getEncoder() {
+    if (_encoder) return _encoder;
+    if (_encoderFailed) return null;
+    try {
+        _encoder = encodingForModel("gpt-4o");
+        log.debug("tiktoken encoder 初始化成功", { encoding: "cl100k_base" });
+        return _encoder;
+    } catch (err) {
+        _encoderFailed = true;
+        log.warn("tiktoken encoder 初始化失败，fallback CJK 启发式", { error: String(err) });
+        return null;
+    }
+}
 
 /**
- * CJK 感知的 token 估算
+ * 精确 token 计算（使用 js-tiktoken BPE 编码）
  *
- * - 英文/拉丁字符：约 4 字符 = 1 token
- * - CJK 字符（中/日/韩）：约 1.5 字符 = 1 token（单字更贵）
- * - 混合文本：分别计算加权
- *
- * 精度：与 tiktoken 对比误差 < 15%，足以做预算判断
+ * 使用 cl100k_base 编码器（GPT-4 / text-embedding 模型的 tokenizer）。
+ * 如果 tiktoken 初始化失败，自动 fallback 到 CJK 启发式估算。
  */
 export function estimateTokens(text: string): number {
     if (!text) return 0;
 
-    // 计算 CJK 字符数
+    const enc = getEncoder();
+    if (enc) {
+        try {
+            return enc.encode(text).length;
+        } catch {
+            // 罕见：编码失败，fallback
+        }
+    }
+
+    return estimateTokensFallback(text);
+}
+
+/**
+ * CJK 启发式 token 估算（fallback）
+ *
+ * - 英文/拉丁字符：约 4 字符 = 1 token
+ * - CJK 字符：约 1.5 字符 = 1 token
+ */
+export function estimateTokensFallback(text: string): number {
+    if (!text) return 0;
+
     const cjkMatches = text.match(CJK_REGEX);
     const cjkCount = cjkMatches ? cjkMatches.length : 0;
     const nonCjkCount = text.length - cjkCount;
 
-    // CJK: ~1.5 chars/token, non-CJK: ~4 chars/token
     const cjkTokens = Math.ceil(cjkCount / 1.5);
     const nonCjkTokens = Math.ceil(nonCjkCount / 4);
 

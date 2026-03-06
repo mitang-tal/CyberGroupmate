@@ -365,7 +365,7 @@ export interface IMemoryStoreV2 {
     storeMessageBatch(messages: MessageLogEntry[]): void;
 
     /** 写入核心事实到 core_facts 表 */
-    storeFact(subject: string, content: string, category: FactCategory, source?: string, expiresAt?: string): string;
+    storeFact(subject: string, content: string, category: FactCategory, source?: string, expiresAt?: string, embedding?: Float32Array): string;
 
     /** upsert 个体身份（全局，跨群） */
     upsertPersonIdentity(userId: string, data: Partial<PersonIdentity>): void;
@@ -394,6 +394,12 @@ export interface IMemoryStoreV2 {
 
     /** 写入交互记录到 interactions 表 */
     storeInteraction(episode: Omit<InteractionEpisode, "id">): string;
+
+    /** 向量搜索 topics（纯 JS 余弦相似度） */
+    vectorSearchTopics(queryEmbedding: Float32Array, limit?: number, chatId?: string): Array<TopicNode & { similarity: number }>;
+
+    /** 向量搜索 core_facts（纯 JS 余弦相似度） */
+    vectorSearchFacts(queryEmbedding: Float32Array, limit?: number, categories?: FactCategory[]): Array<{ id: string; content: string; category: FactCategory; subject: string; confidence: number; similarity: number }>;
 
     // ─── 检索方法 ───
 

@@ -12,6 +12,7 @@ export type { ReflectionExternalConfig as ReflectionConfig } from "../core/confi
 // Context Manager (M3)
 export {
     estimateTokens,
+    estimateTokensFallback,
     estimateMessagesTokens,
     shouldCompact,
     classifyMessages,
@@ -23,6 +24,22 @@ export {
     type ClassifiedMessages,
     type ProtectionResult,
 } from "./context-manager.js";
+
+// Embedding (M4)
+export {
+    embed,
+    localEmbed,
+    cosineSimilarity,
+    dotProduct,
+    euclideanSimilarity,
+    manhattanSimilarity,
+    getSimilarityFn,
+    topKSimilar,
+    embeddingToBuffer,
+    bufferToEmbedding,
+} from "./embedding.js";
+export type { EmbeddingConfig, SimilarityMetric } from "../core/config.js";
+export type { SimilarityFn } from "./embedding.js";
 
 export type {
     // V2 核心类型

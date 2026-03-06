@@ -168,3 +168,41 @@ reflection:
 #   min_recent_messages: 6
 #   # Context Briefing 最大 token 数 (3000)
 #   max_briefing_tokens: 3000
+
+# ─── Embedding 向量化 ───
+# 控制文本向量化和向量搜索的行为
+# 所有字段可选，缺省使用括号内默认值
+embedding:
+  # 提供者: openai (OpenAI 兼容 API) | local (本地 hash-based)
+  provider: local
+
+  # API base URL（OpenAI 兼容，也可通过 EMBEDDING_BASE_URL 环境变量设置）
+  # base_url: https://api.openai.com/v1
+
+  # API key（也可通过 EMBEDDING_API_KEY 环境变量设置）
+  # api_key: ""
+
+  # 模型名称（也可通过 EMBEDDING_MODEL 环境变量设置）
+  # model: text-embedding-3-small
+
+  # 向量维度（local 默认 128，openai 默认 1536）
+  # dimensions: 128
+
+  # 相似度度量方法: cosine | dot_product | euclidean | manhattan
+  similarity_metric: cosine
+
+  # ─── 示例：OpenAI 官方 ───
+  # provider: openai
+  # base_url: https://api.openai.com/v1
+  # api_key: "sk-..."
+  # model: text-embedding-3-small
+  # dimensions: 1536
+  # similarity_metric: cosine
+
+  # ─── 示例：自部署 embedding 服务（OpenAI 兼容） ───
+  # provider: openai
+  # base_url: http://localhost:8080/v1
+  # model: bge-base-zh-v1.5
+  # dimensions: 768
+  # similarity_metric: dot_product
+

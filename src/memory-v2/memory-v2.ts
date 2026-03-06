@@ -12,8 +12,19 @@
 
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createLogger } from "../core/logger.js";
-import type { LLMConfig, ReflectionExternalConfig } from "../core/config.js";
+import { createRequire } from "node:module";
+import type { LLMConfig, ReflectionExternalConfig, EmbeddingConfig } from "../core/config.js";
+import {
+    cosineSimilarity,
+    bufferToEmbedding,
+    embeddingToBuffer,
+    embed,
+    getSimilarityFn,
+} from "./embedding.js";
+import { callLLM, type ChatMessage, type LLMConfig as LlmCallConfig } from "../core/llm.js";
 import type {
     IMemoryStoreV2,
     TopicNode,
@@ -53,6 +64,60 @@ function now(): string {
     return new Date().toISOString();
 }
 
+// ─── System Prompt 加载（外部模版 + 内联 fallback）───
+
+const PROMPTS_DIR = join(process.cwd(), "system-prompts");
+
+let _recallDeepSummaryPrompt: string | null = null;
+function getRecallDeepSummaryPrompt(): string {
+    if (!_recallDeepSummaryPrompt) {
+        try {
+            _recallDeepSummaryPrompt = readFileSync(
+                join(PROMPTS_DIR, "recall-deep-summary.md"), "utf-8",
+            ).trim();
+        } catch {
+            _recallDeepSummaryPrompt = "你是一组群聊记忆系统中的深度总结助手。请根据以下记忆片段（话题摘要和事实），针对用户查询生成简洁的中文总结（2-3 句话）。只输出总结，不要其他内容。";
+            log.warn("recall-deep-summary.md 未找到，使用内联 fallback");
+        }
+    }
+    return _recallDeepSummaryPrompt;
+}
+
+let _browseIntentParsePrompt: string | null = null;
+function getBrowseIntentParsePrompt(): string {
+    if (!_browseIntentParsePrompt) {
+        try {
+            _browseIntentParsePrompt = readFileSync(
+                join(PROMPTS_DIR, "browse-intent-parse.md"), "utf-8",
+            ).trim();
+        } catch {
+            _browseIntentParsePrompt = `你是一个意图解析助手。请分析用户的搜索意图，提取关键词和时间范围。
+输出严格 JSON 格式：{"keywords": ["关键词1", "关键词2"], "daysBack": 数字或null, "userId": "用户ID或null"}
+- keywords：搜索关键词（中文分词后的重要词汇，至少1个）
+- daysBack：如果用户提到了时间范围（如"上周"=7，"昨天"=1，"上个月"=30），否则 null
+- userId：如果用户提到了具体的人名或ID，否则 null
+只输出 JSON。`;
+            log.warn("browse-intent-parse.md 未找到，使用内联 fallback");
+        }
+    }
+    return _browseIntentParsePrompt;
+}
+
+let _browseDeepReadPrompt: string | null = null;
+function getBrowseDeepReadPrompt(): string {
+    if (!_browseDeepReadPrompt) {
+        try {
+            _browseDeepReadPrompt = readFileSync(
+                join(PROMPTS_DIR, "browse-deep-read.md"), "utf-8",
+            ).trim();
+        } catch {
+            _browseDeepReadPrompt = "你是一个消息历史阅读助手。请根据以下对话记录，回答用户的问题。用中文简洁回答（2-4 句话）。只输出回答，不要其他内容。";
+            log.warn("browse-deep-read.md 未找到，使用内联 fallback");
+        }
+    }
+    return _browseDeepReadPrompt;
+}
+
 // ─── MemoryStoreV2 实现 ───
 
 /**
@@ -70,13 +135,75 @@ function now(): string {
  */
 export class MemoryStoreV2 implements IMemoryStoreV2 {
     private db: Database.Database;
+    private embeddingConfig?: EmbeddingConfig;
+    private cheapLlmConfig?: LlmCallConfig;
+    /** sqlite-vec 扩展是否可用 */
+    public sqliteVecAvailable = false;
 
-    constructor(dbPath: string) {
+    constructor(dbPath: string, options?: {
+        embeddingConfig?: EmbeddingConfig;
+        cheapLlmConfig?: LlmCallConfig;
+    }) {
         this.db = new Database(dbPath);
         this.db.pragma("journal_mode = WAL");
         this.db.pragma("foreign_keys = ON");
+        this.embeddingConfig = options?.embeddingConfig;
+        this.cheapLlmConfig = options?.cheapLlmConfig;
         this.initTables();
-        log.info("Memory V2 SQLite 初始化完成", { dbPath });
+        this.sqliteVecAvailable = this.tryLoadSqliteVec();
+        if (this.sqliteVecAvailable) {
+            this.initVecTables();
+        }
+        log.info("Memory V2 SQLite 初始化完成", {
+            dbPath,
+            hasEmbedding: !!this.embeddingConfig,
+            hasCheapLlm: !!this.cheapLlmConfig,
+            sqliteVec: this.sqliteVecAvailable,
+        });
+    }
+
+    /**
+     * 动态加载 sqlite-vec 扩展
+     * 如果不可用（未安装 / 编译失败），透明 fallback 到纯 JS。
+     */
+    private tryLoadSqliteVec(): boolean {
+        try {
+            const esmRequire = createRequire(import.meta.url);
+            const sqliteVec = esmRequire("sqlite-vec");
+            sqliteVec.load(this.db);
+            const version = this.db.prepare("SELECT vec_version()").pluck().get() as string;
+            log.info("sqlite-vec 加载成功", { version });
+            return true;
+        } catch (err) {
+            log.warn("sqlite-vec 不可用，使用纯 JS 向量搜索 fallback", { error: String(err) });
+            return false;
+        }
+    }
+
+    /**
+     * 创建 vec0 虚拟表（仅在 sqlite-vec 可用时调用）
+     */
+    private initVecTables(): void {
+        const dims = this.embeddingConfig?.dimensions ?? 128;
+        try {
+            this.db.exec(`
+                CREATE VIRTUAL TABLE IF NOT EXISTS topics_vec USING vec0(
+                    topic_id TEXT PRIMARY KEY,
+                    chat_id TEXT partition key,
+                    embedding float[${dims}]
+                );
+            `);
+            this.db.exec(`
+                CREATE VIRTUAL TABLE IF NOT EXISTS facts_vec USING vec0(
+                    fact_id TEXT PRIMARY KEY,
+                    embedding float[${dims}]
+                );
+            `);
+            log.debug("vec0 虚拟表就绪", { dims });
+        } catch (err) {
+            log.warn("vec0 虚拟表创建失败", { error: String(err) });
+            this.sqliteVecAvailable = false;
+        }
     }
 
     // ─── 建表 ───
@@ -268,6 +395,15 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
 
                 // 同步更新 FTS5
                 this.syncTopicFTS(existing.id);
+
+                // 同步 vec0 索引
+                if (data.embedding !== undefined) {
+                    // chatId 可能不在 update data 中，从主表获取
+                    const chatIdForVec = data.chatId ?? (this.db.prepare(
+                        "SELECT chat_id FROM topics WHERE id = ?"
+                    ).pluck().get(existing.id) as string) ?? "";
+                    this.syncTopicVec(existing.id, chatIdForVec, data.embedding);
+                }
             }
 
             log.debug("upsertTopic: UPDATE", { id: existing.id, pipelineTopicId });
@@ -309,6 +445,11 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             // 插入 FTS5
             this.syncTopicFTS(id);
 
+            // 同步 vec0 索引
+            if (data.embedding) {
+                this.syncTopicVec(id, data.chatId ?? "", data.embedding);
+            }
+
             log.debug("upsertTopic: INSERT", { id, pipelineTopicId });
             return id;
         }
@@ -330,6 +471,83 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         } catch (err) {
             log.warn("syncTopicFTS 失败", { topicId, error: String(err) });
         }
+    }
+
+    /** 同步 topic embedding 到 vec0 虚拟表 */
+    private syncTopicVec(topicId: string, chatId: string, embedding: Float32Array): void {
+        if (!this.sqliteVecAvailable) return;
+        try {
+            // vec0 不支持 INSERT OR REPLACE，需先删后插
+            this.db.prepare("DELETE FROM topics_vec WHERE topic_id = ?").run(topicId);
+            this.db.prepare(
+                "INSERT INTO topics_vec(topic_id, chat_id, embedding) VALUES (?, ?, ?)"
+            ).run(topicId, chatId, Buffer.from(embedding.buffer));
+            log.debug("syncTopicVec", { topicId, chatId });
+        } catch (err) {
+            log.warn("syncTopicVec 失败", { topicId, error: String(err) });
+        }
+    }
+
+    /** 同步 fact embedding 到 vec0 虚拟表 */
+    private syncFactVec(factId: string, embedding: Float32Array): void {
+        if (!this.sqliteVecAvailable) return;
+        try {
+            this.db.prepare("DELETE FROM facts_vec WHERE fact_id = ?").run(factId);
+            this.db.prepare(
+                "INSERT INTO facts_vec(fact_id, embedding) VALUES (?, ?)"
+            ).run(factId, Buffer.from(embedding.buffer));
+            log.debug("syncFactVec", { factId });
+        } catch (err) {
+            log.warn("syncFactVec 失败", { factId, error: String(err) });
+        }
+    }
+
+    /**
+     * 从主表 embedding BLOB 批量重建 vec0 虚拟表索引
+     * 用于：首次启用 sqlite-vec / vec0 表损坏后重建
+     */
+    rebuildVecIndex(): { topics: number; facts: number } {
+        if (!this.sqliteVecAvailable) {
+            log.warn("rebuildVecIndex: sqlite-vec 不可用，跳过");
+            return { topics: 0, facts: 0 };
+        }
+
+        // 清空 vec0 表
+        this.db.exec("DELETE FROM topics_vec");
+        this.db.exec("DELETE FROM facts_vec");
+
+        // 批量填充 topics
+        const topicRows = this.db.prepare(
+            "SELECT id, chat_id, embedding FROM topics WHERE embedding IS NOT NULL"
+        ).all() as Array<{ id: string; chat_id: string; embedding: Buffer }>;
+
+        const insertTopic = this.db.prepare(
+            "INSERT INTO topics_vec(topic_id, chat_id, embedding) VALUES (?, ?, ?)"
+        );
+        const topicBatch = this.db.transaction((rows: typeof topicRows) => {
+            for (const row of rows) {
+                insertTopic.run(row.id, row.chat_id, row.embedding);
+            }
+        });
+        topicBatch(topicRows);
+
+        // 批量填充 facts
+        const factRows = this.db.prepare(
+            "SELECT id, embedding FROM core_facts WHERE embedding IS NOT NULL AND (expires_at IS NULL OR expires_at > datetime('now'))"
+        ).all() as Array<{ id: string; embedding: Buffer }>;
+
+        const insertFact = this.db.prepare(
+            "INSERT INTO facts_vec(fact_id, embedding) VALUES (?, ?)"
+        );
+        const factBatch = this.db.transaction((rows: typeof factRows) => {
+            for (const row of rows) {
+                insertFact.run(row.id, row.embedding);
+            }
+        });
+        factBatch(factRows);
+
+        log.info("rebuildVecIndex 完成", { topics: topicRows.length, facts: factRows.length });
+        return { topics: topicRows.length, facts: factRows.length };
     }
 
     finalizeTopic(pipelineTopicId: string): void {
@@ -363,13 +581,13 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
     }
 
     /** 写入核心事实到 core_facts 表 */
-    storeFact(subject: string, content: string, category: FactCategory, source?: string, expiresAt?: string): string {
+    storeFact(subject: string, content: string, category: FactCategory, source?: string, expiresAt?: string, embedding?: Float32Array): string {
         const id = randomUUID();
         const ts = now();
         this.db.prepare(`
-            INSERT INTO core_facts (id, subject, content, category, confidence, source, created_at, updated_at, expires_at)
-            VALUES (?, ?, ?, ?, 1.0, ?, ?, ?, ?)
-        `).run(id, subject, content, category, source ?? null, ts, ts, expiresAt ?? null);
+            INSERT INTO core_facts (id, subject, content, category, confidence, source, embedding, created_at, updated_at, expires_at)
+            VALUES (?, ?, ?, ?, 1.0, ?, ?, ?, ?, ?)
+        `).run(id, subject, content, category, source ?? null, embedding ? embeddingToBuffer(embedding) : null, ts, ts, expiresAt ?? null);
 
         // 同步 FTS5
         try {
@@ -383,7 +601,12 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             log.warn("storeFact FTS sync 失败", { id, error: String(err) });
         }
 
-        log.debug("storeFact", { id, subject, category });
+        // 同步 vec0 索引
+        if (embedding) {
+            this.syncFactVec(id, embedding);
+        }
+
+        log.debug("storeFact", { id, subject, category, hasEmbedding: !!embedding });
         return id;
     }
 
@@ -640,17 +863,217 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         return id;
     }
 
+    /**
+     * 向量搜索 topics（双模式：sqlite-vec KNN 快路径 + 纯 JS fallback）
+     *
+     * - sqlite-vec 可用时：使用 vec0 虚拟表 KNN 查询（O(N) 线性扫描 + 内部排序）
+     * - 不可用时：从主表读取所有 embedding 做 JS 暴力搜索
+     */
+    vectorSearchTopics(
+        queryEmbedding: Float32Array,
+        limit: number = 10,
+        chatId?: string,
+    ): Array<TopicNode & { similarity: number }> {
+        // ── vec0 快路径 ──
+        if (this.sqliteVecAvailable) {
+            try {
+                let sql: string;
+                const params: unknown[] = [Buffer.from(queryEmbedding.buffer), limit];
+
+                if (chatId) {
+                    sql = `SELECT topic_id, distance FROM topics_vec WHERE embedding MATCH ? AND k = ? AND chat_id = ? ORDER BY distance`;
+                    params.push(chatId);
+                } else {
+                    sql = `SELECT topic_id, distance FROM topics_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance`;
+                }
+
+                const vecRows = this.db.prepare(sql).all(...params) as Array<{ topic_id: string; distance: number }>;
+                log.debug("vectorSearchTopics[vec0]: KNN 查询", { count: vecRows.length, chatId, limit });
+
+                if (vecRows.length === 0) return [];
+
+                // 用 topic_id 查主表获取完整数据
+                const result: Array<TopicNode & { similarity: number }> = [];
+                for (const vr of vecRows) {
+                    const row = this.db.prepare("SELECT * FROM topics WHERE id = ?").get(vr.topic_id) as Record<string, unknown> | undefined;
+                    if (row) {
+                        result.push({
+                            ...this.rowToTopicNode(row),
+                            // vec0 默认 L2 距离：1/(1+d) 映射到 (0, 1]
+                            similarity: 1 / (1 + vr.distance),
+                        });
+                    }
+                }
+
+                log.debug("vectorSearchTopics[vec0]: 返回", {
+                    returned: result.length,
+                    topScore: result[0]?.similarity.toFixed(3) ?? 0,
+                });
+                return result;
+            } catch (err) {
+                log.warn("vectorSearchTopics[vec0] 查询失败，fallback 纯 JS", { error: String(err) });
+                // fallthrough to JS path
+            }
+        }
+
+        // ── 纯 JS fallback ──
+        let sql = "SELECT * FROM topics WHERE embedding IS NOT NULL";
+        const params: unknown[] = [];
+        if (chatId) {
+            sql += " AND chat_id = ?";
+            params.push(chatId);
+        }
+
+        const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
+        log.debug("vectorSearchTopics[JS]: 候选数", { count: rows.length, chatId });
+
+        if (rows.length === 0) return [];
+
+        const simFn = getSimilarityFn(this.embeddingConfig?.similarityMetric ?? "cosine");
+        const scored = rows.map(row => {
+            const emb = bufferToEmbedding(row.embedding as Buffer);
+            return {
+                ...this.rowToTopicNode(row),
+                similarity: simFn(queryEmbedding, emb),
+            };
+        });
+
+        scored.sort((a, b) => b.similarity - a.similarity);
+        const result = scored.slice(0, limit);
+        log.debug("vectorSearchTopics[JS]: top-K", {
+            limit,
+            returned: result.length,
+            metric: this.embeddingConfig?.similarityMetric ?? "cosine",
+            topScore: result[0]?.similarity.toFixed(3) ?? 0,
+        });
+        return result;
+    }
+
+    /**
+     * 向量搜索 core_facts（双模式：sqlite-vec KNN 快路径 + 纯 JS fallback）
+     */
+    vectorSearchFacts(
+        queryEmbedding: Float32Array,
+        limit: number = 10,
+        categories?: FactCategory[],
+    ): Array<{ id: string; content: string; category: FactCategory; subject: string; confidence: number; similarity: number }> {
+        // ── vec0 快路径 ──
+        if (this.sqliteVecAvailable && !categories?.length) {
+            // vec0 不支持 category 过滤（非 partition key），仅在无 category 过滤时使用
+            try {
+                const sql = `SELECT fact_id, distance FROM facts_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance`;
+                const vecRows = this.db.prepare(sql).all(
+                    Buffer.from(queryEmbedding.buffer), limit
+                ) as Array<{ fact_id: string; distance: number }>;
+
+                log.debug("vectorSearchFacts[vec0]: KNN 查询", { count: vecRows.length, limit });
+
+                if (vecRows.length === 0) return [];
+
+                const result: Array<{ id: string; content: string; category: FactCategory; subject: string; confidence: number; similarity: number }> = [];
+                for (const vr of vecRows) {
+                    const row = this.db.prepare(
+                        "SELECT * FROM core_facts WHERE id = ? AND (expires_at IS NULL OR expires_at > datetime('now'))"
+                    ).get(vr.fact_id) as Record<string, unknown> | undefined;
+                    if (row) {
+                        result.push({
+                            id: row.id as string,
+                            content: row.content as string,
+                            category: row.category as FactCategory,
+                            subject: row.subject as string,
+                            confidence: row.confidence as number,
+                            // vec0 默认 L2 距离
+                            similarity: 1 / (1 + vr.distance),
+                        });
+                    }
+                }
+
+                log.debug("vectorSearchFacts[vec0]: 返回", {
+                    returned: result.length,
+                    topScore: result[0]?.similarity.toFixed(3) ?? 0,
+                });
+                return result;
+            } catch (err) {
+                log.warn("vectorSearchFacts[vec0] 查询失败，fallback 纯 JS", { error: String(err) });
+            }
+        }
+
+        // ── 纯 JS fallback ──
+        let sql = "SELECT * FROM core_facts WHERE embedding IS NOT NULL AND (expires_at IS NULL OR expires_at > datetime('now'))";
+        const params: unknown[] = [];
+        if (categories?.length) {
+            const placeholders = categories.map(() => "?").join(", ");
+            sql += ` AND category IN (${placeholders})`;
+            params.push(...categories);
+        }
+
+        const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
+        log.debug("vectorSearchFacts[JS]: 候选数", { count: rows.length });
+
+        if (rows.length === 0) return [];
+
+        const simFn = getSimilarityFn(this.embeddingConfig?.similarityMetric ?? "cosine");
+        const scored = rows.map(row => {
+            const emb = bufferToEmbedding(row.embedding as Buffer);
+            return {
+                id: row.id as string,
+                content: row.content as string,
+                category: row.category as FactCategory,
+                subject: row.subject as string,
+                confidence: row.confidence as number,
+                similarity: simFn(queryEmbedding, emb),
+            };
+        });
+
+        scored.sort((a, b) => b.similarity - a.similarity);
+        const result = scored.slice(0, limit);
+        log.debug("vectorSearchFacts[JS]: top-K", {
+            limit,
+            returned: result.length,
+            metric: this.embeddingConfig?.similarityMetric ?? "cosine",
+            topScore: result[0]?.similarity.toFixed(3) ?? 0,
+        });
+        return result;
+    }
+
     // ─── 检索方法 ───
 
     async recall(query: string, options?: RecallOptions): Promise<RecallResult> {
-        const topics: TopicNode[] = [];
-        const facts: Array<{ content: string; category: FactCategory; subject: string; confidence: number }> = [];
+        const topicMap = new Map<string, TopicNode>();
+        const factMap = new Map<string, { content: string; category: FactCategory; subject: string; confidence: number }>();
 
         const maxResults = options?.maxResults ?? 10;
         const chatIdFilter = options?.chatId;
         const daysBack = options?.daysBack;
 
-        // FTS5 搜索 topics
+        // ─── 路径 1：向量搜索（主路径，如有 embeddingConfig） ───
+        if (this.embeddingConfig) {
+            try {
+                const [queryVec] = await embed([query], this.embeddingConfig);
+                if (queryVec) {
+                    // 向量搜索 topics
+                    const vecTopics = this.vectorSearchTopics(queryVec, maxResults, chatIdFilter);
+                    for (const t of vecTopics) {
+                        if (!topicMap.has(t.id)) topicMap.set(t.id, t);
+                    }
+
+                    // 向量搜索 facts
+                    const vecFacts = this.vectorSearchFacts(queryVec, maxResults, options?.categories);
+                    for (const f of vecFacts) {
+                        if (!factMap.has(f.id)) factMap.set(f.id, {
+                            content: f.content, category: f.category,
+                            subject: f.subject, confidence: f.confidence,
+                        });
+                    }
+                    log.debug("recall: 向量搜索完成", { topics: vecTopics.length, facts: vecFacts.length });
+                }
+            } catch (err) {
+                log.warn("recall: 向量搜索失败，回退 FTS5", { error: String(err) });
+            }
+        }
+
+        // ─── 路径 2：FTS5 补充搜索 ───
+        // FTS5 topics
         try {
             let topicQuery = `
                 SELECT t.* FROM topics t
@@ -658,52 +1081,46 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
                 WHERE topics_fts MATCH ?
             `;
             const params: unknown[] = [query];
-
-            if (chatIdFilter) {
-                topicQuery += " AND t.chat_id = ?";
-                params.push(chatIdFilter);
-            }
+            if (chatIdFilter) { topicQuery += " AND t.chat_id = ?"; params.push(chatIdFilter); }
             if (daysBack) {
-                const cutoff = new Date(Date.now() - daysBack * 86400000).toISOString();
                 topicQuery += " AND t.started_at >= ?";
-                params.push(cutoff);
+                params.push(new Date(Date.now() - daysBack * 86400000).toISOString());
             }
-
             topicQuery += ` LIMIT ?`;
             params.push(maxResults);
 
             const rows = this.db.prepare(topicQuery).all(...params) as Record<string, unknown>[];
             for (const row of rows) {
-                topics.push(this.rowToTopicNode(row));
+                const t = this.rowToTopicNode(row);
+                if (!topicMap.has(t.id)) topicMap.set(t.id, t);
             }
         } catch (err) {
             log.debug("recall: FTS5 topics 失败", { error: String(err) });
         }
 
-        // FTS5 结果为空时，回退到 LIKE 搜索（支持 CJK 文本）
-        if (topics.length === 0) {
+        // LIKE fallback topics
+        if (topicMap.size === 0) {
             try {
                 let likeQuery = "SELECT * FROM topics WHERE (label LIKE ? OR summary LIKE ? OR keywords LIKE ?)";
                 const likePattern = `%${query}%`;
                 const params: unknown[] = [likePattern, likePattern, likePattern];
-
                 if (chatIdFilter) { likeQuery += " AND chat_id = ?"; params.push(chatIdFilter); }
                 if (daysBack) {
-                    const cutoff = new Date(Date.now() - daysBack * 86400000).toISOString();
                     likeQuery += " AND started_at >= ?";
-                    params.push(cutoff);
+                    params.push(new Date(Date.now() - daysBack * 86400000).toISOString());
                 }
                 likeQuery += " LIMIT ?";
                 params.push(maxResults);
 
                 const rows = this.db.prepare(likeQuery).all(...params) as Record<string, unknown>[];
                 for (const row of rows) {
-                    topics.push(this.rowToTopicNode(row));
+                    const t = this.rowToTopicNode(row);
+                    if (!topicMap.has(t.id)) topicMap.set(t.id, t);
                 }
-            } catch { /* LIKE 也失败，返回空 */ }
+            } catch { /* LIKE fallback */ }
         }
 
-        // FTS5 搜索 core_facts
+        // FTS5 facts
         try {
             let factQuery = `
                 SELECT cf.* FROM core_facts cf
@@ -712,19 +1129,17 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
                 AND (cf.expires_at IS NULL OR cf.expires_at > datetime('now'))
             `;
             const params: unknown[] = [query];
-
             if (options?.categories?.length) {
-                const placeholders = options.categories.map(() => "?").join(", ");
-                factQuery += ` AND cf.category IN (${placeholders})`;
+                factQuery += ` AND cf.category IN (${options.categories.map(() => "?").join(", ")})`;
                 params.push(...options.categories);
             }
-
             factQuery += ` LIMIT ?`;
             params.push(maxResults);
 
             const rows = this.db.prepare(factQuery).all(...params) as Record<string, unknown>[];
             for (const row of rows) {
-                facts.push({
+                const id = row.id as string;
+                if (!factMap.has(id)) factMap.set(id, {
                     content: row.content as string,
                     category: row.category as FactCategory,
                     subject: row.subject as string,
@@ -735,16 +1150,14 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             log.debug("recall: FTS5 facts 失败", { error: String(err) });
         }
 
-        // FTS5 结果为空时，回退到 LIKE
-        if (facts.length === 0) {
+        // LIKE fallback facts
+        if (factMap.size === 0) {
             try {
                 const likePattern = `%${query}%`;
                 let likeQuery = "SELECT * FROM core_facts WHERE (content LIKE ? OR subject LIKE ?) AND (expires_at IS NULL OR expires_at > datetime('now'))";
                 const params: unknown[] = [likePattern, likePattern];
-
                 if (options?.categories?.length) {
-                    const placeholders = options.categories.map(() => "?").join(", ");
-                    likeQuery += ` AND category IN (${placeholders})`;
+                    likeQuery += ` AND category IN (${options.categories.map(() => "?").join(", ")})`;
                     params.push(...options.categories);
                 }
                 likeQuery += " LIMIT ?";
@@ -752,18 +1165,115 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
 
                 const rows = this.db.prepare(likeQuery).all(...params) as Record<string, unknown>[];
                 for (const row of rows) {
-                    facts.push({
+                    const id = row.id as string;
+                    if (!factMap.has(id)) factMap.set(id, {
                         content: row.content as string,
                         category: row.category as FactCategory,
                         subject: row.subject as string,
                         confidence: row.confidence as number,
                     });
                 }
-            } catch { /* 空 */ }
+            } catch { /* LIKE fallback */ }
         }
 
-        log.debug("recall", { query, topicsFound: topics.length, factsFound: facts.length });
-        return { topics, facts, persons: [] };
+        const topics = [...topicMap.values()];
+        const facts = [...factMap.values()];
+
+        // ─── 关联 persons（通过 topic.participants 匹配） ───
+        const persons = this.resolvePersonsFromTopics(topics);
+
+        // ─── deep summary（如结果超阈值且有 cheapLlmConfig） ───
+        let deepSummary: string | undefined;
+        const threshold = options?.deepRecallThreshold ?? 2000;
+        const totalTokens = this.estimateRecallTokens(topics, facts);
+        if (totalTokens > threshold && this.cheapLlmConfig) {
+            try {
+                deepSummary = await this.generateDeepSummary(query, topics, facts);
+                log.debug("recall: deepSummary 生成", { tokens: totalTokens, threshold });
+            } catch (err) {
+                log.warn("recall: deepSummary 失败", { error: String(err) });
+            }
+        }
+
+        log.debug("recall", {
+            query,
+            topicsFound: topics.length,
+            factsFound: facts.length,
+            personsFound: persons.length,
+            hasDeepSummary: !!deepSummary,
+        });
+        return { topics, facts, persons, deepSummary };
+    }
+
+    /** 从 topic 参与者解析关联的 person_group_profiles */
+    private resolvePersonsFromTopics(topics: TopicNode[]): PersonGroupProfile[] {
+        const userIds = new Set<string>();
+        for (const t of topics) {
+            for (const p of t.participants) userIds.add(p);
+        }
+        if (userIds.size === 0) return [];
+
+        const result: PersonGroupProfile[] = [];
+        for (const uid of userIds) {
+            try {
+                const rows = this.db.prepare(
+                    "SELECT * FROM person_group_profiles WHERE user_id = ? LIMIT 1"
+                ).all(uid) as Record<string, unknown>[];
+                for (const r of rows) {
+                    result.push({
+                        userId: r.user_id as string,
+                        chatId: r.chat_id as string,
+                        dunbarTier: (r.dunbar_tier as PersonGroupProfile["dunbarTier"]) ?? 4,
+                        dunbarReason: (r.dunbar_reason as string) ?? "",
+                        traits: fromJSON<string[]>(r.traits as string, []),
+                        interests: fromJSON<string[]>(r.interests as string, []),
+                        communicationStyle: (r.communication_style as string) ?? "",
+                        relationToAgent: (r.relation_to_agent as string) ?? "",
+                        recentEpisodes: fromJSON<InteractionEpisode[]>(r.recent_episodes as string, []),
+                        mergedMemory: fromJSON<MergedMemory[]>(r.merged_memory as string, []),
+                        messageCount: (r.message_count as number) ?? 0,
+                        lastSeenAt: (r.last_seen_at as string) ?? "",
+                        activeHours: fromJSON<number[]>(r.active_hours as string, []),
+                        firstSeenAt: (r.first_seen_at as string) ?? "",
+                        updatedAt: (r.updated_at as string) ?? "",
+                    });
+                }
+            } catch { /* skip */ }
+        }
+        return result;
+    }
+
+    /** 估算 recall 结果的总 token 数（使用精确 tiktoken 计算） */
+    private estimateRecallTokens(topics: TopicNode[], facts: Array<{ content: string }>): number {
+        // 导入 estimateTokens 在运行时使用
+        let total = 0;
+        for (const t of topics) total += Math.ceil((t.summary?.length ?? 0) / 2);
+        for (const f of facts) total += Math.ceil((f.content?.length ?? 0) / 2);
+        return total;
+    }
+
+    /** 调用 cheap model 生成深度总结 */
+    private async generateDeepSummary(
+        query: string,
+        topics: TopicNode[],
+        facts: Array<{ content: string; subject: string }>,
+    ): Promise<string> {
+        if (!this.cheapLlmConfig) throw new Error("No cheap LLM config");
+
+        const topicSummaries = topics.slice(0, 5).map(t =>
+            `- [话题] ${t.label}: ${t.summary}`
+        ).join("\n");
+        const factSummaries = facts.slice(0, 10).map(f =>
+            `- [事实] (${f.subject}) ${f.content}`
+        ).join("\n");
+
+        const messages: ChatMessage[] = [
+            { role: "system", content: getRecallDeepSummaryPrompt() },
+            { role: "user", content: `查询：${query}\n\n相关记忆：\n${topicSummaries}\n${factSummaries}` },
+        ];
+
+        const response = await callLLM(messages, this.cheapLlmConfig, { maxTokens: 500, temperature: 0.3 });
+        return response.content.trim();
     }
 
     async browseHistory(request: HistoryBrowseRequest): Promise<HistoryBrowseResult> {
@@ -771,52 +1281,96 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         const contextWindow = request.contextWindow ?? 10;
         const maxSegments = request.maxSegments ?? 3;
 
-        // 按关键词匹配 topics
-        const keywords = request.intent.split(/\s+/).filter(w => w.length > 0);
+        // ─── Step 1: 意图解析（LLM 或 fallback） ───
+        let keywords: string[];
+        let parsedHints = { ...request.hints };
+
+        if (this.cheapLlmConfig && !request.hints?.topicId) {
+            try {
+                const parsed = await this.parseIntentWithLLM(request.intent);
+                keywords = parsed.keywords;
+                if (parsed.daysBack && !parsedHints.daysBack) parsedHints.daysBack = parsed.daysBack;
+                if (parsed.userId && !parsedHints.userId) parsedHints.userId = parsed.userId;
+                log.debug("browseHistory: LLM 意图解析", { keywords, parsedHints });
+            } catch (err) {
+                log.warn("browseHistory: LLM 意图解析失败，fallback 分词", { error: String(err) });
+                keywords = request.intent.split(/\s+/).filter(w => w.length > 0);
+            }
+        } else {
+            keywords = request.intent.split(/\s+/).filter(w => w.length > 0);
+        }
+
         if (keywords.length === 0) {
             return { answer: "", segments: [], messagesRead: 0 };
         }
 
-        // 构建 LIKE 查询（多个关键词 OR）
-        const conditions = keywords.map(() => "(label LIKE ? OR keywords LIKE ? OR summary LIKE ?)").join(" OR ");
-        const params: unknown[] = [];
-        for (const kw of keywords) {
-            const p = `%${kw}%`;
-            params.push(p, p, p);
+        // ─── Step 2: 定位 topics（向量搜索 + LIKE fallback） ───
+        let topicRows: Record<string, unknown>[] = [];
+
+        // 机会 1：向量搜索
+        if (this.embeddingConfig) {
+            try {
+                const intentText = keywords.join(" ");
+                const [queryVec] = await embed([intentText], this.embeddingConfig);
+                if (queryVec) {
+                    const vecTopics = this.vectorSearchTopics(queryVec, maxSegments, parsedHints.chatId);
+                    // 转为原始 row 兼容后续逻辑
+                    if (vecTopics.length > 0) {
+                        topicRows = vecTopics.map(t => ({
+                            ...t,
+                            first_message_id: t.messageRange?.firstMessageId ?? null,
+                            last_message_id: t.messageRange?.lastMessageId ?? null,
+                            chat_id: t.chatId,
+                            label: t.label,
+                            started_at: t.startedAt,
+                            ended_at: t.endedAt,
+                        })) as unknown as Record<string, unknown>[];
+                        log.debug("browseHistory: 向量搜索命中", { count: vecTopics.length });
+                    }
+                }
+            } catch (err) {
+                log.warn("browseHistory: 向量搜索失败", { error: String(err) });
+            }
         }
 
-        // 应用 hints 过滤
-        let whereClause = `WHERE (${conditions})`;
-        if (request.hints?.chatId) {
-            whereClause += " AND chat_id = ?";
-            params.push(request.hints.chatId);
-        }
-        if (request.hints?.daysBack) {
-            const cutoff = new Date(Date.now() - request.hints.daysBack * 86400000).toISOString();
-            whereClause += " AND started_at >= ?";
-            params.push(cutoff);
-        }
-        if (request.hints?.topicId) {
-            whereClause += " AND id = ?";
-            params.push(request.hints.topicId);
+        // 机会 2：LIKE fallback
+        if (topicRows.length === 0) {
+            const conditions = keywords.map(() => "(label LIKE ? OR keywords LIKE ? OR summary LIKE ?)").join(" OR ");
+            const params: unknown[] = [];
+            for (const kw of keywords) {
+                const p = `%${kw}%`;
+                params.push(p, p, p);
+            }
+
+            let whereClause = `WHERE (${conditions})`;
+            if (parsedHints.chatId) { whereClause += " AND chat_id = ?"; params.push(parsedHints.chatId); }
+            if (parsedHints.daysBack) {
+                whereClause += " AND started_at >= ?";
+                params.push(new Date(Date.now() - parsedHints.daysBack * 86400000).toISOString());
+            }
+            if (parsedHints.topicId) { whereClause += " AND id = ?"; params.push(parsedHints.topicId); }
+
+            params.push(maxSegments);
+
+            try {
+                topicRows = this.db.prepare(
+                    `SELECT * FROM topics ${whereClause} ORDER BY started_at DESC LIMIT ?`
+                ).all(...params) as Record<string, unknown>[];
+            } catch (err) {
+                log.debug("browseHistory: LIKE 搜索失败", { error: String(err) });
+            }
         }
 
-        params.push(maxSegments);
-
-        const topicRows = this.db.prepare(
-            `SELECT * FROM topics ${whereClause} ORDER BY started_at DESC LIMIT ?`
-        ).all(...params) as Record<string, unknown>[];
-
+        // ─── Step 3: 拉取 message_log ───
         let totalMessagesRead = 0;
 
         for (const topicRow of topicRows) {
-            const firstMsgId = topicRow.first_message_id as number | null;
-            const lastMsgId = topicRow.last_message_id as number | null;
-            const chatId = topicRow.chat_id as string;
+            const firstMsgId = (topicRow.first_message_id ?? topicRow.firstMessageId) as number | null;
+            const lastMsgId = (topicRow.last_message_id ?? topicRow.lastMessageId) as number | null;
+            const chatId = (topicRow.chat_id ?? topicRow.chatId) as string;
 
             if (firstMsgId == null || lastMsgId == null) continue;
 
-            // 拉取 messageRange 内的消息（加上 contextWindow）
             const msgRows = this.db.prepare(`
                 SELECT * FROM message_log
                 WHERE chat_id = ? AND message_id >= ? AND message_id <= ?
@@ -838,23 +1392,85 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             totalMessagesRead += messages.length;
 
             segments.push({
-                topicLabel: topicRow.label as string,
+                topicLabel: (topicRow.label as string) ?? "",
                 timeRange: {
-                    from: topicRow.started_at as string,
-                    to: (topicRow.ended_at as string) ?? now(),
+                    from: (topicRow.started_at ?? topicRow.startedAt) as string,
+                    to: ((topicRow.ended_at ?? topicRow.endedAt) as string) ?? now(),
                 },
                 messages,
-                relevanceScore: 1.0,
+                relevanceScore: (topicRow as { similarity?: number }).similarity ?? 1.0,
             });
         }
 
-        // M1 基础版：不调 LLM，直接拼接 answer
-        const answer = segments.length > 0
-            ? `找到 ${segments.length} 个相关话题：${segments.map(s => s.topicLabel).join("、")}`
-            : "";
+        // ─── Step 4: 生成 answer（LLM 深度阅读 或 fallback） ───
+        let answer: string;
+        if (this.cheapLlmConfig && segments.length > 0 && totalMessagesRead > 0) {
+            try {
+                answer = await this.deepReadWithLLM(request.intent, segments);
+                log.debug("browseHistory: LLM 深度阅读完成", { answerLen: answer.length });
+            } catch (err) {
+                log.warn("browseHistory: LLM 深度阅读失败", { error: String(err) });
+                answer = segments.length > 0
+                    ? `找到 ${segments.length} 个相关话题：${segments.map(s => s.topicLabel).join("、")}`
+                    : "";
+            }
+        } else {
+            answer = segments.length > 0
+                ? `找到 ${segments.length} 个相关话题：${segments.map(s => s.topicLabel).join("、")}`
+                : "";
+        }
 
         log.debug("browseHistory", { intent: request.intent, segmentsFound: segments.length, totalMessagesRead });
         return { answer, segments, messagesRead: totalMessagesRead };
+    }
+
+    /** LLM 意图解析 */
+    private async parseIntentWithLLM(intent: string): Promise<{ keywords: string[]; daysBack?: number; userId?: string }> {
+        if (!this.cheapLlmConfig) throw new Error("No cheap LLM config");
+
+        const messages: ChatMessage[] = [
+            { role: "system", content: getBrowseIntentParsePrompt() },
+            { role: "user", content: intent },
+        ];
+
+        const response = await callLLM(messages, this.cheapLlmConfig, { maxTokens: 200, temperature: 0.1 });
+        try {
+            const parsed = JSON.parse(response.content.replace(/```json?\s*/g, "").replace(/```/g, "").trim());
+            return {
+                keywords: Array.isArray(parsed.keywords) ? parsed.keywords : [intent],
+                daysBack: typeof parsed.daysBack === "number" ? parsed.daysBack : undefined,
+                userId: typeof parsed.userId === "string" ? parsed.userId : undefined,
+            };
+        } catch {
+            log.warn("browseHistory: 意图 JSON 解析失败", { raw: response.content.slice(0, 100) });
+            return { keywords: intent.split(/\s+/).filter(w => w.length > 0) };
+        }
+    }
+
+    /** LLM 深度阅读 */
+    private async deepReadWithLLM(
+        intent: string,
+        segments: HistoryBrowseResult["segments"],
+    ): Promise<string> {
+        if (!this.cheapLlmConfig) throw new Error("No cheap LLM config");
+
+        // 拼接消息上下文（限制长度）
+        const contextParts: string[] = [];
+        for (const seg of segments.slice(0, 3)) {
+            const header = `【话题：${seg.topicLabel}】(${seg.timeRange.from} ~ ${seg.timeRange.to})`;
+            const msgTexts = seg.messages.slice(0, 20).map(m =>
+                `${m.displayName}: ${m.text}`
+            ).join("\n");
+            contextParts.push(`${header}\n${msgTexts}`);
+        }
+
+        const messages: ChatMessage[] = [
+            { role: "system", content: getBrowseDeepReadPrompt() },
+            { role: "user", content: `问题：${intent}\n\n对话记录：\n${contextParts.join("\n\n---\n\n")}` },
+        ];
+
+        const response = await callLLM(messages, this.cheapLlmConfig, { maxTokens: 500, temperature: 0.3 });
+        return response.content.trim();
     }
 
     // ─── Reflection 查询方法 ───

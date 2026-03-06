@@ -24,6 +24,25 @@ export interface LLMConfig {
     thinkingLevel?: string;
 }
 
+/** 相似度度量方法 */
+export type SimilarityMetric = "cosine" | "dot_product" | "euclidean" | "manhattan";
+
+/** Embedding 配置 */
+export interface EmbeddingConfig {
+    /** 提供者：openai 兼容 API 或本地 hash-based */
+    provider: "openai" | "local";
+    /** API base URL（OpenAI 兼容） */
+    baseUrl: string;
+    /** API key */
+    apiKey: string;
+    /** 模型名称 */
+    model: string;
+    /** 向量维度 */
+    dimensions: number;
+    /** 相似度度量方法 */
+    similarityMetric: SimilarityMetric;
+}
+
 /** 模型层级 — tier name → profile name */
 export interface ModelTiersConfig {
     cheap: string;
@@ -107,6 +126,7 @@ export interface AppConfig {
     notification: NotificationConfig;
     reflection: ReflectionExternalConfig;
     contextBudget?: ContextBudgetConfig;
+    embedding: EmbeddingConfig;
 }
 
 // ─── 默认值 ───
@@ -118,6 +138,15 @@ const DEFAULT_LLM: LLMConfig = {
     model: "gpt-4o",
     temperature: 0.7,
     maxTokens: 4096,
+};
+
+const DEFAULT_EMBEDDING: EmbeddingConfig = {
+    provider: "local",
+    baseUrl: "https://api.openai.com/v1",
+    apiKey: "",
+    model: "text-embedding-3-small",
+    dimensions: 128,
+    similarityMetric: "cosine",
 };
 
 // ─── 配置加载 ───
@@ -249,6 +278,7 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
             timezone: str(fileReflection.timezone),
         },
         contextBudget: parsedContextBudget,
+        embedding: parseEmbeddingConfig(fileConfig),
     };
 
     injectEnv("TG_API_ID", config.telegram.apiId);
@@ -284,8 +314,36 @@ export function resolveTierProfile(tier: string, config?: AppConfig): LLMConfig 
     return resolveLLMProfile(profileName, cfg);
 }
 
+/** 获取 embedding 配置 */
+export function resolveEmbeddingConfig(config?: AppConfig): EmbeddingConfig {
+    const cfg = config ?? loadConfig();
+    return cfg.embedding;
+}
+
 export function clearConfigCache(): void {
     _cached = null;
+}
+
+// ─── Embedding 配置解析 ───
+
+function parseEmbeddingConfig(fileConfig: Record<string, unknown>): EmbeddingConfig {
+    const raw = (fileConfig.embedding ?? {}) as Record<string, unknown>;
+
+    const result: EmbeddingConfig = {
+        provider: (str(raw.provider) as "openai" | "local") ?? DEFAULT_EMBEDDING.provider,
+        baseUrl: env("EMBEDDING_BASE_URL") ?? str(raw.base_url) ?? DEFAULT_EMBEDDING.baseUrl,
+        apiKey: env("EMBEDDING_API_KEY") ?? str(raw.api_key) ?? DEFAULT_EMBEDDING.apiKey,
+        model: env("EMBEDDING_MODEL") ?? str(raw.model) ?? DEFAULT_EMBEDDING.model,
+        dimensions: raw.dimensions != null ? num(raw.dimensions, DEFAULT_EMBEDDING.dimensions) : DEFAULT_EMBEDDING.dimensions,
+        similarityMetric: (str(raw.similarity_metric) as SimilarityMetric) ?? DEFAULT_EMBEDDING.similarityMetric,
+    };
+
+    // provider=openai 且 dimensions 未显式配置 → 用 1536（OpenAI 默认）
+    if (result.provider === "openai" && raw.dimensions == null) {
+        result.dimensions = 1536;
+    }
+
+    return result;
 }
 
 // ─── 内部辅助 ───

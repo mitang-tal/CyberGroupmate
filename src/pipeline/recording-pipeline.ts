@@ -18,6 +18,8 @@ import { EventEmitter } from "node:events";
 import { createLogger } from "../core/logger.js";
 import { callLLM, type LLMConfig, type ChatMessage } from "../core/llm.js";
 import type { MemoryStoreV2 } from "../memory-v2/index.js";
+import { embed } from "../memory-v2/embedding.js";
+import type { EmbeddingConfig } from "../core/config.js";
 import type { TopicRegistry } from "./topic-registry.js";
 import type {
     Message,
@@ -123,6 +125,7 @@ export class RecordingPipeline extends EventEmitter {
         private llmConfig: LLMConfig,
         private personaDescription: string = "赛博群友",
         private memory?: MemoryStoreV2,
+        private embeddingConfig?: EmbeddingConfig,
     ) {
         super();
     }
@@ -299,6 +302,36 @@ export class RecordingPipeline extends EventEmitter {
                             activeHoursDelta: s.hours,
                             lastSeenAt: s.lastTs,
                         });
+                    }
+
+                    // M4.5: 生成 topic embedding
+                    if (this.embeddingConfig) {
+                        try {
+                            const summaries = updatedTopics
+                                .filter(t => {
+                                    const triage = triageResult.topics.find(tr => tr.topicId === t.id);
+                                    return triage?.summary;
+                                })
+                                .map(t => {
+                                    const triage = triageResult.topics.find(tr => tr.topicId === t.id);
+                                    return { id: t.id, text: `${t.label} ${triage?.summary ?? ""}` };
+                                });
+
+                            if (summaries.length > 0) {
+                                const embeddings = await embed(
+                                    summaries.map(s => s.text),
+                                    this.embeddingConfig,
+                                );
+                                for (let i = 0; i < summaries.length; i++) {
+                                    this.memory.upsertTopic(summaries[i].id, {
+                                        embedding: embeddings[i],
+                                    });
+                                }
+                                log.debug("Pipeline Step 4: embedding 生成完成", { count: summaries.length });
+                            }
+                        } catch (err) {
+                            log.warn("Pipeline Step 4: embedding 生成失败", { error: String(err) });
+                        }
                     }
 
                     log.debug("Memory V2 写入完成", {

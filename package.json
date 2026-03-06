@@ -15,6 +15,8 @@
   "dependencies": {
     "@mtcute/node": "latest",
     "better-sqlite3": "^11.0.0",
+    "js-tiktoken": "^1.0.21",
+    "sqlite-vec": "^0.1.7-alpha.2",
     "stream-json": "^1.9.1",
     "ulid": "^2.3.0",
     "yaml": "^2.8.2"

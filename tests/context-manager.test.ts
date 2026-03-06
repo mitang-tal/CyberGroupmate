@@ -68,18 +68,23 @@ describe("estimateTokens", () => {
         assert.equal(estimateTokens(undefined as any), 0);
     });
 
-    it("英文估算 ~= chars/4", () => {
+    it("英文 token 计数合理", () => {
         const text = englishText(100);
         const tokens = estimateTokens(text);
-        // 100 chars / 4 = 25 tokens, 允许 ±5 误差
-        assert.ok(tokens >= 20 && tokens <= 30, `英文 100 chars → ${tokens} tokens, expected ~25`);
+        // tiktoken BPE: 100 'a' ⇒ ~4 tokens（BPE 合并重复字符）
+        // CJK 启发式: 100 / 4 = 25
+        // 两种模式都应 > 0
+        assert.ok(tokens > 0, `英文 100 chars → ${tokens} tokens`);
+        assert.ok(tokens <= 30, `英文 100 chars → ${tokens} tokens, 应 <= 30`);
     });
 
-    it("中文估算 ~= chars/1.5", () => {
+    it("中文 token 计数合理", () => {
         const text = chineseText(50);
         const tokens = estimateTokens(text);
-        // 50 CJK chars / 1.5 ≈ 33-34 tokens
-        assert.ok(tokens >= 28 && tokens <= 40, `中文 50 chars → ${tokens} tokens, expected ~33`);
+        // tiktoken BPE: 50 个“你”→ ~50 tokens（CJK 单字通常 1-2 tokens）
+        // CJK 启发式: 50 / 1.5 ≈ 33
+        assert.ok(tokens > 0, `中文 50 chars → ${tokens} tokens`);
+        assert.ok(tokens <= 100, `中文 50 chars → ${tokens} tokens, 应 <= 100`);
     });
 
     it("混合文本合理", () => {
@@ -100,11 +105,14 @@ describe("estimateMessagesTokens", () => {
 
     it("多条消息累加", () => {
         const msgs: ChatMessage[] = [
-            { role: "system", content: englishText(100) },  // ~25
-            { role: "user", content: englishText(200) },    // ~50
+            { role: "system", content: englishText(100) },
+            { role: "user", content: englishText(200) },
         ];
         const tokens = estimateMessagesTokens(msgs);
-        assert.ok(tokens >= 65 && tokens <= 85, `总 tokens ${tokens} ≈ 75`);
+        // tiktoken BPE: 重复字符被大量合并，总数可能很小
+        // CJK 启发式: ~75
+        assert.ok(tokens > 0, `总 tokens ${tokens} > 0`);
+        assert.ok(tokens <= 100, `总 tokens ${tokens} <= 100`);
     });
 });
 

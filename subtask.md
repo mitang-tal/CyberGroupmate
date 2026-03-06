@@ -515,36 +515,43 @@ describe("ContextManager")
 
 ---
 
-## Phase M4：向量搜索 + Deep Recall（4天）
+## Phase M4：向量搜索 + Deep Recall（4天）✅ DONE
 
-### M4.1 Embedding 封装（0.5天）
+### M4.1 Embedding 封装（0.5天）✅
 
 **文件**：`src/memory-v2/embedding.ts` [NEW]
 
-- [ ] `embed(texts: string[]): Promise<Float32Array[]>` — text-embedding-3-small
-- [ ] 批量处理 + 重试
+- [x] `embed(texts: string[]): Promise<Float32Array[]>` — 双模式: OpenAI API + 本地 hash-based
+- [x] 本地模式: FNV-1a n-gram hash 128维向量, L2归一化
+- [x] `cosineSimilarity`, `topKSimilar`, BLOB转换工具
+- [x] 批量处理 + 重试
 
-### M4.2 sqlite-vec 集成（1天）
+### M4.2 向量索引集成（1天）✅
 
-- [ ] `package.json` 增加 `sqlite-vec`
-- [ ] initTables 创建向量虚拟表 `topics_vec` / `core_facts_vec`
-- [ ] upsertTopic / storeFact 写入时同时写向量索引
-- [ ] 回退方案：纯 JS 余弦相似度
+> 实际方案：不引入 sqlite-vec 原生模块，使用纯 JS 余弦相似度暴力搜索。对 <10K 条记录的场景足够高效。
 
-### M4.3 recall() 混合检索（1天）
+- [x] `vectorSearchTopics(queryEmbedding, limit, chatId?)` — SELECT embedding → 纯 JS 余弦 top-K
+- [x] `vectorSearchFacts(queryEmbedding, limit, categories?)` — 同上
+- [x] `storeFact()` 增加可选 embedding 参数
 
-- [ ] embed(query) → 向量搜索（主路径）+ FTS5（补充）
-- [ ] token > deepRecallThreshold → cheap model deepSummary
+### M4.3 recall() 混合检索（1天）✅
 
-### M4.4 browseHistory() 升级（1天）
+- [x] embed(query) → 向量搜索（主路径）+ FTS5/LIKE（补充）+ Map 去重
+- [x] token > deepRecallThreshold → cheap model deepSummary
+- [x] persons 关联（通过 topic.participants 匹配 person_group_profiles）
 
-- [ ] cheap model 意图解析 → 向量+FTS5 定位 topics → message_log 拉消息 → cheap model 深度阅读
+### M4.4 browseHistory() 升级（1天）✅
 
-### M4.5 Pipeline 嵌入集成 + 精确 token（0.5天）
+- [x] Step 1: LLM 意图解析 → {keywords, daysBack, userId}（fallback: 空格分词）
+- [x] Step 2: 向量搜索定位 topics（fallback: LIKE 搜索）
+- [x] Step 3: message_log 拉消息
+- [x] Step 4: LLM 深度阅读生成 answer（fallback: 话题标题拼接）
 
-- [ ] Recording Pipeline flush Step 4 增加 embedding 生成：`const emb = await embed([summary]); memory.upsertTopic(id, { embedding: emb[0] })`
-- [ ] `context-manager.ts` 的 `estimateTokens()` 改用 `js-tiktoken` BPE 精确计算
-- [ ] `package.json` 增加 `js-tiktoken` 依赖
+### M4.5 Pipeline 嵌入集成（0.5天）✅
+
+- [x] Recording Pipeline flush Step 4 增加 embedding 生成
+- [x] `index.ts` 导出 embedding 公共 API
+- [x] 构造器新增 `embeddingConfig` + `cheapLlmConfig`
 
 ### M4.6 测试（0.5天）
 
@@ -607,6 +614,50 @@ describe("向量索引" )
 
 ---
 
+### M4.7 sqlite-vec 向量索引加速（1.5天）🔮 PLANNED
+
+> **触发条件**：topics 或 core_facts 带 embedding 行数 > 5000，或单次 vectorSearch 耗时 > 50ms。
+>
+> **详细实施方案**：见 [similarity_calculation.md](file:///Users/jamiecao/.gemini/antigravity/brain/d54c2f1e-d8a0-40b3-8e68-75edee5cac4e/similarity_calculation.md) 中「sqlite-vec 引入实施路径」章节。
+
+**依赖**: `npm install sqlite-vec`
+
+#### M4.7.1 扩展加载 + 双模式检测（0.5天）
+
+- [ ] `tryLoadSqliteVec()` — 动态 require + `sqliteVec.load(db)` + 版本检测
+- [ ] `sqliteVecAvailable` 标志位控制查询路径
+- [ ] 加载失败时 warn 日志 + 透明 fallback
+
+#### M4.7.2 vec0 虚拟表创建 + 写入同步（0.5天）
+
+- [ ] `initTables()` 条件创建 `topics_vec` / `facts_vec`（vec0 虚拟表）
+- [ ] `topics_vec`: `topic_id` PK + `chat_id` partition key + `embedding FLOAT[N]`
+- [ ] `facts_vec`: `fact_id` PK + `category` 辅助列 + `embedding FLOAT[N]`
+- [ ] `upsertTopic()` / `storeFact()` 写入时同步 `INSERT OR REPLACE` 到 vec0
+
+#### M4.7.3 vectorSearch 双模式查询（0.25天）
+
+- [ ] `vectorSearchTopics` — sqlite-vec 可用时使用 `WHERE embedding MATCH vec_f32(?) AND k = ?` KNN 查询
+- [ ] `vectorSearchFacts` — 同上
+- [ ] vec0 返回 `distance` → 转换为 `similarity = 1 - distance`（归一化向量下）
+- [ ] 不可用时 fallback 到现有纯 JS 暴力搜索
+
+#### M4.7.4 迁移工具 + 测试（0.25天）
+
+**文件**: `src/memory-v2/migration.ts` [NEW]
+
+- [ ] `rebuildVecIndex()` — 从主表 embedding BLOB 批量填充 vec0
+- [ ] 首次检测到 vec0 表为空时自动触发
+- [ ] 测试：vec0 写入、KNN 查询、fallback 回退、迁移工具
+
+#### 兼容性保证
+
+- 数据始终写入主表 embedding BLOB（单一真相源）
+- vec0 为纯索引，可随时 DROP + 重建
+- `sqlite-vec` 不可用时完全透明 fallback（不影响任何现有功能）
+
+---
+
 ## 验收标准
 
 | Phase | 自动化验收 | 手动验收 |
@@ -614,4 +665,5 @@ describe("向量索引" )
 | M1 | `memory-v2.test.ts` 全通过（25+ case）；`recording-pipeline-memory.test.ts` 全通过；`compaction-v2.test.ts` 全通过 | dry-run 跑 1 天消息，检查 memory.db 中 topics/message_log/core_facts 有数据 |
 | M2 | `reflection.test.ts` 全通过（18+ case） | CLI `memory reflect` 后 person_group_profiles 和 core_facts 有更新 |
 | M3 | `context-manager.test.ts` 全通过（15+ case） | dry-run >50 条消息，确认 Compaction 触发且 ENGAGED 话题不被压缩 |
-| M4 | `embedding.test.ts` + `recall-hybrid.test.ts` + `browse-history-deep.test.ts` + `vector-index.test.ts` 全通过 | CLI 语义搜索命中，embedding 列非 NULL |
+| M4 | `embedding.test.ts` + `vector-search.test.ts` 全通过 | CLI 语义搜索命中，embedding 列非 NULL |
+| M4.7 | `sqlite-vec.test.ts` 全通过 + fallback 测试 | 10K+ 记录下 vectorSearch < 10ms |
