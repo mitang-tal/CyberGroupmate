@@ -365,13 +365,26 @@ export interface IMemoryStoreV2 {
     storeMessageBatch(messages: MessageLogEntry[]): void;
 
     /** 写入核心事实到 core_facts 表 */
-    storeFact(subject: string, content: string, category: FactCategory, source?: string): string;
+    storeFact(subject: string, content: string, category: FactCategory, source?: string, expiresAt?: string): string;
 
     /** upsert 个体身份（全局，跨群） */
     upsertPersonIdentity(userId: string, data: Partial<PersonIdentity>): void;
 
     /** upsert 个体群内画像（每群独立） */
     upsertPersonGroupProfile(userId: string, chatId: string, data: Partial<PersonGroupProfile>): void;
+
+    /**
+     * 程序化增量更新群内画像统计字段（Recording Pipeline 专用）
+     * - messageCount: 增量累加（+= delta）
+     * - activeHours: 逐 slot 累加合并
+     * - lastSeenAt: 取较新值
+     * 如果 profile 不存在则自动创建
+     */
+    incrementProfileStats(userId: string, chatId: string, stats: {
+        messageCountDelta: number;
+        activeHoursDelta: number[];
+        lastSeenAt: string;
+    }): void;
 
     /** upsert 群组画像 */
     upsertGroupModel(chatId: string, data: Partial<GroupModel>): void;

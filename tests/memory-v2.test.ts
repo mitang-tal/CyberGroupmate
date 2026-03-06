@@ -477,7 +477,37 @@ describe("recall", () => {
     });
 });
 
-// ─── 11. browseHistory() ───
+// ─── 11.5 storeFact expires_at (M2.6.5) ───
+
+describe("storeFact expires_at 支持", () => {
+    let mem: MemoryStoreV2;
+
+    before(() => { mem = createTestMemory("fact-expiry"); });
+    after(() => { cleanupTestMemory(mem, "fact-expiry"); });
+
+    it("expiresAt 正确存储", () => {
+        const id = mem.storeFact("u1", "下周去东京", "plan", undefined, "2026-03-15T00:00:00Z");
+        const db = (mem as any).db;
+        const row = db.prepare("SELECT expires_at FROM core_facts WHERE id = ?").get(id) as { expires_at: string };
+        assert.equal(row.expires_at, "2026-03-15T00:00:00Z");
+    });
+
+    it("过期 fact 在 recall 中被过滤", async () => {
+        // 写入一个已过期的 fact
+        mem.storeFact("u1", "昨天的过期计划xyz789", "plan", undefined, "2020-01-01T00:00:00Z");
+        const result = await mem.recall("过期计划xyz789");
+        assert.equal(result.facts.length, 0, "过期 fact 不应被 recall 返回");
+    });
+
+    it("未过期 fact 正常返回", async () => {
+        // 写入一个未过期的 fact
+        mem.storeFact("u1", "明年的远期计划abc123", "plan", undefined, "2099-12-31T00:00:00Z");
+        const result = await mem.recall("远期计划abc123");
+        assert.ok(result.facts.length > 0, "未过期 fact 应被 recall 返回");
+    });
+});
+
+// ─── 12. browseHistory() ───
 
 describe("browseHistory", () => {
     let mem: MemoryStoreV2;
@@ -528,7 +558,82 @@ describe("browseHistory", () => {
 
 // reflect() 测试已移至 tests/reflection.test.ts
 
-// ─── 13. close / 生命周期 ───
+// ─── 13. incrementProfileStats (M2.6.1) ───
+
+describe("incrementProfileStats 增量统计", () => {
+    let mem: MemoryStoreV2;
+
+    before(() => { mem = createTestMemory("incr-stats"); });
+    after(() => { cleanupTestMemory(mem, "incr-stats"); });
+
+    it("首次调用自动创建 profile（INSERT）", () => {
+        mem.incrementProfileStats("u_incr1", "chat_incr", {
+            messageCountDelta: 5,
+            activeHoursDelta: (() => { const h = new Array(24).fill(0); h[14] = 3; h[15] = 2; return h; })(),
+            lastSeenAt: "2026-03-06T10:00:00Z",
+        });
+
+        const profiles = mem.getProfilesForChat("chat_incr");
+        const p = profiles.find(p => p.userId === "u_incr1");
+        assert.ok(p, "profile 应被自动创建");
+        assert.equal(p!.messageCount, 5, "messageCount 应为 5");
+        assert.equal(p!.dunbarTier, 4, "默认 Tier 应为 4");
+        assert.equal(p!.activeHours[14], 3, "14 点应为 3");
+        assert.equal(p!.activeHours[15], 2, "15 点应为 2");
+    });
+
+    it("多次调用累加 messageCount", () => {
+        mem.incrementProfileStats("u_incr1", "chat_incr", {
+            messageCountDelta: 3,
+            activeHoursDelta: new Array(24).fill(0),
+            lastSeenAt: "2026-03-06T11:00:00Z",
+        });
+
+        const p = mem.getProfilesForChat("chat_incr").find(p => p.userId === "u_incr1")!;
+        assert.equal(p.messageCount, 8, "messageCount 应累加为 5 + 3 = 8");
+    });
+
+    it("activeHours 逐 slot 累加合并", () => {
+        // 之前 h[14]=3, h[15]=2
+        mem.incrementProfileStats("u_incr1", "chat_incr", {
+            messageCountDelta: 2,
+            activeHoursDelta: (() => { const h = new Array(24).fill(0); h[14] = 1; h[20] = 2; return h; })(),
+            lastSeenAt: "2026-03-06T20:30:00Z",
+        });
+
+        const p = mem.getProfilesForChat("chat_incr").find(p => p.userId === "u_incr1")!;
+        assert.equal(p.activeHours[14], 4, "14 点应为 3 + 1 = 4");
+        assert.equal(p.activeHours[15], 2, "15 点应保持 2（未增量）");
+        assert.equal(p.activeHours[20], 2, "20 点应为 0 + 2 = 2");
+    });
+
+    it("lastSeenAt 取较新值", () => {
+        // 当前 lastSeenAt = "2026-03-06T20:30:00Z"
+        mem.incrementProfileStats("u_incr1", "chat_incr", {
+            messageCountDelta: 1,
+            activeHoursDelta: new Array(24).fill(0),
+            lastSeenAt: "2026-03-06T08:00:00Z", // 更旧的时间
+        });
+
+        const p = mem.getProfilesForChat("chat_incr").find(p => p.userId === "u_incr1")!;
+        assert.equal(p.lastSeenAt, "2026-03-06T20:30:00Z", "lastSeenAt 应保持较新值");
+    });
+
+    it("不同 userId 独立统计", () => {
+        mem.incrementProfileStats("u_incr2", "chat_incr", {
+            messageCountDelta: 10,
+            activeHoursDelta: new Array(24).fill(0),
+            lastSeenAt: "2026-03-06T12:00:00Z",
+        });
+
+        const p1 = mem.getProfilesForChat("chat_incr").find(p => p.userId === "u_incr1")!;
+        const p2 = mem.getProfilesForChat("chat_incr").find(p => p.userId === "u_incr2")!;
+        assert.equal(p1.messageCount, 11, "u_incr1 应为 5+3+2+1 = 11");
+        assert.equal(p2.messageCount, 10, "u_incr2 应为 10");
+    });
+});
+
+// ─── 14. close / 生命周期 ───
 
 describe("生命周期", () => {
     it("should close gracefully", () => {

@@ -112,6 +112,9 @@ reflection:
   # 冷场触发阈值（秒），群沉默多久后自动触发反思
   silence_threshold: 7200    # 2h
 
+  # 最大反思间隔（秒），即使群一直活跃也至少每此间隔反思一次
+  max_interval: 86400        # 24h
+
   # 冷场检查间隔（秒），多久检测一次是否冷场
   check_interval: 300        # 5min
 
@@ -140,3 +143,9 @@ reflection:
       max_traits: 1
       max_interests: 2
       episode_days: 1
+
+  # 作息时间 [起始小时, 结束小时]（24h 格式），在此范围外触发"睡前反思"
+  # awake_hours: [8, 24]
+
+  # 作息时间的时区（默认使用系统时区）
+  # timezone: "Asia/Shanghai"

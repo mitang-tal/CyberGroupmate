@@ -15,7 +15,7 @@
 
 import { createLogger } from "../core/logger.js";
 import { callLLM, type LLMConfig, type ChatMessage } from "../core/llm.js";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import type {
     TopicNode,
@@ -59,6 +59,11 @@ interface ReflectionLLMOutput {
         summary: string;
         participants: string[];
         sentiment: string;
+    }>;
+    identityUpdates?: Array<{
+        userId: string;
+        displayName?: string;
+        aliases?: string[];
     }>;
     insights: string;
 }
@@ -216,6 +221,19 @@ export async function runReflection(
     const personUpdates: ReflectionResult["personUpdates"] = [];
     const newCoreFacts: string[] = [];
 
+    // 4a′. 更新 person_identities（displayName/aliases 变化）
+    if (llmOutput.identityUpdates?.length) {
+        for (const iu of llmOutput.identityUpdates) {
+            const idData: { displayName?: string; aliases?: string[] } = {};
+            if (iu.displayName) idData.displayName = iu.displayName;
+            if (iu.aliases?.length) idData.aliases = iu.aliases;
+            if (Object.keys(idData).length > 0) {
+                memory.upsertPersonIdentity(iu.userId, idData);
+                log.debug("Reflection 4a′: 更新身份信息", { userId: iu.userId, ...idData });
+            }
+        }
+    }
+
     // 4a. 写入画像增量
     for (const pu of llmOutput.personUpdates) {
         const updateData: Partial<PersonGroupProfile> = {};
@@ -244,6 +262,27 @@ export async function runReflection(
         memory.storeFact(fact.subject, fact.content, fact.category, "reflection");
         newCoreFacts.push(fact.content);
         log.debug("Reflection 4b: 写入事实", { subject: fact.subject, category: fact.category });
+    }
+
+    // 4b′. 回写话题情感到 topics 表
+    if (llmOutput.topicsSummary.length > 0) {
+        const topicByLabel = new Map(topics.map(t => [t.label, t]));
+        for (const ts of llmOutput.topicsSummary) {
+            const topic = topicByLabel.get(ts.label);
+            if (topic && ts.sentiment) {
+                memory.upsertTopic(topic.id, {
+                    chatId,
+                    label: topic.label,
+                    summary: topic.summary,
+                    keywords: topic.keywords,
+                    participants: topic.participants,
+                    messageRange: topic.messageRange,
+                    startedAt: topic.startedAt,
+                    sentiment: ts.sentiment as TopicNode["sentiment"],
+                });
+                log.debug("Reflection 4b′: 回写话题情感", { label: ts.label, sentiment: ts.sentiment });
+            }
+        }
     }
 
     // 4c. 更新群组画像 + lastReflectedAt
@@ -277,6 +316,39 @@ export async function runReflection(
         }
     }
 
+    // 4f. 邦巴分层人数上限检查
+    const DUNBAR_COUNT_LIMITS: Record<number, number> = { 1: 15, 2: 50, 3: 150 };
+    const updatedProfiles = memory.getProfilesForChat(chatId);
+    const tierGroups = new Map<number, typeof updatedProfiles>();
+
+    for (const p of updatedProfiles) {
+        const tier = p.dunbarTier;
+        if (!tierGroups.has(tier)) tierGroups.set(tier, []);
+        tierGroups.get(tier)!.push(p);
+    }
+
+    for (const [tier, limit] of Object.entries(DUNBAR_COUNT_LIMITS)) {
+        const t = Number(tier);
+        const group = tierGroups.get(t);
+        if (!group || group.length <= limit) continue;
+
+        // 按 messageCount 升序排序，最不活跃的排前面
+        group.sort((a, b) => a.messageCount - b.messageCount);
+        const excess = group.length - limit;
+        const demoted = group.slice(0, excess);
+
+        for (const p of demoted) {
+            const newTier = Math.min(t + 1, 4) as 1 | 2 | 3 | 4;
+            memory.upsertPersonGroupProfile(p.userId, chatId, {
+                dunbarTier: newTier,
+                dunbarReason: `Tier ${t} 超出上限 ${limit}，按活跃度降级`,
+            });
+            log.debug("Reflection 4f: 邦巴降级", {
+                userId: p.userId, from: t, to: newTier, messageCount: p.messageCount,
+            });
+        }
+    }
+
     // ── Step 5: 返回结果 ──
     const result: ReflectionResult = {
         reflectedPeriod: { from: since, to: startTime },
@@ -296,6 +368,36 @@ export async function runReflection(
         newFacts: newCoreFacts.length,
         mergedEpisodes: totalMerged,
     });
+
+    // ── Step 6: 追加反思记录到 agent-state ──
+    try {
+        const AGENT_STATE_PATH = join(process.cwd(), "data", "agent-state.md");
+
+        const reflectionEntry = [
+            `\n## Reflection ${startTime}`,
+            `\n**群组**: ${chatId}`,
+            `**周期**: ${since} → ${startTime}`,
+            `**话题**: ${topics.length} | **画像更新**: ${personUpdates.length} | **新事实**: ${newCoreFacts.length} | **合并**: ${totalMerged}`,
+            llmOutput.insights ? `\n**洞察**: ${llmOutput.insights}` : "",
+            "",
+        ].join("\n");
+
+        let currentState = "";
+        if (existsSync(AGENT_STATE_PATH)) {
+            currentState = readFileSync(AGENT_STATE_PATH, "utf-8");
+        }
+
+        const newState = currentState + reflectionEntry;
+        const maxChars = 3500;
+        const finalState = newState.length > maxChars
+            ? "# Agent State\n\n...[早期记录已省略]\n\n" + newState.slice(newState.length - maxChars)
+            : newState.startsWith("# Agent State") ? newState : "# Agent State\n" + newState;
+
+        writeFileSync(AGENT_STATE_PATH, finalState, "utf-8");
+        log.debug("Reflection Step 6: agent-state 已更新");
+    } catch (err) {
+        log.warn("Reflection Step 6: agent-state 写入失败", { error: String(err) });
+    }
 
     return result;
 }
@@ -525,6 +627,7 @@ export function parseReflectionJSON(raw: string): ReflectionLLMOutput | null {
             groupUpdates: parsed.groupUpdates ?? {},
             newFacts: Array.isArray(parsed.newFacts) ? parsed.newFacts : [],
             topicsSummary: Array.isArray(parsed.topicsSummary) ? parsed.topicsSummary : [],
+            identityUpdates: Array.isArray(parsed.identityUpdates) ? parsed.identityUpdates : undefined,
             insights: typeof parsed.insights === "string" ? parsed.insights : "",
         };
     } catch (err) {
@@ -542,6 +645,7 @@ export function parseReflectionJSON(raw: string): ReflectionLLMOutput | null {
                     groupUpdates: parsed.groupUpdates ?? {},
                     newFacts: Array.isArray(parsed.newFacts) ? parsed.newFacts : [],
                     topicsSummary: Array.isArray(parsed.topicsSummary) ? parsed.topicsSummary : [],
+                    identityUpdates: Array.isArray(parsed.identityUpdates) ? parsed.identityUpdates : undefined,
                     insights: typeof parsed.insights === "string" ? parsed.insights : "",
                 };
             } catch {

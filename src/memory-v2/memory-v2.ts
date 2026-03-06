@@ -362,13 +362,14 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         log.debug("storeMessageBatch", { count: messages.length });
     }
 
-    storeFact(subject: string, content: string, category: FactCategory, source?: string): string {
+    /** 写入核心事实到 core_facts 表 */
+    storeFact(subject: string, content: string, category: FactCategory, source?: string, expiresAt?: string): string {
         const id = randomUUID();
         const ts = now();
         this.db.prepare(`
-            INSERT INTO core_facts (id, subject, content, category, confidence, source, created_at, updated_at)
-            VALUES (?, ?, ?, ?, 1.0, ?, ?, ?)
-        `).run(id, subject, content, category, source ?? null, ts, ts);
+            INSERT INTO core_facts (id, subject, content, category, confidence, source, created_at, updated_at, expires_at)
+            VALUES (?, ?, ?, ?, 1.0, ?, ?, ?, ?)
+        `).run(id, subject, content, category, source ?? null, ts, ts, expiresAt ?? null);
 
         // 同步 FTS5
         try {
@@ -452,6 +453,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             this.db.prepare(
                 `UPDATE person_group_profiles SET ${sets.join(", ")} WHERE user_id = ? AND chat_id = ?`
             ).run(...values);
+            log.debug("upsertPersonGroupProfile: UPDATE", { userId, chatId, fields: sets.length - 1 });
         } else {
             this.db.prepare(`
                 INSERT INTO person_group_profiles (
@@ -476,6 +478,61 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
                 ts,
             );
             log.debug("upsertPersonGroupProfile: INSERT", { userId, chatId, tier: data.dunbarTier ?? 4 });
+        }
+    }
+
+    incrementProfileStats(userId: string, chatId: string, stats: {
+        messageCountDelta: number;
+        activeHoursDelta: number[];
+        lastSeenAt: string;
+    }): void {
+        const ts = now();
+        const existing = this.db.prepare(
+            "SELECT active_hours FROM person_group_profiles WHERE user_id = ? AND chat_id = ?"
+        ).get(userId, chatId) as { active_hours: string } | undefined;
+
+        if (existing) {
+            // 读现有 activeHours → 逐 slot 累加
+            const current = fromJSON<number[]>(existing.active_hours, new Array(24).fill(0));
+            for (let h = 0; h < 24; h++) {
+                current[h] = (current[h] || 0) + (stats.activeHoursDelta[h] || 0);
+            }
+            this.db.prepare(`
+                UPDATE person_group_profiles
+                SET message_count = message_count + ?,
+                    active_hours = ?,
+                    last_seen_at = CASE WHEN last_seen_at < ? THEN ? ELSE last_seen_at END,
+                    updated_at = ?
+                WHERE user_id = ? AND chat_id = ?
+            `).run(
+                stats.messageCountDelta,
+                toJSON(current),
+                stats.lastSeenAt, stats.lastSeenAt,
+                ts,
+                userId, chatId,
+            );
+            log.debug("incrementProfileStats: UPDATE", { userId, chatId, delta: stats.messageCountDelta });
+        } else {
+            // 首次创建 profile（仅统计字段）
+            const hours = new Array(24).fill(0);
+            for (let h = 0; h < 24; h++) {
+                hours[h] = stats.activeHoursDelta[h] || 0;
+            }
+            this.db.prepare(`
+                INSERT INTO person_group_profiles (
+                    user_id, chat_id, dunbar_tier, dunbar_reason, traits, interests,
+                    communication_style, relation_to_agent, recent_episodes, merged_memory,
+                    message_count, last_seen_at, active_hours, first_seen_at, updated_at
+                ) VALUES (?, ?, 4, '', '[]', '[]', '', '', '[]', '[]', ?, ?, ?, ?, ?)
+            `).run(
+                userId, chatId,
+                stats.messageCountDelta,
+                stats.lastSeenAt,
+                toJSON(hours),
+                stats.lastSeenAt,
+                ts,
+            );
+            log.debug("incrementProfileStats: INSERT", { userId, chatId, count: stats.messageCountDelta });
         }
     }
 
@@ -652,6 +709,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
                 SELECT cf.* FROM core_facts cf
                 INNER JOIN core_facts_fts fts ON cf.rowid = fts.rowid
                 WHERE core_facts_fts MATCH ?
+                AND (cf.expires_at IS NULL OR cf.expires_at > datetime('now'))
             `;
             const params: unknown[] = [query];
 
@@ -681,7 +739,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         if (facts.length === 0) {
             try {
                 const likePattern = `%${query}%`;
-                let likeQuery = "SELECT * FROM core_facts WHERE (content LIKE ? OR subject LIKE ?)";
+                let likeQuery = "SELECT * FROM core_facts WHERE (content LIKE ? OR subject LIKE ?) AND (expires_at IS NULL OR expires_at > datetime('now'))";
                 const params: unknown[] = [likePattern, likePattern];
 
                 if (options?.categories?.length) {

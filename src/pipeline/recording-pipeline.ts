@@ -266,8 +266,10 @@ export class RecordingPipeline extends EventEmitter {
                         timestamp: new Date(m.timestamp).toISOString(),
                     })));
 
-                    // 更新参与者身份信息
+                    // 更新参与者身份信息 + 群内画像统计
                     const seenUsers = new Set<number>();
+                    const userStats = new Map<number, { count: number; hours: number[]; lastTs: string }>();
+
                     for (const m of chatMessages) {
                         if (!seenUsers.has(m.senderId)) {
                             seenUsers.add(m.senderId);
@@ -276,6 +278,27 @@ export class RecordingPipeline extends EventEmitter {
                                 lastSeenAt: new Date(m.timestamp).toISOString(),
                             });
                         }
+
+                        // 累计每用户的消息统计
+                        let s = userStats.get(m.senderId);
+                        if (!s) {
+                            s = { count: 0, hours: new Array(24).fill(0), lastTs: "" };
+                            userStats.set(m.senderId, s);
+                        }
+                        s.count++;
+                        const hour = new Date(m.timestamp).getHours();
+                        s.hours[hour]++;
+                        const ts = new Date(m.timestamp).toISOString();
+                        if (ts > s.lastTs) s.lastTs = ts;
+                    }
+
+                    // 批量更新群内画像统计（messageCount/activeHours/lastSeenAt）
+                    for (const [uid, s] of userStats) {
+                        this.memory.incrementProfileStats(String(uid), String(chatId), {
+                            messageCountDelta: s.count,
+                            activeHoursDelta: s.hours,
+                            lastSeenAt: s.lastTs,
+                        });
                     }
 
                     log.debug("Memory V2 写入完成", {

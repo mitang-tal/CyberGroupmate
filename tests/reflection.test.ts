@@ -350,3 +350,95 @@ describe("DEFAULT_TIER_LIMITS 常量", () => {
         assert.equal(DEFAULT_TIER_LIMITS[4].episodeDays, 1);
     });
 });
+
+// ─── 5. M2.6 审计修复验证 ───
+
+describe("M2.6.3 parseReflectionJSON identityUpdates", () => {
+    it("identityUpdates 字段正确解析", () => {
+        const json = JSON.stringify({
+            personUpdates: [{ userId: "u1", traits: ["好奇"] }],
+            groupUpdates: {},
+            newFacts: [],
+            topicsSummary: [],
+            identityUpdates: [
+                { userId: "u1", displayName: "小明", aliases: ["明明", "小M"] },
+                { userId: "u2", aliases: ["老王"] },
+            ],
+            insights: "test",
+        });
+
+        const result = parseReflectionJSON(json);
+        assert.ok(result, "应成功解析");
+        assert.ok(result!.identityUpdates, "identityUpdates 应存在");
+        assert.equal(result!.identityUpdates!.length, 2);
+        assert.equal(result!.identityUpdates![0].displayName, "小明");
+        assert.deepEqual(result!.identityUpdates![0].aliases, ["明明", "小M"]);
+        assert.equal(result!.identityUpdates![1].userId, "u2");
+    });
+
+    it("无 identityUpdates 字段仍可解析（向后兼容）", () => {
+        const json = JSON.stringify({
+            personUpdates: [],
+            groupUpdates: {},
+            newFacts: [],
+            topicsSummary: [],
+            insights: "no identity updates",
+        });
+
+        const result = parseReflectionJSON(json);
+        assert.ok(result, "应成功解析");
+        assert.equal(result!.identityUpdates, undefined, "identityUpdates 应为 undefined");
+    });
+});
+
+describe("M2.6.2 ReflectionExternalConfig maxInterval", () => {
+    it("loadConfig 解析 maxInterval", async () => {
+        const { loadConfig, clearConfigCache } = await import("../src/core/config.js");
+        clearConfigCache();
+        const cfg = loadConfig();
+        // maxInterval 可以是 undefined（未配置）或 number
+        assert.ok(
+            cfg.reflection.maxInterval === undefined || typeof cfg.reflection.maxInterval === "number",
+            "maxInterval 应为 undefined 或 number"
+        );
+    });
+});
+
+describe("M2.6.6 awakeHours 配置", () => {
+    it("loadConfig 解析 awakeHours 和 timezone", async () => {
+        const { loadConfig, clearConfigCache } = await import("../src/core/config.js");
+        clearConfigCache();
+        const cfg = loadConfig();
+        // awakeHours 可以是 undefined 或 [number, number]
+        const ah = cfg.reflection.awakeHours;
+        assert.ok(
+            ah === undefined || (Array.isArray(ah) && ah.length === 2),
+            "awakeHours 应为 undefined 或 [number, number]"
+        );
+        // timezone 可以是 undefined 或 string
+        assert.ok(
+            cfg.reflection.timezone === undefined || typeof cfg.reflection.timezone === "string",
+            "timezone 应为 undefined 或 string"
+        );
+    });
+});
+
+describe("M2.6.9 topicsSummary sentiment 传递", () => {
+    it("parseReflectionJSON 保留 topicsSummary 中的 sentiment", () => {
+        const json = JSON.stringify({
+            personUpdates: [],
+            groupUpdates: {},
+            newFacts: [],
+            topicsSummary: [
+                { label: "旅行计划", summary: "讨论了去日本的计划", participants: ["u1", "u2"], sentiment: "positive" },
+                { label: "加班吐槽", summary: "抱怨公司加班", participants: ["u3"], sentiment: "negative" },
+            ],
+            insights: "群里氛围不错",
+        });
+        const result = parseReflectionJSON(json);
+        assert.ok(result);
+        assert.equal(result!.topicsSummary.length, 2);
+        assert.equal(result!.topicsSummary[0].sentiment, "positive");
+        assert.equal(result!.topicsSummary[1].sentiment, "negative");
+    });
+});

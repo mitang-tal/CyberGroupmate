@@ -298,22 +298,63 @@ async function mainEventLoop(
         setInterval(() => topicRegistry.cleanup(), 60_000);
     }
 
-    // ─── Phase M2.4: Reflection 冷场触发 ───
+    // ─── Phase M2.4: Reflection 冷场触发 + 最大间隔触发 + 作息触发 ───
     const reflectionCfg = appConfig.reflection ?? {};
     const silenceThreshold = reflectionCfg.silenceThreshold ?? 7200; // 默认 2h
+    const maxInterval = reflectionCfg.maxInterval ?? 86400; // 默认 24h
+    const awakeHours = reflectionCfg.awakeHours; // e.g. [8, 24]
+    const agentTimezone = reflectionCfg.timezone; // e.g. "Asia/Shanghai"
     const checkInterval = (reflectionCfg.checkInterval ?? 300) * 1000; // 默认 5min → ms
     const lastActivityPerChat = new Map<string, number>();
+    const lastReflectedAtMap = new Map<string, number>();
     const reflectionInProgress = new Set<string>();
+
+    /** 判断当前时间是否在 awake_hours 之外（即"睡眠时间"） */
+    function isOutsideAwakeHours(): boolean {
+        if (!awakeHours) return false;
+        const [start, end] = awakeHours;
+        let currentHour: number;
+        if (agentTimezone) {
+            try {
+                const formatter = new Intl.DateTimeFormat("en-US", { hour: "numeric", hour12: false, timeZone: agentTimezone });
+                currentHour = parseInt(formatter.format(new Date()), 10);
+            } catch {
+                currentHour = new Date().getHours();
+            }
+        } else {
+            currentHour = new Date().getHours();
+        }
+        // e.g. awakeHours = [8, 24] → 在 0-7 时段外
+        if (start <= end) {
+            return currentHour < start || currentHour >= end;
+        }
+        // 跨午夜 e.g. [22, 6] → 在 6-21 时段外
+        return currentHour >= end && currentHour < start;
+    }
 
     setInterval(async () => {
         const now = Date.now();
         for (const [chatId, lastActive] of lastActivityPerChat) {
+            if (reflectionInProgress.has(chatId)) continue;
+
             const silentSec = (now - lastActive) / 1000;
-            if (silentSec >= silenceThreshold && !reflectionInProgress.has(chatId)) {
+            const lastReflected = lastReflectedAtMap.get(chatId) ?? 0;
+            const sinceReflectionSec = lastReflected > 0 ? (now - lastReflected) / 1000 : Infinity;
+
+            const silenceTriggered = silentSec >= silenceThreshold;
+            const maxIntervalTriggered = sinceReflectionSec >= maxInterval;
+            const scheduleTriggered = isOutsideAwakeHours() && sinceReflectionSec > 3600; // 睡眠时段 + 距上次反思 > 1h
+
+            if (silenceTriggered || maxIntervalTriggered || scheduleTriggered) {
                 reflectionInProgress.add(chatId);
-                log.info("冷场触发 Reflection", { chatId, silentSec: Math.floor(silentSec) });
+                const reason = silenceTriggered ? "冷场触发" : maxIntervalTriggered ? "最大间隔触发" : "作息触发";
+                log.info(`${reason} Reflection`, {
+                    chatId,
+                    ...(silenceTriggered ? { silentSec: Math.floor(silentSec) } : { sinceReflection: Math.floor(sinceReflectionSec) }),
+                });
                 try {
                     const result = await memory.reflect(chatId, llmConfig, reflectionCfg);
+                    lastReflectedAtMap.set(chatId, Date.now());
                     log.info("Reflection 完成", {
                         chatId,
                         period: `${result.reflectedPeriod.from} → ${result.reflectedPeriod.to}`,
@@ -325,7 +366,9 @@ async function mainEventLoop(
                     log.error("Reflection 失败", { chatId, error: String(err) });
                 } finally {
                     reflectionInProgress.delete(chatId);
-                    lastActivityPerChat.delete(chatId); // 重置计时
+                    if (silenceTriggered) {
+                        lastActivityPerChat.delete(chatId); // 冷场触发后重置计时
+                    }
                 }
             }
         }

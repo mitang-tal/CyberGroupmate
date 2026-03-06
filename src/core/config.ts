@@ -58,6 +58,8 @@ export interface ReflectionExternalConfig {
     model?: string;
     /** Silence threshold in seconds before triggering reflection (default: 7200 = 2h) */
     silenceThreshold?: number;
+    /** Max interval in seconds between reflections, even if group is active (default: 86400 = 24h) */
+    maxInterval?: number;
     /** Check interval in seconds for silence detection (default: 300 = 5min) */
     checkInterval?: number;
     /** Merge thresholds in days */
@@ -73,6 +75,10 @@ export interface ReflectionExternalConfig {
         maxInterests?: number;
         episodeDays?: number;
     }>;
+    /** Agent awake hours [start, end] in 24h format, e.g. [8, 24] */
+    awakeHours?: [number, number];
+    /** Timezone for awake hours, e.g. 'Asia/Shanghai' (default: system timezone) */
+    timezone?: string;
 }
 
 export interface AppConfig {
@@ -198,6 +204,7 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
             maxTokens: fileReflection.max_tokens != null ? num(fileReflection.max_tokens, 16384) : undefined,
             model: str(fileReflection.model),
             silenceThreshold: fileReflection.silence_threshold != null ? num(fileReflection.silence_threshold, 7200) : undefined,
+            maxInterval: fileReflection.max_interval != null ? num(fileReflection.max_interval, 86400) : undefined,
             checkInterval: fileReflection.check_interval != null ? num(fileReflection.check_interval, 300) : undefined,
             mergeThresholds: Object.keys(fileMerge).length > 0 ? {
                 episodeToWeek: fileMerge.episode_to_week != null ? num(fileMerge.episode_to_week, 7) : undefined,
@@ -206,6 +213,9 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
                 quarterToYear: fileMerge.quarter_to_year != null ? num(fileMerge.quarter_to_year, 365) : undefined,
             } : undefined,
             tierLimits: Object.keys(parsedTierLimits).length > 0 ? parsedTierLimits : undefined,
+            awakeHours: Array.isArray(fileReflection.awake_hours) && (fileReflection.awake_hours as number[]).length === 2
+                ? fileReflection.awake_hours as [number, number] : undefined,
+            timezone: str(fileReflection.timezone),
         },
     };
 

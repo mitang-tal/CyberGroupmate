@@ -343,6 +343,90 @@ describe("Reflection Skill")
 - [ ] 执行后 `person_group_profiles` 表有更新（traits/interests 变化）
 - [ ] 执行后 `core_facts` 表新增了事实行
 
+### M2.6 审计修复（Debug Phase）
+
+> 基于 memory.md v3.0 与 M1+M2 实现的全面对比审计。修复前三组为高优先级阻塞项，必须在 M3 之前完成。
+
+#### 🔴 高优先级
+
+**M2.6.1 Recording Pipeline 补充 PersonGroupProfile 程序化字段更新** ✅
+
+> memory.md §3.1 L446-455：每次收到消息时程序化更新 `messageCount++`、`activeHours[hour]++`、`lastSeenAt`
+
+**文件**：`src/pipeline/recording-pipeline.ts`
+
+- [x] flush Step 4 中按 `(senderId, chatId)` 分组消息
+- [x] 调用 `memory.incrementProfileStats(uid, chatId, { messageCountDelta, activeHoursDelta, lastSeenAt })`
+
+**文件**：`src/memory-v2/memory-v2.ts` + `types.ts`
+
+- [x] 新增 `incrementProfileStats()` 方法（原子增量 `message_count += N`）
+- [x] `activeHours` 逐 slot 累加合并（读-合并-写）
+- [x] `lastSeenAt` 取较新值语义（SQL `CASE WHEN`）
+
+**M2.6.2 max_interval 强制反思触发** ✅
+
+> memory.md §3.3 L588：`max_interval: 86400`，即使群一直活跃也至少每 24h 反思一次
+
+**文件**：`src/main.ts`
+
+- [x] 增加 `lastReflectedAtMap` 追踪（per-chat）
+- [x] 触发条件改为 `silenceTriggered || maxIntervalTriggered`
+- [x] 冷场触发后重置计时，最大间隔触发后不重置
+
+**文件**：`src/core/config.ts` + `config.example.yaml`
+
+- [x] `ReflectionExternalConfig` 增加 `maxInterval?: number`（默认 86400）
+- [x] `config.example.yaml` 增加 `max_interval: 86400`
+
+**M2.6.3 Reflection 更新 person_identities** ✅
+
+> memory.md §3.3 L673：Reflection Step 6 写入 `person_identities: 更新 aliases / displayName（如有变化）`
+
+**文件**：`src/memory-v2/reflection.ts`
+
+- [x] `ReflectionLLMOutput` 增加 `identityUpdates?: Array<{ userId, displayName?, aliases? }>`
+- [x] Step 4 新增 4a′ 步骤：写入 `memory.upsertPersonIdentity()` 更新 aliases/displayName
+- [x] `parseReflectionJSON` 保留 `identityUpdates` 字段（两条解析路径均已更新）
+
+#### 🟡 中优先级
+
+**M2.6.4 Dunbar 分层人数上限检查** ✅
+
+> memory.md §3.1 L412-416：Tier 1 ≤15, Tier 2 ≤50, Tier 3 ≤150
+
+- [x] `runReflection` Step 4f：统计各 Tier 人数，超出按 `messageCount` 升序降级最不活跃的用户
+
+**M2.6.5 core_facts.expires_at 支持** ✅
+
+> memory.md §3.4 L796：`plan` 类 fact 带 `expires_at`，过期后应过滤
+
+- [x] `storeFact()` 增加可选 `expiresAt` 参数（types.ts + memory-v2.ts）
+- [x] `recall()` FTS5 和 LIKE 双路径过滤 `expires_at IS NULL OR expires_at > datetime('now')`
+
+**M2.6.6 awake_hours 作息触发** ✅
+
+> memory.md §3.3 L574
+
+- [x] `ReflectionExternalConfig` 增加 `awakeHours?: [number, number]` + `timezone?: string`
+- [x] `main.ts` 增加 `isOutsideAwakeHours()` 函数（支持 `Intl.DateTimeFormat` 时区）
+- [x] 作息触发条件：`isOutsideAwakeHours() && sinceReflectionSec > 3600`
+- [x] `config.example.yaml` 增加 `awake_hours` + `timezone` 配置项
+
+#### 🔵 低优先级（可延后处理）
+
+**M2.6.7 Reflection agent-state 写入** ✅
+
+- [x] Reflection Step 6：追加结构化反思摘要到 `agent-state.md`（周期/统计/洞察，3500 字符截断）
+
+**M2.6.8 upsertPersonGroupProfile UPDATE 日志** ✅
+
+- [x] UPDATE 路径增加 `log.debug`
+
+**M2.6.9 Compaction 回写 topics.sentiment** ✅
+
+- [x] Reflection Step 4b′：匹配 `topicsSummary` 与当期 topics，将 LLM 分析的 sentiment 回写到 topics 表
+
 ---
 
 ## Phase M3：智能 Context Compaction（3天）
