@@ -82,17 +82,36 @@ export interface TierLimitEntry {
 /** 4 个 Tier 的完整配置 */
 export type TierLimitsConfig = Record<1 | 2 | 3 | 4, TierLimitEntry>;
 
-/** Reflection 独立配置（覆盖 cheap model 调用参数） */
-export interface ReflectionConfig {
-    /** LLM 温度，用于控制生成的随机性（默认 0.3） */
-    temperature?: number;
-    /** 最大输出 token 数（默认 16384）。Reflection 输入可能非常大（活跃群一天可产生数万 token 的话题和交互数据），
-     *  输出需要覆盖多人画像增量 + 事实 + 话题摘要。cheap model 通常支持长上下文输入（128K+），此参数仅控制输出上限。 */
-    maxTokens?: number;
-    /** 覆盖 LLMConfig 中的 model，用于指定 cheap model（默认使用 llmConfig.model） */
-    model?: string;
-    /** 邦巴分层精度限制（覆盖默认值） */
-    tierLimits?: Partial<TierLimitsConfig>;
+/** Reflection 独立配置（从 config.yaml 的 reflection 节加载，或代码层传入） */
+export type { ReflectionExternalConfig as ReflectionConfig } from "../core/config.js";
+import type { ReflectionExternalConfig } from "../core/config.js";
+
+/** 解析合并阈值，合并外部配置和默认值 */
+function resolveMergeThresholds(config?: ReflectionExternalConfig) {
+    const mt = config?.mergeThresholds;
+    return {
+        episodeToWeek: mt?.episodeToWeek ?? 7,
+        weekToMonth: mt?.weekToMonth ?? 30,
+        monthToQuarter: mt?.monthToQuarter ?? 90,
+        quarterToYear: mt?.quarterToYear ?? 365,
+    };
+}
+
+/** 解析 tierLimits，合并外部配置和默认值 */
+function resolveTierLimits(config?: ReflectionExternalConfig): Partial<TierLimitsConfig> | undefined {
+    if (!config?.tierLimits) return undefined;
+    const result: Partial<TierLimitsConfig> = {};
+    for (const [tier, limits] of Object.entries(config.tierLimits)) {
+        const t = Number(tier) as 1 | 2 | 3 | 4;
+        if (t >= 1 && t <= 4 && limits) {
+            result[t] = {
+                maxTraits: limits.maxTraits ?? DEFAULT_TIER_LIMITS[t].maxTraits,
+                maxInterests: limits.maxInterests ?? DEFAULT_TIER_LIMITS[t].maxInterests,
+                episodeDays: limits.episodeDays ?? DEFAULT_TIER_LIMITS[t].episodeDays,
+            };
+        }
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
 }
 
 // ─── 核心函数 ───
@@ -110,7 +129,7 @@ export async function runReflection(
     chatId: string,
     memory: MemoryStoreV2,
     llmConfig: LLMConfig,
-    reflectionConfig?: ReflectionConfig,
+    reflectionConfig?: ReflectionExternalConfig,
 ): Promise<ReflectionResult> {
     const startTime = new Date().toISOString();
     log.info("Reflection 开始", { chatId });
@@ -615,8 +634,8 @@ export function trimProfileByTier(
 
 // ─── 情感记忆合并 (M2.2) ───
 
-/** 合并阈值（天） */
-const MERGE_THRESHOLDS = {
+/** 默认合并阈值（天）—— 可通过 config.yaml reflection.merge_thresholds 覆盖 */
+const DEFAULT_MERGE_THRESHOLDS = {
     episodeToWeek: 7,
     weekToMonth: 30,
     monthToQuarter: 90,
@@ -641,7 +660,7 @@ export async function mergeEpisodes(
     chatId: string,
     memory: MemoryStoreV2,
     llmConfig?: LLMConfig,
-    reflectionConfig?: ReflectionConfig,
+    reflectionConfig?: ReflectionExternalConfig,
 ): Promise<number> {
     const profiles = memory.getProfilesForChat(chatId);
     const profile = profiles.find(p => p.userId === userId);
@@ -650,9 +669,10 @@ export async function mergeEpisodes(
     const now = Date.now();
     const recentEpisodes = profile.recentEpisodes ?? [];
     const existingMerged = profile.mergedMemory ?? [];
+    const thresholds = resolveMergeThresholds(reflectionConfig);
 
     // ── Step 1: 分割 recentEpisodes → 保留近7天 + 待合并 ──
-    const cutoff = now - MERGE_THRESHOLDS.episodeToWeek * 86400_000;
+    const cutoff = now - thresholds.episodeToWeek * 86400_000;
     const kept: InteractionEpisode[] = [];
     const toMerge: InteractionEpisode[] = [];
 
@@ -705,15 +725,15 @@ export async function mergeEpisodes(
     }
 
     // ── Step 3: 合并 week → month (>30天的 week) ──
-    const monthCutoff = now - MERGE_THRESHOLDS.weekToMonth * 86400_000;
+    const monthCutoff = now - thresholds.weekToMonth * 86400_000;
     await cascadeMerge(newMergedList, "week", "month", monthCutoff, llmConfig, reflectionConfig);
 
     // ── Step 4: 合并 month → quarter (>90天的 month) ──
-    const quarterCutoff = now - MERGE_THRESHOLDS.monthToQuarter * 86400_000;
+    const quarterCutoff = now - thresholds.monthToQuarter * 86400_000;
     await cascadeMerge(newMergedList, "month", "quarter", quarterCutoff, llmConfig, reflectionConfig);
 
     // ── Step 5: 合并 quarter → year (>365天的 quarter) ──
-    const yearCutoff = now - MERGE_THRESHOLDS.quarterToYear * 86400_000;
+    const yearCutoff = now - thresholds.quarterToYear * 86400_000;
     await cascadeMerge(newMergedList, "quarter", "year", yearCutoff, llmConfig, reflectionConfig);
 
     // ── Step 6: 写回 ──
@@ -775,7 +795,7 @@ async function analyzeMergeWithLLM(
     userId: string,
     items: MergeItem[],
     llmConfig: LLMConfig,
-    reflectionConfig?: ReflectionConfig,
+    reflectionConfig?: ReflectionExternalConfig,
 ): Promise<MergeAnalysisResult | null> {
     if (items.length === 0) return null;
 
@@ -823,7 +843,7 @@ async function analyzeMergeWithLLM(
 async function analyzeCascadeMergeWithLLM(
     items: MergedMemory[],
     llmConfig: LLMConfig,
-    reflectionConfig?: ReflectionConfig,
+    reflectionConfig?: ReflectionExternalConfig,
 ): Promise<MergeAnalysisResult | null> {
     if (items.length === 0) return null;
 
@@ -876,7 +896,7 @@ async function cascadeMerge(
     targetGranularity: MergedMemory["granularity"],
     cutoffTime: number,
     llmConfig?: LLMConfig,
-    reflectionConfig?: ReflectionConfig,
+    reflectionConfig?: ReflectionExternalConfig,
 ): Promise<void> {
     const toUpgrade: MergedMemory[] = [];
     const remaining: number[] = []; // indices to keep

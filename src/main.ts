@@ -299,7 +299,9 @@ async function mainEventLoop(
     }
 
     // ─── Phase M2.4: Reflection 冷场触发 ───
-    const silenceThreshold = (appConfig as any).agent?.reflection?.silence_threshold ?? 7200; // 默认 2h
+    const reflectionCfg = appConfig.reflection ?? {};
+    const silenceThreshold = reflectionCfg.silenceThreshold ?? 7200; // 默认 2h
+    const checkInterval = (reflectionCfg.checkInterval ?? 300) * 1000; // 默认 5min → ms
     const lastActivityPerChat = new Map<string, number>();
     const reflectionInProgress = new Set<string>();
 
@@ -311,7 +313,7 @@ async function mainEventLoop(
                 reflectionInProgress.add(chatId);
                 log.info("冷场触发 Reflection", { chatId, silentSec: Math.floor(silentSec) });
                 try {
-                    const result = await memory.reflect(chatId, llmConfig);
+                    const result = await memory.reflect(chatId, llmConfig, reflectionCfg);
                     log.info("Reflection 完成", {
                         chatId,
                         period: `${result.reflectedPeriod.from} → ${result.reflectedPeriod.to}`,
@@ -327,7 +329,7 @@ async function mainEventLoop(
                 }
             }
         }
-    }, 300_000); // 每 5 分钟检查一次
+    }, checkInterval);
 
     // ─── 维护唯一的长生命周期 session ───
     const messages: ChatMessage[] = [];

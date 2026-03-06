@@ -96,3 +96,47 @@ telegram:
   api_hash: ""
   # 手机号 (userbot 模式下使用，也可通过 TG_PHONE 环境变量设置)
   phone: ""
+
+# ─── Reflection 设置 ───
+# 控制反思引擎的行为参数
+reflection:
+  # LLM 生成温度（较低保证稳定性）
+  temperature: 0.3
+
+  # 最大输出 token 数（活跃群可能需要更大）
+  max_tokens: 16384
+
+  # 覆盖模型名称（默认使用 cheap tier 模型）
+  # model: gemini-3-flash-preview
+
+  # 冷场触发阈值（秒），群沉默多久后自动触发反思
+  silence_threshold: 7200    # 2h
+
+  # 冷场检查间隔（秒），多久检测一次是否冷场
+  check_interval: 300        # 5min
+
+  # 渐进合并阈值（天）
+  merge_thresholds:
+    episode_to_week: 7       # >7天的 episode → week
+    week_to_month: 30        # >30天的 week → month
+    month_to_quarter: 90     # >90天的 month → quarter
+    quarter_to_year: 365     # >365天的 quarter → year
+
+  # 邦巴分层精度限制（按 Tier）
+  tier_limits:
+    1:                        # Tier 1 (5人): 亲密圈
+      max_traits: 10
+      max_interests: 15
+      episode_days: 14
+    2:                        # Tier 2 (15人): 好友圈
+      max_traits: 6
+      max_interests: 10
+      episode_days: 7
+    3:                        # Tier 3 (50人): 社交圈
+      max_traits: 3
+      max_interests: 5
+      episode_days: 3
+    4:                        # Tier 4 (150人): 认识
+      max_traits: 1
+      max_interests: 2
+      episode_days: 1

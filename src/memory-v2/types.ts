@@ -10,7 +10,7 @@
  * - 场景类型定义 scenes/memory.d.ts 的实际对应类型
  */
 
-import type { LLMConfig } from "../core/config.js";
+import type { LLMConfig, ReflectionExternalConfig } from "../core/config.js";
 
 // ─── 事实分类 ───
 
@@ -410,7 +410,7 @@ export interface IMemoryStoreV2 {
      * 对指定群组进行反思总结
      * 调用 runReflection() 执行 5 步流程
      */
-    reflect(chatId: string, llmConfig: LLMConfig, reflectionConfig?: Record<string, unknown>): Promise<ReflectionResult>;
+    reflect(chatId: string, llmConfig: LLMConfig, reflectionConfig?: ReflectionExternalConfig): Promise<ReflectionResult>;
 
     // ─── 生命周期 ───
 

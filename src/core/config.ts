@@ -49,12 +49,39 @@ export interface TelegramConfig {
     phone: string;
 }
 
+export interface ReflectionExternalConfig {
+    /** LLM temperature for reflection calls (default: 0.3) */
+    temperature?: number;
+    /** Max output tokens for reflection LLM call (default: 16384) */
+    maxTokens?: number;
+    /** Override model for reflection (default: uses cheap tier model) */
+    model?: string;
+    /** Silence threshold in seconds before triggering reflection (default: 7200 = 2h) */
+    silenceThreshold?: number;
+    /** Check interval in seconds for silence detection (default: 300 = 5min) */
+    checkInterval?: number;
+    /** Merge thresholds in days */
+    mergeThresholds?: {
+        episodeToWeek?: number;
+        weekToMonth?: number;
+        monthToQuarter?: number;
+        quarterToYear?: number;
+    };
+    /** Tier limits override */
+    tierLimits?: Record<number, {
+        maxTraits?: number;
+        maxInterests?: number;
+        episodeDays?: number;
+    }>;
+}
+
 export interface AppConfig {
     llmProfiles: Record<string, LLMConfig>;
     modelTiers: ModelTiersConfig;
     persona: PersonaConfig;
     telegram: TelegramConfig;
     notification: NotificationConfig;
+    reflection: ReflectionExternalConfig;
 }
 
 // ─── 默认值 ───
@@ -129,6 +156,23 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
     const filePersona = (fileConfig.persona ?? {}) as Record<string, unknown>;
     const fileTG = (fileConfig.telegram ?? {}) as Record<string, unknown>;
     const fileNotification = (fileConfig.notification ?? {}) as Record<string, unknown>;
+    const fileReflection = (fileConfig.reflection ?? {}) as Record<string, unknown>;
+    const fileMerge = (fileReflection.merge_thresholds ?? {}) as Record<string, unknown>;
+    const fileTierLimits = (fileReflection.tier_limits ?? {}) as Record<string, unknown>;
+
+    // 解析 tierLimits
+    const parsedTierLimits: ReflectionExternalConfig["tierLimits"] = {};
+    for (const [tier, val] of Object.entries(fileTierLimits)) {
+        const t = Number(tier);
+        if (t >= 1 && t <= 4 && typeof val === "object" && val !== null) {
+            const v = val as Record<string, unknown>;
+            parsedTierLimits[t] = {
+                maxTraits: v.max_traits != null ? num(v.max_traits, 10) : undefined,
+                maxInterests: v.max_interests != null ? num(v.max_interests, 15) : undefined,
+                episodeDays: v.episode_days != null ? num(v.episode_days, 14) : undefined,
+            };
+        }
+    }
 
     const config: AppConfig = {
         llmProfiles,
@@ -148,6 +192,20 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
             urgentWords: Array.isArray(fileNotification.urgent_words)
                 ? (fileNotification.urgent_words as string[])
                 : ["?", "？", "呢", "吗"],
+        },
+        reflection: {
+            temperature: fileReflection.temperature != null ? num(fileReflection.temperature, 0.3) : undefined,
+            maxTokens: fileReflection.max_tokens != null ? num(fileReflection.max_tokens, 16384) : undefined,
+            model: str(fileReflection.model),
+            silenceThreshold: fileReflection.silence_threshold != null ? num(fileReflection.silence_threshold, 7200) : undefined,
+            checkInterval: fileReflection.check_interval != null ? num(fileReflection.check_interval, 300) : undefined,
+            mergeThresholds: Object.keys(fileMerge).length > 0 ? {
+                episodeToWeek: fileMerge.episode_to_week != null ? num(fileMerge.episode_to_week, 7) : undefined,
+                weekToMonth: fileMerge.week_to_month != null ? num(fileMerge.week_to_month, 30) : undefined,
+                monthToQuarter: fileMerge.month_to_quarter != null ? num(fileMerge.month_to_quarter, 90) : undefined,
+                quarterToYear: fileMerge.quarter_to_year != null ? num(fileMerge.quarter_to_year, 365) : undefined,
+            } : undefined,
+            tierLimits: Object.keys(parsedTierLimits).length > 0 ? parsedTierLimits : undefined,
         },
     };
 
@@ -209,8 +267,8 @@ function buildEnvOverride(): Partial<LLMConfig> | null {
 
     const p = env("LLM_PROVIDER"); if (p) set("provider", p);
     const u = env("LLM_BASE_URL"); if (u) set("baseUrl", u);
-    const k = env("LLM_API_KEY");  if (k) set("apiKey", k);
-    const m = env("LLM_MODEL");    if (m) set("model", m);
+    const k = env("LLM_API_KEY"); if (k) set("apiKey", k);
+    const m = env("LLM_MODEL"); if (m) set("model", m);
     const t = env("LLM_TEMPERATURE"); if (t) set("temperature", Number(t));
     const mt = env("LLM_MAX_TOKENS"); if (mt) set("maxTokens", Number(mt));
 

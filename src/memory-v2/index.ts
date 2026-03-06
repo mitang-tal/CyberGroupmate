@@ -6,7 +6,8 @@
  */
 
 export { MemoryStoreV2 } from "./memory-v2.js";
-export { runReflection, parseReflectionJSON, mergeEpisodes, trimProfileByTier, DEFAULT_TIER_LIMITS, type ReflectionConfig, type TierLimitEntry, type TierLimitsConfig } from "./reflection.js";
+export { runReflection, parseReflectionJSON, mergeEpisodes, trimProfileByTier, DEFAULT_TIER_LIMITS, type TierLimitEntry, type TierLimitsConfig } from "./reflection.js";
+export type { ReflectionExternalConfig as ReflectionConfig } from "../core/config.js";
 
 export type {
     // V2 核心类型

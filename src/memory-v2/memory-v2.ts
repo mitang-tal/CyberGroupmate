@@ -13,7 +13,7 @@
 import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { createLogger } from "../core/logger.js";
-import type { LLMConfig } from "../core/config.js";
+import type { LLMConfig, ReflectionExternalConfig } from "../core/config.js";
 import type {
     IMemoryStoreV2,
     TopicNode,
@@ -855,10 +855,10 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
     async reflect(
         chatId: string,
         llmConfig: LLMConfig,
-        reflectionConfig?: Record<string, unknown>,
+        reflectionConfig?: ReflectionExternalConfig,
     ): Promise<ReflectionResult> {
         const { runReflection } = await import("./reflection.js");
-        return runReflection(chatId, this, llmConfig, reflectionConfig as any);
+        return runReflection(chatId, this, llmConfig, reflectionConfig);
     }
 
     // ─── 生命周期 ───

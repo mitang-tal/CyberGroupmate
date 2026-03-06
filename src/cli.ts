@@ -305,7 +305,7 @@ async function cmdMemory(args: string[]): Promise<void> {
             const llmConfig = resolveTierProfile("cheap", cfg);
             log.info(`开始对群组 ${chatId} 执行 Reflection...`);
             try {
-                const result = await memory.reflect(chatId, llmConfig);
+                const result = await memory.reflect(chatId, llmConfig, cfg.reflection);
                 console.log(`\n\x1b[1m=== Reflection 结果 ===\x1b[0m\n`);
                 console.log(`  时段: ${result.reflectedPeriod.from} → ${result.reflectedPeriod.to}`);
                 console.log(`  画像更新: ${result.personUpdates.length} 人`);
