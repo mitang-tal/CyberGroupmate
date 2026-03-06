@@ -19,6 +19,7 @@ import { runCodeActSession, SessionResult } from "./sandbox/session-runner.js";
 import { runCompaction } from "./event/compaction.js";
 import { loadConfig, resolveTierProfile, type AppConfig, type LLMConfig } from "./core/config.js";
 import { callLLM, ChatMessage } from "./core/llm.js";
+import { shouldCompact, compact, mergeContextBudget } from "./memory-v2/context-manager.js";
 import {
     TopicRegistry,
     RecordingPipeline,
@@ -286,6 +287,7 @@ async function mainEventLoop(
     sceneManager: SceneManager,
     memory: MemoryStoreV2,
     llmConfig: LLMConfig,
+    cheapConfig: LLMConfig,
     systemPrompt: string,
     appConfig: AppConfig,
     fastRouter?: FastRouter,
@@ -508,19 +510,28 @@ async function mainEventLoop(
                     log.error("Compaction 失败", { error: compErrMsg });
                 }
 
-                // Rolling Truncation: 如果太长，截断它。由于消息带有 scope，全局截断可能会稍微粗暴，但仍然有效
-                if (messages.length > 25) {
-                    const sys = messages[0];
-                    const tail = messages.slice(-10);
-                    const omitted = messages.length - 11;
-                    messages.length = 0;
-                    messages.push(sys);
-                    messages.push({
-                        role: "user",
-                        content: `[系统] 由于上下文长度限制，在此之前的 ${omitted} 条场景对话记录已被压缩归档并从上下文中移除。`,
-                        scope: "global"
-                    });
-                    messages.push(...tail);
+                // Context Compaction (M3): 基于 token 预算的智能压缩
+                const contextBudget = mergeContextBudget(appConfig.contextBudget);
+                if (shouldCompact(messages, contextBudget)) {
+                    try {
+                        const compacted = await compact(messages, cheapConfig, contextBudget);
+                        messages.length = 0;
+                        messages.push(...compacted);
+                    } catch (compactErr) {
+                        log.error("Context Compaction 失败，回退到简单截断", { error: String(compactErr) });
+                        // 回退：保留 system prompt + 最近 10 条
+                        const sys = messages[0];
+                        const tail = messages.slice(-10);
+                        const omitted = messages.length - 11;
+                        messages.length = 0;
+                        messages.push(sys);
+                        messages.push({
+                            role: "user",
+                            content: `[系统] 由于上下文长度限制，在此之前的 ${omitted} 条场景对话记录已被压缩归档并从上下文中移除。`,
+                            scope: "global"
+                        });
+                        messages.push(...tail);
+                    }
                 }
 
                 break; // 结束这个 Batch，等待 next drain!
@@ -646,6 +657,7 @@ async function main(): Promise<void> {
         sceneManager,
         memory,
         llmConfig,
+        cheapConfig,
         systemPrompt,
         appConfig,
         fastRouter,

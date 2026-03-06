@@ -429,62 +429,82 @@ describe("Reflection Skill")
 
 ---
 
-## Phase M3：智能 Context Compaction（3天）
+## Phase M3：智能 Context Compaction（3天）✅
 
-### M3.1 ContextManager 核心（1天）
+### M3.1 ContextManager 核心（1天）✅
 
 **文件**：`src/memory-v2/context-manager.ts` [NEW]
 
-- [ ] `ContextBudget` 配置接口
-- [ ] `estimateTokens(text)` — `Math.ceil(text.length / 4)`
-- [ ] `shouldCompact(messages)` — 总 token 超过预算时返回 true
-- [ ] `classifyMessages(messages)` — 按 scope 分段
+> 纯函数模块（无状态），不引入外部依赖（不用 js-tiktoken），使用 CJK 感知的字符估算。
 
-### M3.2 话题连贯性保护（0.5天）
+- [x] `ContextBudget` 配置接口
+  - `effectiveContextWindow: number` — 有效上下文窗口（默认 32000）
+  - `systemPromptRatio: number` — system prompt 预算比例（默认 0.20）
+  - `briefingRatio: number` — context briefing 预算比例（默认 0.15）
+  - `recentHistoryRatio: number` — 近期消息预算比例（默认 0.50）
+  - `outputReserve: number` — output 预留（默认 4096）
+  - `minRecentMessages: number` — 最少保留消息数（默认 6）
+  - `maxBriefingTokens: number` — Context Briefing 最大 token 数（默认 3000）
+- [x] `estimateTokens(text)` — CJK 感知（英文 /4、CJK /1.5、混合加权）
+- [x] `estimateMessagesTokens(messages)` — 批量估算
+- [x] `shouldCompact(messages, budget)` — 总 token > effectiveContextWindow * 0.85
+- [x] `classifyMessages(messages, budget)` — 分段：`{ systemPrompt, briefing?, candidates, recent }`
+  - `systemPrompt`: messages[0] (role=system)
+  - `briefing`: messages[1] 如果标记为 `scope: "context-briefing"`
+  - `recent`: 尾部保留 `minRecentMessages` 条或 `recentHistoryRatio` 预算内
+  - `candidates`: 中间部分（压缩候选）
 
-- [ ] `identifyProtectedMessages(messages, topicRegistry?)` — reply chain + ENGAGED 话题消息
-- [ ] 受保护消息在压缩时跳过
+**耦合点**：
+- 读取 `ChatMessage` 接口（`src/core/llm.ts`）
+- 被 `main.ts` 消费（M3.4 替换 rolling truncation）
 
-### M3.3 Compaction 执行逻辑（1天）
+**文件**：`src/core/config.ts` [MODIFY]
+- [x] `ContextBudgetConfig` 接口 + `AppConfig.contextBudget`
+- [x] `loadConfig()` 解析 `context_budget` 节
 
-- [ ] `compact(messages, llmConfig)` → cheap model 生成 Context Briefing → 重组消息数组
-- [ ] 输出：[System Prompt] + [Context Briefing] + [受保护的近期消息]
+**文件**：`config.example.yaml` [MODIFY]
+- [x] 新增 `context_budget` 配置节
 
-### M3.4 替换 Rolling Truncation + 配置化（0.25天）
+**文件**：`src/memory-v2/index.ts` [MODIFY]
+- [x] 导出 context-manager 公共 API（estimateTokens, shouldCompact, compact, mergeContextBudget 等）
 
-- [ ] `main.ts` L429-442 → `contextManager.shouldCompact()` + `contextManager.compact()`
-- [ ] `config.example.yaml` 新增 `context_budget` 配置节
+### M3.2 话题连贯性保护（0.5天）✅
 
-### M3.5 测试（0.5天）
+- [x] `identifyProtectedMessages(messages, options?)` — reply chain + ENGAGED 话题消息 + 最近 N 条
+- [x] 受保护消息在压缩时跳过
+
+### M3.3 Compaction 执行逻辑（1天）✅
+
+- [x] `compact(messages, llmConfig, budget, options?)` → cheap model 生成 Context Briefing → 重组消息数组
+- [x] 输出：[System Prompt] + [Context Briefing] + [受保护的候选] + [Recent]
+- [x] LLM 失败时回退到简单统计摘要
+- [x] `system-prompts/context-compaction.md` — Context Briefing 生成 prompt（外部化）
+
+### M3.4 替换 Rolling Truncation + 配置化（0.25天）✅
+
+- [x] `main.ts` L511-524 → `shouldCompact()` + `compact()` + 错误回退
+- [x] 新增 `cheapConfig` 参数透传到 `mainEventLoop`
+- [x] `config.example.yaml` 新增 `context_budget` 配置节
+
+### M3.5 测试（0.5天）✅
+
+#### 实际测试结果：`tests/context-manager.test.ts`（31 个测试用例，全部通过）
+
+9 suites, 31 tests — **100% pass** (duration ~286ms)
 
 #### 文件：`tests/context-manager.test.ts` [NEW]
 
 ```
 describe("ContextManager")
-├─ describe("estimateTokens")
-│   ├─ it("空字符串 → 0")                      → estimateTokens("") === 0
-│   ├─ it("英文估算 ~= chars/4")                 → 100 chars → 25 tokens (±5)
-│   └─ it("中文估算 ~= chars/2")                 → 50 个中文字符 → 结果合理（中文 token 更密）
-│
-├─ describe("shouldCompact")
-│   ├─ it("总 token 未超过预算 → false")         → 5 条短消息 → false
-│   ├─ it("总 token 超过预算 → true")            → 100 条长消息 (budget=1000) → true
-│   └─ it("空消息数组 → false")                 → [] → false
-│
-├─ describe("identifyProtectedMessages")
-│   ├─ it("最近 N 条消息受保护")               → 20 条消息，最近 5 条被标记 protected
-│   ├─ it("reply chain 整体受保护")             → msg[3] reply msg[1] → msg[1] 也被保护
-│   └─ it("ENGAGED 话题的 messageIds 受保护")  → 模拟 topicRegistry 返回 engaged topic → 其 messageIds 全部 protected
-│
-├─ describe("compact")
-│   ├─ it("压缩后消息数量减少")               → 输入 30 条 → 压缩后 < 30 条
-│   ├─ it("压缩后包含 Context Briefing")       → 返回的消息中至少有 1 条 role='system' 包含摘要内容
-│   ├─ it("受保护消息完整保留在压缩结果中") → protected msg 的 text 可在结果中找到
-│   ├─ it("压缩后消息顺序正确")             → [system/briefing] 在前，[recent messages] 在后
-│   └─ it("已在预算内不触发压缩")             → shouldCompact=false 时调 compact → 原样返回
-│
-└─ describe("main.ts 集成")
-    └─ it("rolling truncation 代码已被替换")    → grep main.ts 不包含 "messages.length > 25"
+├─ describe("estimateTokens")                    — 5 tests
+├─ describe("estimateMessagesTokens")             — 2 tests
+├─ describe("shouldCompact")                      — 4 tests
+├─ describe("classifyMessages")                   — 5 tests
+├─ describe("identifyProtectedMessages")          — 6 tests
+├─ describe("compact")                            — 2 tests
+├─ describe("mergeContextBudget")                 — 3 tests
+├─ describe("ContextBudget 配置集成")              — 1 test
+└─ describe("main.ts rolling truncation 已替换")   — 3 tests
 ```
 
 #### 手动验证

@@ -149,3 +149,22 @@ reflection:
 
   # 作息时间的时区（默认使用系统时区）
   # timezone: "Asia/Shanghai"
+
+# ─── Context Compaction 预算 ───
+# 控制上下文压缩的 token 预算分配
+# 所有字段可选，缺省使用括号内默认值
+# context_budget:
+#   # 模型有效上下文窗口 token 数 (32000)
+#   effective_context_window: 32000
+#   # system prompt 预算比例 (0.20)
+#   system_prompt_ratio: 0.20
+#   # context briefing 预算比例 (0.15)
+#   briefing_ratio: 0.15
+#   # 近期消息预算比例 (0.50)
+#   recent_history_ratio: 0.50
+#   # 输出预留 token 数 (4096)
+#   output_reserve: 4096
+#   # 最少保留近期消息条数 (6)
+#   min_recent_messages: 6
+#   # Context Briefing 最大 token 数 (3000)
+#   max_briefing_tokens: 3000

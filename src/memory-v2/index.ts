@@ -9,6 +9,21 @@ export { MemoryStoreV2 } from "./memory-v2.js";
 export { runReflection, parseReflectionJSON, mergeEpisodes, trimProfileByTier, DEFAULT_TIER_LIMITS, type TierLimitEntry, type TierLimitsConfig } from "./reflection.js";
 export type { ReflectionExternalConfig as ReflectionConfig } from "../core/config.js";
 
+// Context Manager (M3)
+export {
+    estimateTokens,
+    estimateMessagesTokens,
+    shouldCompact,
+    classifyMessages,
+    identifyProtectedMessages,
+    compact,
+    mergeContextBudget,
+    DEFAULT_CONTEXT_BUDGET,
+    type ContextBudget,
+    type ClassifiedMessages,
+    type ProtectionResult,
+} from "./context-manager.js";
+
 export type {
     // V2 核心类型
     IMemoryStoreV2,
@@ -27,3 +42,4 @@ export type {
     HistoryBrowseResult,
     ReflectionResult,
 } from "./types.js";
+

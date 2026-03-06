@@ -81,6 +81,24 @@ export interface ReflectionExternalConfig {
     timezone?: string;
 }
 
+/** Context Compaction 预算配置 */
+export interface ContextBudgetConfig {
+    /** 模型的有效上下文窗口（token 数）。默认 32000 */
+    effectiveContextWindow?: number;
+    /** 分配给 system prompt 的预算比例。默认 0.20 */
+    systemPromptRatio?: number;
+    /** 分配给 context briefing 的预算比例。默认 0.15 */
+    briefingRatio?: number;
+    /** 分配给 recent history 的预算比例。默认 0.50 */
+    recentHistoryRatio?: number;
+    /** 预留给当前轮次 output 的预算（固定值）。默认 4096 */
+    outputReserve?: number;
+    /** 最少保留的近期消息条数。默认 6 */
+    minRecentMessages?: number;
+    /** Context Briefing 最大 token 数。默认 3000 */
+    maxBriefingTokens?: number;
+}
+
 export interface AppConfig {
     llmProfiles: Record<string, LLMConfig>;
     modelTiers: ModelTiersConfig;
@@ -88,6 +106,7 @@ export interface AppConfig {
     telegram: TelegramConfig;
     notification: NotificationConfig;
     reflection: ReflectionExternalConfig;
+    contextBudget?: ContextBudgetConfig;
 }
 
 // ─── 默认值 ───
@@ -165,6 +184,7 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
     const fileReflection = (fileConfig.reflection ?? {}) as Record<string, unknown>;
     const fileMerge = (fileReflection.merge_thresholds ?? {}) as Record<string, unknown>;
     const fileTierLimits = (fileReflection.tier_limits ?? {}) as Record<string, unknown>;
+    const fileContextBudget = (fileConfig.context_budget ?? {}) as Record<string, unknown>;
 
     // 解析 tierLimits
     const parsedTierLimits: ReflectionExternalConfig["tierLimits"] = {};
@@ -179,6 +199,17 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
             };
         }
     }
+
+    // 解析 contextBudget
+    const parsedContextBudget: ContextBudgetConfig | undefined = Object.keys(fileContextBudget).length > 0 ? {
+        effectiveContextWindow: fileContextBudget.effective_context_window != null ? num(fileContextBudget.effective_context_window, 32000) : undefined,
+        systemPromptRatio: fileContextBudget.system_prompt_ratio != null ? num(fileContextBudget.system_prompt_ratio, 0.20) : undefined,
+        briefingRatio: fileContextBudget.briefing_ratio != null ? num(fileContextBudget.briefing_ratio, 0.15) : undefined,
+        recentHistoryRatio: fileContextBudget.recent_history_ratio != null ? num(fileContextBudget.recent_history_ratio, 0.50) : undefined,
+        outputReserve: fileContextBudget.output_reserve != null ? num(fileContextBudget.output_reserve, 4096) : undefined,
+        minRecentMessages: fileContextBudget.min_recent_messages != null ? num(fileContextBudget.min_recent_messages, 6) : undefined,
+        maxBriefingTokens: fileContextBudget.max_briefing_tokens != null ? num(fileContextBudget.max_briefing_tokens, 3000) : undefined,
+    } : undefined;
 
     const config: AppConfig = {
         llmProfiles,
@@ -217,6 +248,7 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
                 ? fileReflection.awake_hours as [number, number] : undefined,
             timezone: str(fileReflection.timezone),
         },
+        contextBudget: parsedContextBudget,
     };
 
     injectEnv("TG_API_ID", config.telegram.apiId);
