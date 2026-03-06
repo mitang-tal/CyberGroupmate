@@ -25,6 +25,7 @@ import {
     getSimilarityFn,
 } from "./embedding.js";
 import { callLLM, type ChatMessage, type LLMConfig as LlmCallConfig } from "../core/llm.js";
+import { SafeUpdateBuilder, SafeSelectBuilder } from "./query-builder.js";
 import type {
     IMemoryStoreV2,
     TopicNode,
@@ -364,34 +365,33 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         const ts = now();
 
         if (existing) {
-            // UPDATE — 只更新非 undefined 的字段
-            const sets: string[] = [];
-            const values: unknown[] = [];
+            // UPDATE — 只更新非 undefined 的字段（SafeUpdateBuilder 校验列名）
+            const builder = new SafeUpdateBuilder("topics");
 
-            if (data.chatId !== undefined) { sets.push("chat_id = ?"); values.push(data.chatId); }
-            if (data.label !== undefined) { sets.push("label = ?"); values.push(data.label); }
-            if (data.summary !== undefined) { sets.push("summary = ?"); values.push(data.summary); }
-            if (data.keyPoints !== undefined) { sets.push("key_points = ?"); values.push(toJSON(data.keyPoints)); }
-            if (data.participants !== undefined) { sets.push("participants = ?"); values.push(toJSON(data.participants)); }
-            if (data.keywords !== undefined) { sets.push("keywords = ?"); values.push(toJSON(data.keywords)); }
+            if (data.chatId !== undefined) builder.set("chat_id", data.chatId);
+            if (data.label !== undefined) builder.set("label", data.label);
+            if (data.summary !== undefined) builder.set("summary", data.summary);
+            if (data.keyPoints !== undefined) builder.set("key_points", toJSON(data.keyPoints));
+            if (data.participants !== undefined) builder.set("participants", toJSON(data.participants));
+            if (data.keywords !== undefined) builder.set("keywords", toJSON(data.keywords));
             if (data.messageRange !== undefined) {
-                sets.push("first_message_id = ?", "last_message_id = ?", "message_count = ?");
-                values.push(data.messageRange.firstMessageId, data.messageRange.lastMessageId, data.messageRange.count);
+                builder.set("first_message_id", data.messageRange.firstMessageId);
+                builder.set("last_message_id", data.messageRange.lastMessageId);
+                builder.set("message_count", data.messageRange.count);
             }
-            if (data.startedAt !== undefined) { sets.push("started_at = ?"); values.push(data.startedAt); }
-            if (data.endedAt !== undefined) { sets.push("ended_at = ?"); values.push(data.endedAt); }
-            if (data.sentiment !== undefined) { sets.push("sentiment = ?"); values.push(data.sentiment); }
-            if (data.relatedTopicIds !== undefined) { sets.push("related_topic_ids = ?"); values.push(toJSON(data.relatedTopicIds)); }
-            if (data.wasEngaged !== undefined) { sets.push("was_engaged = ?"); values.push(data.wasEngaged ? 1 : 0); }
-            if (data.interventionCount !== undefined) { sets.push("intervention_count = ?"); values.push(data.interventionCount); }
-            if (data.embedding !== undefined) { sets.push("embedding = ?"); values.push(Buffer.from(data.embedding.buffer)); }
+            if (data.startedAt !== undefined) builder.set("started_at", data.startedAt);
+            if (data.endedAt !== undefined) builder.set("ended_at", data.endedAt);
+            if (data.sentiment !== undefined) builder.set("sentiment", data.sentiment);
+            if (data.relatedTopicIds !== undefined) builder.set("related_topic_ids", toJSON(data.relatedTopicIds));
+            if (data.wasEngaged !== undefined) builder.set("was_engaged", data.wasEngaged ? 1 : 0);
+            if (data.interventionCount !== undefined) builder.set("intervention_count", data.interventionCount);
+            if (data.embedding !== undefined) builder.set("embedding", Buffer.from(data.embedding.buffer));
+            builder.set("updated_at", ts);
+            builder.where("id", existing.id);
 
-            sets.push("updated_at = ?");
-            values.push(ts);
-            values.push(existing.id);
-
-            if (sets.length > 1) {
-                this.db.prepare(`UPDATE topics SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+            if (builder.hasSets) {
+                const { sql, params } = builder.build();
+                this.db.prepare(sql).run(...params);
 
                 // 同步更新 FTS5
                 this.syncTopicFTS(existing.id);
@@ -615,20 +615,18 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         const existing = this.db.prepare("SELECT user_id FROM person_identities WHERE user_id = ?").get(userId);
 
         if (existing) {
-            const sets: string[] = [];
-            const values: unknown[] = [];
+            const builder = new SafeUpdateBuilder("person_identities");
 
-            if (data.displayName !== undefined) { sets.push("display_name = ?"); values.push(data.displayName); }
-            if (data.aliases !== undefined) { sets.push("aliases = ?"); values.push(toJSON(data.aliases)); }
-            if (data.totalMessageCount !== undefined) { sets.push("total_message_count = ?"); values.push(data.totalMessageCount); }
-            if (data.lastSeenAt !== undefined) { sets.push("last_seen_at = ?"); values.push(data.lastSeenAt); }
+            if (data.displayName !== undefined) builder.set("display_name", data.displayName);
+            if (data.aliases !== undefined) builder.set("aliases", toJSON(data.aliases));
+            if (data.totalMessageCount !== undefined) builder.set("total_message_count", data.totalMessageCount);
+            if (data.lastSeenAt !== undefined) builder.set("last_seen_at", data.lastSeenAt);
+            builder.set("updated_at", ts);
+            builder.where("user_id", userId);
 
-            sets.push("updated_at = ?");
-            values.push(ts);
-            values.push(userId);
-
-            this.db.prepare(`UPDATE person_identities SET ${sets.join(", ")} WHERE user_id = ?`).run(...values);
-            log.debug("upsertPersonIdentity: UPDATE", { userId, fields: sets.length - 1 });
+            const { sql, params } = builder.build();
+            this.db.prepare(sql).run(...params);
+            log.debug("upsertPersonIdentity: UPDATE", { userId });
         } else {
             this.db.prepare(`
                 INSERT INTO person_identities (user_id, display_name, aliases, total_message_count, last_seen_at, first_seen_at, updated_at)
@@ -653,30 +651,26 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         ).get(userId, chatId);
 
         if (existing) {
-            const sets: string[] = [];
-            const values: unknown[] = [];
+            const builder = new SafeUpdateBuilder("person_group_profiles");
 
-            if (data.dunbarTier !== undefined) { sets.push("dunbar_tier = ?"); values.push(data.dunbarTier); }
-            if (data.dunbarReason !== undefined) { sets.push("dunbar_reason = ?"); values.push(data.dunbarReason); }
-            if (data.traits !== undefined) { sets.push("traits = ?"); values.push(toJSON(data.traits)); }
-            if (data.interests !== undefined) { sets.push("interests = ?"); values.push(toJSON(data.interests)); }
-            if (data.communicationStyle !== undefined) { sets.push("communication_style = ?"); values.push(data.communicationStyle); }
-            if (data.relationToAgent !== undefined) { sets.push("relation_to_agent = ?"); values.push(data.relationToAgent); }
-            if (data.recentEpisodes !== undefined) { sets.push("recent_episodes = ?"); values.push(toJSON(data.recentEpisodes)); }
-            if (data.mergedMemory !== undefined) { sets.push("merged_memory = ?"); values.push(toJSON(data.mergedMemory)); }
-            if (data.messageCount !== undefined) { sets.push("message_count = ?"); values.push(data.messageCount); }
-            if (data.lastSeenAt !== undefined) { sets.push("last_seen_at = ?"); values.push(data.lastSeenAt); }
-            if (data.activeHours !== undefined) { sets.push("active_hours = ?"); values.push(toJSON(data.activeHours)); }
+            if (data.dunbarTier !== undefined) builder.set("dunbar_tier", data.dunbarTier);
+            if (data.dunbarReason !== undefined) builder.set("dunbar_reason", data.dunbarReason);
+            if (data.traits !== undefined) builder.set("traits", toJSON(data.traits));
+            if (data.interests !== undefined) builder.set("interests", toJSON(data.interests));
+            if (data.communicationStyle !== undefined) builder.set("communication_style", data.communicationStyle);
+            if (data.relationToAgent !== undefined) builder.set("relation_to_agent", data.relationToAgent);
+            if (data.recentEpisodes !== undefined) builder.set("recent_episodes", toJSON(data.recentEpisodes));
+            if (data.mergedMemory !== undefined) builder.set("merged_memory", toJSON(data.mergedMemory));
+            if (data.messageCount !== undefined) builder.set("message_count", data.messageCount);
+            if (data.lastSeenAt !== undefined) builder.set("last_seen_at", data.lastSeenAt);
+            if (data.activeHours !== undefined) builder.set("active_hours", toJSON(data.activeHours));
+            builder.set("updated_at", ts);
+            builder.where("user_id", userId);
+            builder.where("chat_id", chatId);
 
-            sets.push("updated_at = ?");
-            values.push(ts);
-            values.push(userId);
-            values.push(chatId);
-
-            this.db.prepare(
-                `UPDATE person_group_profiles SET ${sets.join(", ")} WHERE user_id = ? AND chat_id = ?`
-            ).run(...values);
-            log.debug("upsertPersonGroupProfile: UPDATE", { userId, chatId, fields: sets.length - 1 });
+            const { sql, params } = builder.build();
+            this.db.prepare(sql).run(...params);
+            log.debug("upsertPersonGroupProfile: UPDATE", { userId, chatId });
         } else {
             this.db.prepare(`
                 INSERT INTO person_group_profiles (
@@ -764,29 +758,27 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         const existing = this.db.prepare("SELECT chat_id FROM group_models WHERE chat_id = ?").get(chatId);
 
         if (existing) {
-            const sets: string[] = [];
-            const values: unknown[] = [];
+            const builder = new SafeUpdateBuilder("group_models");
 
-            if (data.chatTitle !== undefined) { sets.push("chat_title = ?"); values.push(data.chatTitle); }
-            if (data.description !== undefined) { sets.push("description = ?"); values.push(data.description); }
-            if (data.dominantLanguage !== undefined) { sets.push("dominant_language = ?"); values.push(data.dominantLanguage); }
-            if (data.communicationNorms !== undefined) { sets.push("communication_norms = ?"); values.push(toJSON(data.communicationNorms)); }
-            if (data.activeMembers !== undefined) { sets.push("active_members = ?"); values.push(data.activeMembers); }
-            if (data.avgMessagesPerDay !== undefined) { sets.push("avg_messages_per_day = ?"); values.push(data.avgMessagesPerDay); }
-            if (data.peakHours !== undefined) { sets.push("peak_hours = ?"); values.push(toJSON(data.peakHours)); }
-            if (data.agentRole !== undefined) { sets.push("agent_role = ?"); values.push(data.agentRole); }
-            if (data.engagementLevel !== undefined) { sets.push("engagement_level = ?"); values.push(data.engagementLevel); }
-            if (data.recentFeedback !== undefined) { sets.push("recent_feedback = ?"); values.push(data.recentFeedback); }
-            if (data.hotTopics !== undefined) { sets.push("hot_topics = ?"); values.push(toJSON(data.hotTopics)); }
-            if (data.tabooTopics !== undefined) { sets.push("taboo_topics = ?"); values.push(toJSON(data.tabooTopics)); }
-            if (data.lastReflectedAt !== undefined) { sets.push("last_reflected_at = ?"); values.push(data.lastReflectedAt); }
+            if (data.chatTitle !== undefined) builder.set("chat_title", data.chatTitle);
+            if (data.description !== undefined) builder.set("description", data.description);
+            if (data.dominantLanguage !== undefined) builder.set("dominant_language", data.dominantLanguage);
+            if (data.communicationNorms !== undefined) builder.set("communication_norms", toJSON(data.communicationNorms));
+            if (data.activeMembers !== undefined) builder.set("active_members", data.activeMembers);
+            if (data.avgMessagesPerDay !== undefined) builder.set("avg_messages_per_day", data.avgMessagesPerDay);
+            if (data.peakHours !== undefined) builder.set("peak_hours", toJSON(data.peakHours));
+            if (data.agentRole !== undefined) builder.set("agent_role", data.agentRole);
+            if (data.engagementLevel !== undefined) builder.set("engagement_level", data.engagementLevel);
+            if (data.recentFeedback !== undefined) builder.set("recent_feedback", data.recentFeedback);
+            if (data.hotTopics !== undefined) builder.set("hot_topics", toJSON(data.hotTopics));
+            if (data.tabooTopics !== undefined) builder.set("taboo_topics", toJSON(data.tabooTopics));
+            if (data.lastReflectedAt !== undefined) builder.set("last_reflected_at", data.lastReflectedAt);
+            builder.set("updated_at", ts);
+            builder.where("chat_id", chatId);
 
-            sets.push("updated_at = ?");
-            values.push(ts);
-            values.push(chatId);
-
-            this.db.prepare(`UPDATE group_models SET ${sets.join(", ")} WHERE chat_id = ?`).run(...values);
-            log.debug("upsertGroupModel: UPDATE", { chatId, fields: sets.length - 1 });
+            const { sql, params } = builder.build();
+            this.db.prepare(sql).run(...params);
+            log.debug("upsertGroupModel: UPDATE", { chatId });
         } else {
             this.db.prepare(`
                 INSERT INTO group_models (
@@ -917,12 +909,11 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         }
 
         // ── 纯 JS fallback ──
-        let sql = "SELECT * FROM topics WHERE embedding IS NOT NULL";
-        const params: unknown[] = [];
-        if (chatId) {
-            sql += " AND chat_id = ?";
-            params.push(chatId);
-        }
+        const selectBuilder = new SafeSelectBuilder("topics")
+            .from("SELECT * FROM topics")
+            .where("embedding IS NOT NULL");
+        if (chatId) selectBuilder.whereEq("chat_id", chatId);
+        const { sql, params } = selectBuilder.build();
 
         const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
         log.debug("vectorSearchTopics[JS]: 候选数", { count: rows.length, chatId });
@@ -999,13 +990,14 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         }
 
         // ── 纯 JS fallback ──
-        let sql = "SELECT * FROM core_facts WHERE embedding IS NOT NULL AND (expires_at IS NULL OR expires_at > datetime('now'))";
-        const params: unknown[] = [];
+        const selectBuilder = new SafeSelectBuilder("core_facts")
+            .from("SELECT * FROM core_facts")
+            .where("embedding IS NOT NULL")
+            .where("(expires_at IS NULL OR expires_at > datetime('now'))");
         if (categories?.length) {
-            const placeholders = categories.map(() => "?").join(", ");
-            sql += ` AND category IN (${placeholders})`;
-            params.push(...categories);
+            selectBuilder.whereIn("category", categories);
         }
+        const { sql, params } = selectBuilder.build();
 
         const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
         log.debug("vectorSearchFacts[JS]: 候选数", { count: rows.length });
