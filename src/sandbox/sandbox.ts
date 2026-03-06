@@ -81,7 +81,8 @@ export class Sandbox extends EventEmitter {
 
     constructor(projectRoot?: string) {
         super();
-        this.projectRoot = projectRoot ?? join(__dirname, "..");
+        // __dirname = src/sandbox/, need to go up 2 levels to reach project root
+        this.projectRoot = projectRoot ?? join(__dirname, "..", "..");
     }
 
     /**

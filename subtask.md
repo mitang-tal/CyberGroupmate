@@ -108,7 +108,7 @@
 
 **额外修复**：`src/sandbox/sandbox.ts`
 
-- [x] 修复 pre-existing 路径 bug：`src/sandbox-worker.ts` → `src/sandbox/sandbox-worker.ts`
+- [x] 修复 pre-existing 路径 bug：`projectRoot` 默认值 `join(__dirname, "..")` → `join(__dirname, "..", "..")`（`__dirname` = `src/sandbox/`，需上溯 2 级才到项目根目录）
 
 ### M1.8 测试（0.5天）✅
 
@@ -226,7 +226,7 @@ describe("Compaction V2 写入")
 - [ ] `tests/recording-pipeline-memory.test.ts` — 待 M2/M3 与 LLM mock 一起实现
 - [ ] `tests/compaction-v2.test.ts` — 待 M2/M3 与 LLM mock 一起实现
 - [x] `tsc --noEmit` 0 错误
-- [ ] sandbox tests 12/12 fail — **pre-existing bug**（目录重构 commit `e9c53c5` 引入，非 M1 回归）
+- [x] sandbox tests 12/12 pass — **已修复**（`sandbox.ts` `projectRoot` 路径错误，目录重构 commit `e9c53c5` 引入）
 
 ---
 

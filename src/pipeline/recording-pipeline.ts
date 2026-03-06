@@ -11,7 +11,7 @@
  *   1. LLM 话题聚类（cheap model）
  *   2. LLM 话题摘要 + Triage（cheap model）
  *   3. 更新 TopicRegistry
- *   4. Memory V2 写入（当前为 stub）
+ *   4. Memory V2 写入（upsertTopic + storeMessageBatch + incrementProfileStats）
  */
 
 import { EventEmitter } from "node:events";
