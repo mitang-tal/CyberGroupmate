@@ -334,7 +334,7 @@ export class EngagedTopicHandler extends EventEmitter {
         try {
             const response = await callLLM(llmMessages, this.llmConfig, {
                 temperature: 0.2,
-                maxTokens: 500,
+                maxTokens: 65536,
             });
 
             const jsonStr = response.content
