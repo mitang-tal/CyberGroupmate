@@ -1,0 +1,281 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "🚀 启动 Agent (main.ts)",
+            "runtimeExecutable": "npx",
+            "runtimeArgs": [
+                "tsx",
+                "src/main.ts"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "🛠️ CLI: config 检查配置",
+            "runtimeExecutable": "npx",
+            "runtimeArgs": [
+                "tsx",
+                "src/cli.ts",
+                "config"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "📊 CLI: status 查看状态",
+            "runtimeExecutable": "npx",
+            "runtimeArgs": [
+                "tsx",
+                "src/cli.ts",
+                "status"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "🐚 CLI: sandbox 交互式 REPL",
+            "runtimeExecutable": "npx",
+            "runtimeArgs": [
+                "tsx",
+                "src/cli.ts",
+                "sandbox"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "📨 CLI: notify 推送通知",
+            "runtimeExecutable": "npx",
+            "runtimeArgs": [
+                "tsx",
+                "src/cli.ts",
+                "notify",
+                "${input:notifyType}",
+                "${input:notifyText}"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "🧹 CLI: drain 清空事件队列",
+            "runtimeExecutable": "npx",
+            "runtimeArgs": [
+                "tsx",
+                "src/cli.ts",
+                "drain"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "🧠 CLI: memory recall 搜索记忆",
+            "runtimeExecutable": "npx",
+            "runtimeArgs": [
+                "tsx",
+                "src/cli.ts",
+                "memory",
+                "recall",
+                "${input:memoryKeyword}"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "🧠 CLI: memory browse 浏览历史",
+            "runtimeExecutable": "npx",
+            "runtimeArgs": [
+                "tsx",
+                "src/cli.ts",
+                "memory",
+                "browse",
+                "${input:memoryKeyword}"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "🧠 CLI: memory reflect 手动反思",
+            "runtimeExecutable": "npx",
+            "runtimeArgs": [
+                "tsx",
+                "src/cli.ts",
+                "memory",
+                "reflect",
+                "--chat",
+                "${input:chatId}"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "🧠 CLI: memory status 记忆统计",
+            "runtimeExecutable": "npx",
+            "runtimeArgs": [
+                "tsx",
+                "src/cli.ts",
+                "memory",
+                "status"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "🧪 CLI: dry-run 历史回放",
+            "runtimeExecutable": "npx",
+            "runtimeArgs": [
+                "tsx",
+                "src/cli.ts",
+                "dry-run",
+                "${input:dryRunFile}",
+                "--days",
+                "${input:dryRunDays}"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "🧪 CLI: dry-run + reflect",
+            "runtimeExecutable": "npx",
+            "runtimeArgs": [
+                "tsx",
+                "src/cli.ts",
+                "dry-run",
+                "${input:dryRunFile}",
+                "--days",
+                "0",
+                "--reflect"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "✅ 运行全部测试 (npm test)",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": [
+                "test"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "✅ 运行当前测试文件",
+            "runtimeExecutable": "npx",
+            "runtimeArgs": [
+                "tsx",
+                "--test",
+                "${file}"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "skipFiles": [
+                "<node_internals>/**"
+            ]
+        }
+    ],
+    "inputs": [
+        {
+            "id": "dryRunFile",
+            "type": "promptString",
+            "description": "输入要执行 Dry Run 的 JSONL 历史记录文件路径",
+            "default": ".tmp/chat1_test.jsonl"
+        },
+        {
+            "id": "dryRunDays",
+            "type": "promptString",
+            "description": "处理最近 N 天的消息（0 = 全部）",
+            "default": "0"
+        },
+        {
+            "id": "memoryKeyword",
+            "type": "promptString",
+            "description": "输入搜索关键词或意图描述",
+            "default": ""
+        },
+        {
+            "id": "chatId",
+            "type": "promptString",
+            "description": "输入群组 chat_id",
+            "default": ""
+        },
+        {
+            "id": "notifyType",
+            "type": "promptString",
+            "description": "通知类型",
+            "default": "info"
+        },
+        {
+            "id": "notifyText",
+            "type": "promptString",
+            "description": "通知内容",
+            "default": ""
+        }
+    ]
+}
