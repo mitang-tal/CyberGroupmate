@@ -183,7 +183,7 @@ export async function runReflection(
     try {
         const response = await callLLM(messages, llmConfig, {
             temperature: reflectionConfig?.temperature ?? 0.3,
-            maxTokens: reflectionConfig?.maxTokens ?? 16384,
+            ...(reflectionConfig?.maxTokens ? { maxTokens: reflectionConfig.maxTokens } : {}),
             ...(reflectionConfig?.model ? { model: reflectionConfig.model } : {}),
         });
         const parsed = parseReflectionJSON(response.content);
@@ -920,7 +920,7 @@ async function analyzeMergeWithLLM(
         ];
         const response = await callLLM(messages, llmConfig, {
             temperature: reflectionConfig?.temperature ?? 0.3,
-            maxTokens: 65536,
+            ...(reflectionConfig?.maxTokens ? { maxTokens: reflectionConfig.maxTokens } : {}),
             ...(reflectionConfig?.model ? { model: reflectionConfig.model } : {}),
         });
 
@@ -969,7 +969,7 @@ async function analyzeCascadeMergeWithLLM(
         ];
         const response = await callLLM(messages, llmConfig, {
             temperature: reflectionConfig?.temperature ?? 0.3,
-            maxTokens: 65536,
+            ...(reflectionConfig?.maxTokens ? { maxTokens: reflectionConfig.maxTokens } : {}),
             ...(reflectionConfig?.model ? { model: reflectionConfig.model } : {}),
         });
 

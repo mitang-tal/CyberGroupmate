@@ -399,7 +399,6 @@ export class RecordingPipeline extends EventEmitter {
 
         const response = await callLLM(llmMessages, this.llmConfig, {
             temperature: 0.5,
-            maxTokens: 65536,
         });
 
         try {
@@ -459,7 +458,6 @@ export class RecordingPipeline extends EventEmitter {
 
         const response = await callLLM(llmMessages, this.llmConfig, {
             temperature: 0.5,
-            maxTokens: 65536,
         });
 
         try {

@@ -150,9 +150,7 @@ export async function runCompaction(
     ];
 
     try {
-        const response = await callLLM(messages, llmConfig, {
-            maxTokens: 65536,
-        });
+        const response = await callLLM(messages, llmConfig);
 
         const result = parseCompactionResult(response.content);
         if (!result) {
