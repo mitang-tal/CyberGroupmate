@@ -15,7 +15,7 @@ import { createInterface } from "node:readline";
 import { Sandbox } from "./sandbox/sandbox.js";
 import { NotificationCenter } from "./event/notification-center.js";
 import { MemoryStoreV2 } from "./memory-v2/index.js";
-import { loadConfig, resolveTierProfile } from "./core/config.js";
+import { loadConfig, resolveTierProfile, resolveEmbeddingConfig } from "./core/config.js";
 import { createLogger } from "./core/logger.js";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -218,7 +218,13 @@ async function cmdMemory(args: string[]): Promise<void> {
         process.exit(1);
     }
 
-    const memory = new MemoryStoreV2(dbPath);
+    const cfg = loadConfig();
+    const embeddingConfig = resolveEmbeddingConfig(cfg);
+    const cheapLlmConfig = resolveTierProfile("cheap", cfg);
+    const memory = new MemoryStoreV2(dbPath, {
+        embeddingConfig,
+        cheapLlmConfig,
+    });
     const subCmd = args[0] ?? "help";
 
     switch (subCmd) {
@@ -301,8 +307,7 @@ async function cmdMemory(args: string[]): Promise<void> {
                 log.error('用法: memory reflect --chat <chatId>');
                 break;
             }
-            const cfg = loadConfig();
-            const llmConfig = resolveTierProfile("cheap", cfg);
+            const llmConfig = cheapLlmConfig;
             log.info(`开始对群组 ${chatId} 执行 Reflection...`);
             try {
                 const result = await memory.reflect(chatId, llmConfig, cfg.reflection);
