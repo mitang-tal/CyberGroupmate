@@ -358,6 +358,9 @@ export interface IMemoryStoreV2 {
     /** 按 pipeline_topic_id upsert 话题节点到 SQLite topics 表 */
     upsertTopic(pipelineTopicId: string, data: Partial<TopicNode>): string;
 
+    /** 按 SQLite id 更新话题节点（Reflection 等内部调用者使用） */
+    updateTopicById(id: string, data: Partial<TopicNode>): void;
+
     /** 标记话题结束（设置 ended_at），由 ARCHIVED 事件触发 */
     finalizeTopic(pipelineTopicId: string): void;
 

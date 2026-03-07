@@ -234,18 +234,21 @@ export class RecordingPipeline extends EventEmitter {
                 const triageResult = await this.llmTopicSummaryTriage(chatMessages, clustering, chatId);
 
                 // ─── Step 3: 更新 TopicRegistry ───
-                const updatedTopics = this.updateRegistry(chatId, chatMessages, clustering, triageResult);
+                const { topics: updatedTopics, clusterIdMap } = this.updateRegistry(chatId, chatMessages, clustering, triageResult);
 
                 // ─── Step 4: Memory V2 写入 ───
                 if (this.memory) {
                     // 写入话题节点
                     for (const topic of updatedTopics) {
-                        const triage = triageResult.topics.find(t => t.topicId === topic.id);
+                        // 用 clusterIdMap 将真实 ID 映射回 clustering 临时 ID，解决 NEW_x → topic_xxx 的不匹配
+                        const clusterTopicId = clusterIdMap.get(topic.id) ?? topic.id;
+                        const triage = triageResult.topics.find(t => t.topicId === clusterTopicId);
                         this.memory.upsertTopic(topic.id, {
                             chatId: String(chatId),
                             label: topic.label,
-                            summary: triage?.summary ?? "",
-                            keyPoints: triage?.keyPoints ?? [],
+                            // 仅在有 triage 结果时写入 summary/keyPoints，避免后续 flush 覆写已有数据
+                            ...(triage?.summary ? { summary: triage.summary } : {}),
+                            ...(triage?.keyPoints?.length ? { keyPoints: triage.keyPoints } : {}),
                             keywords: topic.keywords,
                             participants: [...topic.participantIds].map(String),
                             messageRange: {
@@ -310,11 +313,13 @@ export class RecordingPipeline extends EventEmitter {
                         try {
                             const summaries = updatedTopics
                                 .filter(t => {
-                                    const triage = triageResult.topics.find(tr => tr.topicId === t.id);
+                                    const cid = clusterIdMap.get(t.id) ?? t.id;
+                                    const triage = triageResult.topics.find(tr => tr.topicId === cid);
                                     return triage?.summary;
                                 })
                                 .map(t => {
-                                    const triage = triageResult.topics.find(tr => tr.topicId === t.id);
+                                    const cid = clusterIdMap.get(t.id) ?? t.id;
+                                    const triage = triageResult.topics.find(tr => tr.topicId === cid);
                                     return { id: t.id, text: `${t.label} ${triage?.summary ?? ""}` };
                                 });
 
@@ -477,8 +482,10 @@ export class RecordingPipeline extends EventEmitter {
         messages: Message[],
         clustering: TopicClusteringResult,
         triageResult: TopicSummaryTriageResult
-    ): Topic[] {
+    ): { topics: Topic[]; clusterIdMap: Map<string, string> } {
         const updatedTopics: Topic[] = [];
+        // 映射: 真实话题ID → clustering 临时 ID（如 NEW_1），用于 Step 4 查找 triage 结果
+        const clusterIdMap = new Map<string, string>();
 
         // 按话题分组消息
         const topicMsgMap = new Map<string, Message[]>();
@@ -502,6 +509,7 @@ export class RecordingPipeline extends EventEmitter {
                 // 检查是否是流变
                 const evolution = clustering.evolutions.find(e => e.newTopicLabel === label);
                 topic = this.registry.create(chatId, label, keywords, topicMsgs, evolution?.parentTopicId);
+                clusterIdMap.set(topic.id, topicId); // topic.id=真实ID, topicId=NEW_x
 
                 if (evolution?.parentTopicId) {
                     this.registry.inheritDecision(evolution.parentTopicId, topic.id);
@@ -556,7 +564,7 @@ export class RecordingPipeline extends EventEmitter {
             updatedTopics.push(topic);
         }
 
-        return updatedTopics;
+        return { topics: updatedTopics, clusterIdMap };
     }
 
     /**
