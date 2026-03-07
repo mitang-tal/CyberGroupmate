@@ -47,6 +47,9 @@ interface ReflectionLLMOutput {
         agentRole?: string;
         engagementLevel?: "high" | "medium" | "low";
         hotTopics?: string[];
+        tabooTopics?: string[];
+        description?: string;
+        communicationNorms?: string[];
         recentFeedback?: string;
     };
     newFacts: Array<{
@@ -293,6 +296,9 @@ export async function runReflection(
     if (gu.agentRole) groupUpdateData.agentRole = gu.agentRole;
     if (gu.engagementLevel) groupUpdateData.engagementLevel = gu.engagementLevel;
     if (gu.hotTopics) groupUpdateData.hotTopics = gu.hotTopics;
+    if (gu.tabooTopics) groupUpdateData.tabooTopics = gu.tabooTopics;
+    if (gu.description) groupUpdateData.description = gu.description;
+    if (gu.communicationNorms) groupUpdateData.communicationNorms = gu.communicationNorms;
     if (gu.recentFeedback) groupUpdateData.recentFeedback = gu.recentFeedback;
 
     memory.upsertGroupModel(chatId, groupUpdateData);

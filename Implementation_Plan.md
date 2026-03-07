@@ -1,8 +1,8 @@
 # CyberGroupmate — 项目实施方案
 
-> **文档版本**: 0.7.0
-> **最后更新**: 2026-03-06
-> **状态**: Phase 1-5 已完成，Phase 6A（Memory V2 Stub + Air-Reading Engine + Recording Pipeline + Dry-Run + Model Router）已完成，Memory V2 M1 (SQLite 数据层) + M2 (Reflection Skill + 审计修复) 已完成，Phase 6B-7 规划中。
+> **文档版本**: 0.8.0
+> **最后更新**: 2026-03-07
+> **状态**: Phase 1-5 已完成，Phase 6A（Memory V2 Stub + Air-Reading Engine + Recording Pipeline + Dry-Run + Model Router）已完成，Memory V2 M1-M4 全部完成（SQLite 数据层 + Reflection Skill + 审计修复 + Context Compaction + 向量搜索），Phase 6B-7 规划中。
 
 ---
 
@@ -897,7 +897,7 @@ v0.4.0 — Phase 4 完成（稳定性与工具）= MVP
 
 #### Task 6.0 — Memory V2 完全重写 [详见 memory.md v3.0 + subtask.md]
 
-**状态**：M1 完成（SQLite 数据层 7 表 + FTS5 + CRUD + recall + browseHistory），M2 完成（Reflection 引擎 + 情感合并 + 邦巴裁剪 + 审计修复 6/9）。
+**状态**：M1-M4 全部完成。M4.7（sqlite-vec 原生加速）为可选项，当前使用纯 JS 余弦暴力搜索。
 
 **设计文档**：`memory.md` — 三层记忆模型（短期 Compaction / 中期 Episodic+Social / 长期 Semantic），Pipeline Topic↔TopicNode 双层架构，统一检索 `recall()`，消息档案 `browseHistory()`。
 
@@ -905,10 +905,10 @@ v0.4.0 — Phase 4 完成（稳定性与工具）= MVP
 - Pipeline Topic（内存运行时）与 TopicNode（SQLite 持久化）双层架构，通过 `pipeline_topic_id` 关联
 - Recording Pipeline 是 `topics` 表的主写入者（每次 flush 时 upsert），Compaction 聚焦于 `core_facts` 提炼
 - `message_log` 由 Recording Pipeline 批量写入（非 NC 层）
-- 向量搜索（`sqlite-vec`）和精确 token 计算（`js-tiktoken`）延迟到 Phase M4
+- 向量搜索使用纯 JS 余弦相似度暴力搜索（对 <10K 条记录足够高效），sqlite-vec 原生加速延后到 M4.7
 
 **M1 实施完成**：[REVISED @Phase-6.0-M1]
-- 7 张表 + 2 FTS5 虚拟表，55 测试通过
+- 7 张表 + 2 FTS5 虚拟表
 - `recall()` FTS5 + LIKE 回退 + 分类过滤
 - `browseHistory()` 关键词匹配 + message_log 检索
 - Recording Pipeline Step 4 落盘完成
@@ -917,27 +917,43 @@ v0.4.0 — Phase 4 完成（稳定性与工具）= MVP
 - Reflection 引擎：LLM + 规则路径双路径，自包含 prompt
 - 情感记忆合并：4 层渐进（episode → week → month → quarter）
 - 邦巴裁剪：4 Tier 规则，可配置 tierLimits
-- 配置外部化：`ReflectionExternalConfig` “ config.yaml
+- 配置外部化：`ReflectionExternalConfig` → config.yaml
 - 可观测性：全链路 debug/warn 日志
-- 审计修复 (M2.6 Debug Phase)：6/9 完成
+- 审计修复 (M2.6 Debug Phase)：9/9 全部完成 [REVISED @Phase-6.0-M2.6]
   - ✅ M2.6.1 `incrementProfileStats` 增量统计
   - ✅ M2.6.2 `maxInterval` 双触发反思
   - ✅ M2.6.3 `identityUpdates` 身份信息同步
   - ✅ M2.6.4 Dunbar Tier 人数上限强制
   - ✅ M2.6.5 `expires_at` 事实过期过滤
+  - ✅ M2.6.6 `awakeHours` 作息触发（`main.ts` + `config.ts`）
+  - ✅ M2.6.7 Reflection agent-state 写入（`reflection.ts` Step 6）
   - ✅ M2.6.8 UPDATE 日志
-  - ⏳ M2.6.6/7/9 延后处理
+  - ✅ M2.6.9 Compaction 回写 `topics.sentiment`（`reflection.ts` Step 4b′）
 
-**测试**：66 tests 全部通过，tsc 0 错误
+**M3 实施完成**：[REVISED @Phase-6.0-M3]
+- ContextManager 纯函数模块，CJK 感知 token 估算
+- `shouldCompact()` + `compact()` + 话题连贯性保护
+- 替换 `main.ts` 中旧的 rolling truncation
+- `system-prompts/context-compaction.md` prompt 外部化
+- 31 个测试用例全通过
+
+**M4 实施完成**：[REVISED @Phase-6.0-M4]
+- 纯 JS embedding（FNV-1a n-gram hash 128 维向量）+ OpenAI API 双模式
+- `recall()` 混合检索：向量搜索 + FTS5/LIKE + Map 去重 + deepSummary
+- `browseHistory()` 升级：LLM 意图解析 → 向量搜索定位 → message_log 拉取 → LLM 深度阅读
+- Recording Pipeline flush 集成 embedding 生成
+- SafeUpdateBuilder / SafeSelectBuilder 结构化 SQL
+
+**测试**：100+ tests 全部通过，tsc 0 错误
 
 **4 个子阶段**：
 
 | 子阶段 | 内容 | 估时 | 状态 |
 |--------|------|------|------|
 | **M1** | SQLite 数据层：7 张表，FTS5 搜索，Recording Pipeline Step 4 落盘 | 4 天 | ✅ |
-| **M2** | Reflection Skill：反思引擎 + 情感合并 + 邦巴精度 + 审计修复 | 3 天 | ✅ |
-| **M3** | 智能 Context Compaction：token budget + 话题感知压缩 | 3 天 | 🔜 |
-| **M4** | 向量搜索：sqlite-vec + embedding，recall 混合检索 | 4 天 | |
+| **M2** | Reflection Skill：反思引擎 + 情感合并 + 邦巴精度 + 审计修复 9/9 | 3 天 | ✅ |
+| **M3** | 智能 Context Compaction：token budget + 话题感知压缩 | 3 天 | ✅ |
+| **M4** | 向量搜索：embedding + 纯 JS 余弦 + recall 混合检索 | 4 天 | ✅ |
 
 **详细子任务**见 `subtask.md`。
 
