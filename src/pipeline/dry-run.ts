@@ -7,18 +7,20 @@
  * 1. 从 JSON 文件加载历史消息
  * 2. 按时间顺序模拟事件到达
  * 3. 每条消息经过 FastRouter + RecordingPipeline + Triage
- * 4. 记录所有决策
- * 5. 输出 JSON 评估报告
+ * 4. Recording Pipeline flush 时写入 Memory V2（topics / message_log / person_identities）
+ * 5. 可选：处理完后触发 Reflection（反思总结）
+ * 6. 输出 JSON 评估报告 + Memory 统计
  */
 
-import { readFileSync, existsSync, writeFileSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync, unlinkSync } from "node:fs";
 import { createLogger } from "../core/logger.js";
-import { resolveTierProfile, type AppConfig, type LLMConfig } from "../core/config.js";
+import { resolveTierProfile, resolveEmbeddingConfig, type AppConfig, type LLMConfig } from "../core/config.js";
 import { TopicRegistry } from "./topic-registry.js";
 import { RecordingPipeline } from "./recording-pipeline.js";
 import { EngagedTopicHandler } from "./engaged-topic-handler.js";
 import { FastRouter } from "./fast-router.js";
 import { ModelRouter } from "./model-router.js";
+import { MemoryStoreV2 } from "../memory-v2/index.js";
 import type {
     Message,
     DryRunConfig,
@@ -70,6 +72,7 @@ export async function runDryRun(
         chatId: config.chatId,
         model: config.model,
         pipelineMode: config.pipelineMode,
+        reflect: config.reflect ?? false,
     });
 
     // ─── 加载历史消息 ───
@@ -91,9 +94,21 @@ export async function runDryRun(
     const cheapConfig = resolveTierProfile("cheap", appConfig);
     const midConfig = resolveTierProfile("mid", appConfig);
     const sotaConfig = resolveTierProfile("sota", appConfig);
+    const embeddingConfig = resolveEmbeddingConfig(appConfig);
+
+    // ─── 创建 Memory V2 数据库 ───
+    const dbPath = config.memoryDbPath ?? "workspace/dry-run-memory.db";
+    // 删除旧的 dry-run DB（每次重新生成）
+    if (existsSync(dbPath)) {
+        try { unlinkSync(dbPath); } catch (e) { log.warn("旧 DB 删除失败（可能被占用）", { path: dbPath, error: String(e) }); }
+        try { unlinkSync(dbPath + "-wal"); } catch { /* ok */ }
+        try { unlinkSync(dbPath + "-shm"); } catch { /* ok */ }
+    }
+    const memory = new MemoryStoreV2(dbPath, { embeddingConfig });
+    log.info("Memory V2 数据库已创建", { dbPath });
 
     const registry = new TopicRegistry();
-    const recordingPipeline = new RecordingPipeline(registry, cheapConfig, persona);
+    const recordingPipeline = new RecordingPipeline(registry, cheapConfig, persona, memory, embeddingConfig);
     const engagedHandler = new EngagedTopicHandler(registry, midConfig);
     const fastRouter = new FastRouter(registry, engagedHandler, recordingPipeline, agentUserId);
     const modelRouter = new ModelRouter(midConfig, undefined, {
@@ -102,10 +117,17 @@ export async function runDryRun(
         sota: sotaConfig.model,
     });
 
+    // 注册 topic:archived 事件 → 标记话题结束（与 main.ts 一致）
+    registry.on("topic:archived", (topic: { id: string }) => {
+        memory.finalizeTopic(topic.id);
+        log.debug("话题归档 → finalizeTopic", { topicId: topic.id });
+    });
+
     log.info("模型配置", {
         cheap: `${cheapConfig.model} (${appConfig.modelTiers.cheap})`,
         mid: `${midConfig.model} (${appConfig.modelTiers.mid})`,
         sota: `${sotaConfig.model} (${appConfig.modelTiers.sota})`,
+        embedding: `${embeddingConfig.provider} (dim=${embeddingConfig.dimensions})`,
     });
 
     const decisions: DryRunDecision[] = [];
@@ -223,6 +245,73 @@ export async function runDryRun(
     // 最终 flush
     await recordingPipeline.flush();
 
+    // ─── Memory 统计 ───
+    let memoryStats: DryRunResult["memoryStats"];
+    try {
+        const db = (memory as any).db;
+        memoryStats = {
+            topics: (db.prepare("SELECT COUNT(*) as cnt FROM topics").get() as any)?.cnt ?? 0,
+            facts: (db.prepare("SELECT COUNT(*) as cnt FROM core_facts").get() as any)?.cnt ?? 0,
+            messages: (db.prepare("SELECT COUNT(*) as cnt FROM message_log").get() as any)?.cnt ?? 0,
+            persons: (db.prepare("SELECT COUNT(*) as cnt FROM person_identities").get() as any)?.cnt ?? 0,
+            profiles: (db.prepare("SELECT COUNT(*) as cnt FROM person_group_profiles").get() as any)?.cnt ?? 0,
+            dbPath,
+        };
+        log.info("📊 Memory V2 统计", memoryStats);
+    } catch (err) {
+        log.warn("无法读取 memory 统计", { error: String(err) });
+    }
+
+    // ─── 可选 Reflection ───
+    let reflectionResults: DryRunResult["reflectionResults"];
+    if (config.reflect) {
+        log.info("🧠 开始 Reflection...");
+        reflectionResults = [];
+
+        // 收集所有出现过的 chatId
+        const chatIds = new Set(messages.map(m => String(m.chatId)));
+
+        for (const chatId of chatIds) {
+            try {
+                // 确保 group_model 存在（Reflection 需要它）
+                memory.upsertGroupModel(chatId, { chatTitle: `Chat ${chatId}` });
+
+                const result = await memory.reflect(chatId, cheapConfig, appConfig.reflection);
+                reflectionResults.push({
+                    chatId,
+                    topicsSummary: result.topicsSummary.length,
+                    personUpdates: result.personUpdates.length,
+                    newFacts: result.newCoreFacts.length,
+                    mergedEpisodes: result.mergedEpisodes,
+                    insights: result.insights,
+                });
+                log.info("🧠 Reflection 完成", {
+                    chatId,
+                    topics: result.topicsSummary.length,
+                    persons: result.personUpdates.length,
+                    facts: result.newCoreFacts.length,
+                    insights: result.insights.slice(0, 100),
+                });
+            } catch (err) {
+                log.error("🧠 Reflection 失败", { chatId, error: String(err) });
+            }
+        }
+
+        // 更新 memory 统计（Reflection 可能新增了 facts / profiles）
+        try {
+            const db = (memory as any).db;
+            memoryStats = {
+                topics: (db.prepare("SELECT COUNT(*) as cnt FROM topics").get() as any)?.cnt ?? 0,
+                facts: (db.prepare("SELECT COUNT(*) as cnt FROM core_facts").get() as any)?.cnt ?? 0,
+                messages: (db.prepare("SELECT COUNT(*) as cnt FROM message_log").get() as any)?.cnt ?? 0,
+                persons: (db.prepare("SELECT COUNT(*) as cnt FROM person_identities").get() as any)?.cnt ?? 0,
+                profiles: (db.prepare("SELECT COUNT(*) as cnt FROM person_group_profiles").get() as any)?.cnt ?? 0,
+                dbPath,
+            };
+            log.info("📊 Reflection 后 Memory 统计", memoryStats);
+        } catch { /* ignore */ }
+    }
+
     // ─── 生成报告 ───
     const totalTimeMs = Date.now() - startTime;
     const result: DryRunResult = {
@@ -232,6 +321,8 @@ export async function runDryRun(
         decisions,
         totalTokens,
         totalTimeMs,
+        memoryStats,
+        reflectionResults,
     };
 
     log.info("Dry-Run 完成", {
@@ -261,6 +352,7 @@ export async function runDryRun(
     // 清理
     recordingPipeline.dispose();
     engagedHandler.dispose();
+    memory.close();
 
     return result;
 }

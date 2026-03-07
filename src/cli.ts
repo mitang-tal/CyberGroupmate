@@ -464,9 +464,10 @@ const HELP = `
   sandbox                交互式 Sandbox REPL
   notify [type] [text]   推送一条通知到队列
   drain                  查看并清空通知队列
-  memory <subcmd>        记忆系统查询（search/person/conversations/todos/sql）
+  memory <subcmd>        记忆系统查询（recall/browse/reflect/status）
   config                 检查配置加载结果
   status                 查看 agent 运行状态和统计
+  dry-run <file.jsonl>   历史消息回放评估
 
 环境变量:
   LOG_LEVEL=debug|info|warn|error   日志级别（默认: info）
@@ -483,9 +484,14 @@ const HELP = `
 async function cmdDryRun(args: string[]): Promise<void> {
     const filePath = args[0];
     if (!filePath || !existsSync(filePath)) {
-        console.log("用法: cyber-groupmate dry-run <history.jsonl> [--chat-id <id>] [--days <n>]");
+        console.log("用法: npx tsx src/cli.ts dry-run <history.jsonl> [options]");
         console.log("\n  history.jsonl: 每行一个 JSON 的历史消息文件");
         console.log("  格式: {id, chat_id, user_id, user_name, text, date, reply_to?}");
+        console.log("\n选项:");
+        console.log("  --chat-id <id>       只处理指定群组的消息");
+        console.log("  --days <n>           只处理最近 N 天的消息（默认 30，0=全部）");
+        console.log("  --reflect            处理完后触发 Reflection（反思总结）");
+        console.log("  --memory-db <path>   自定义 memory DB 路径（默认 workspace/dry-run-memory.db）");
         if (filePath && !existsSync(filePath)) {
             console.log(`\n  ❌ 文件不存在: ${filePath}`);
         }
@@ -494,8 +500,11 @@ async function cmdDryRun(args: string[]): Promise<void> {
 
     const chatIdArg = args.indexOf("--chat-id");
     const daysArg = args.indexOf("--days");
+    const memoryDbArg = args.indexOf("--memory-db");
     const chatId = chatIdArg >= 0 ? Number(args[chatIdArg + 1]) : 0;
     const daysBack = daysArg >= 0 ? Number(args[daysArg + 1]) : 30;
+    const reflect = args.includes("--reflect");
+    const memoryDbPath = memoryDbArg >= 0 ? args[memoryDbArg + 1] : undefined;
 
     const appConfig = loadConfig();
 
@@ -507,9 +516,11 @@ async function cmdDryRun(args: string[]): Promise<void> {
         send: false,
         source: "file",
         filePath,
+        reflect,
+        memoryDbPath,
     };
 
-    console.log(`🔄 Dry-Run 开始 (文件: ${filePath}, chatId: ${chatId || 'all'}, 天数: ${daysBack})`);
+    console.log(`🔄 Dry-Run 开始 (文件: ${filePath}, chatId: ${chatId || 'all'}, 天数: ${daysBack}, reflect: ${reflect})`);
 
     const result = await runDryRun(config, appConfig, appConfig.persona?.description ?? "赛博群友");
 
@@ -526,6 +537,33 @@ async function cmdDryRun(args: string[]): Promise<void> {
         }
         if (result.decisions.length > 20) {
             console.log(`    ... 还有 ${result.decisions.length - 20} 条`);
+        }
+    }
+
+    // Memory 统计
+    if (result.memoryStats) {
+        const ms = result.memoryStats;
+        console.log("\n  🧠 Memory V2 统计:");
+        console.log(`    话题:     ${ms.topics} 个`);
+        console.log(`    事实:     ${ms.facts} 条`);
+        console.log(`    消息日志: ${ms.messages} 条`);
+        console.log(`    用户身份: ${ms.persons} 个`);
+        console.log(`    群内画像: ${ms.profiles} 个`);
+        console.log(`    数据库:   ${ms.dbPath}`);
+    }
+
+    // Reflection 结果
+    if (result.reflectionResults && result.reflectionResults.length > 0) {
+        console.log("\n  🔮 Reflection 结果:");
+        for (const r of result.reflectionResults) {
+            console.log(`    群组 ${r.chatId}:`);
+            console.log(`      话题摘要: ${r.topicsSummary} 条`);
+            console.log(`      画像更新: ${r.personUpdates} 人`);
+            console.log(`      新事实:   ${r.newFacts} 条`);
+            console.log(`      合并记忆: ${r.mergedEpisodes} 条`);
+            if (r.insights) {
+                console.log(`      洞察: ${r.insights.slice(0, 200)}`);
+            }
         }
     }
 

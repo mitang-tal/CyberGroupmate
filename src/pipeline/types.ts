@@ -270,6 +270,10 @@ export interface DryRunConfig {
     source: "file" | "live";
     /** JSON 文件路径（source=file 时） */
     filePath?: string;
+    /** Memory V2 数据库路径（默认 workspace/dry-run-memory.db） */
+    memoryDbPath?: string;
+    /** 是否在处理完后触发 Reflection */
+    reflect?: boolean;
 }
 
 /** Dry-Run 单条决策记录 */
@@ -294,6 +298,24 @@ export interface DryRunResult {
     totalTokens: number;
     /** 总耗时 */
     totalTimeMs: number;
+    /** Memory V2 统计（如果启用了 memory 写入） */
+    memoryStats?: {
+        topics: number;
+        facts: number;
+        messages: number;
+        persons: number;
+        profiles: number;
+        dbPath: string;
+    };
+    /** Reflection 结果（如果启用了 reflect） */
+    reflectionResults?: Array<{
+        chatId: string;
+        topicsSummary: number;
+        personUpdates: number;
+        newFacts: number;
+        mergedEpisodes: number;
+        insights: string;
+    }>;
 }
 
 // ─── Recording Pipeline LLM 输出类型 ───

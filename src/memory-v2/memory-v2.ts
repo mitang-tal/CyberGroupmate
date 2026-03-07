@@ -183,17 +183,39 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
 
     /**
      * 创建 vec0 虚拟表（仅在 sqlite-vec 可用时调用）
+     * 如果表已存在但维度不匹配，会 DROP + 重建。
      */
     private initVecTables(): void {
         const dims = this.embeddingConfig?.dimensions ?? 128;
+        log.debug("initVecTables", { dims, provider: this.embeddingConfig?.provider ?? "local" });
         try {
-            this.db.exec(`
-                CREATE VIRTUAL TABLE IF NOT EXISTS topics_vec USING vec0(
-                    topic_id TEXT PRIMARY KEY,
-                    chat_id TEXT partition key,
-                    embedding float[${dims}]
-                );
-            `);
+            // 检测已有 topics_vec 的维度是否匹配
+            let needRecreate = false;
+            try {
+                // 尝试插入一个零向量来检查维度
+                const testVec = Buffer.alloc(dims * 4); // float32 = 4 bytes each
+                this.db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS topics_vec USING vec0(
+                    topic_id TEXT PRIMARY KEY, chat_id TEXT partition key, embedding float[${dims}]
+                )`);
+                // 如果上面成功了（表不存在或维度匹配），直接继续
+            } catch {
+                // 如果失败（维度不匹配），需要重建
+                needRecreate = true;
+            }
+
+            if (needRecreate) {
+                log.info("vec0 表维度不匹配，重建中...", { targetDims: dims });
+                this.db.exec(`DROP TABLE IF EXISTS topics_vec`);
+                this.db.exec(`DROP TABLE IF EXISTS facts_vec`);
+                this.db.exec(`
+                    CREATE VIRTUAL TABLE topics_vec USING vec0(
+                        topic_id TEXT PRIMARY KEY,
+                        chat_id TEXT partition key,
+                        embedding float[${dims}]
+                    );
+                `);
+            }
+
             this.db.exec(`
                 CREATE VIRTUAL TABLE IF NOT EXISTS facts_vec USING vec0(
                     fact_id TEXT PRIMARY KEY,
