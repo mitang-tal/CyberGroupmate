@@ -1432,17 +1432,15 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             }
             if (messageIds.length === 0) continue;
 
-            // 用精确 message_ids 加上下文窗口扩展范围查询
-            const minId = Math.min(...messageIds);
-            const maxId = Math.max(...messageIds);
+            // 用精确 message_ids 查询归属消息
+            const placeholders = messageIds.map(() => "?").join(", ");
             const msgRows = this.db.prepare(`
                 SELECT * FROM message_log
-                WHERE chat_id = ? AND message_id >= ? AND message_id <= ?
+                WHERE chat_id = ? AND message_id IN (${placeholders})
                 ORDER BY message_id ASC
             `).all(
                 chatId,
-                Math.max(0, minId - contextWindow),
-                maxId + contextWindow,
+                ...messageIds,
             ) as Record<string, unknown>[];
 
             const messages = msgRows.map(r => ({
