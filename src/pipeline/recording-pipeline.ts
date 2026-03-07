@@ -252,8 +252,7 @@ export class RecordingPipeline extends EventEmitter {
                             keywords: topic.keywords,
                             participants: [...topic.participantIds].map(String),
                             messageRange: {
-                                firstMessageId: topic.messageIds[0] ?? 0,
-                                lastMessageId: topic.messageIds.at(-1) ?? 0,
+                                messageIds: topic.messageIds,
                                 count: topic.messageCount,
                             },
                             startedAt: new Date(topic.createdAt).toISOString(),

@@ -23,7 +23,7 @@ const log = createLogger("query-builder");
 export const COLUMN_WHITELIST = {
     topics: [
         "pipeline_topic_id", "chat_id", "label", "summary", "key_points",
-        "participants", "keywords", "first_message_id", "last_message_id",
+        "participants", "keywords", "message_ids",
         "message_count", "started_at", "ended_at", "sentiment",
         "related_topic_ids", "was_engaged", "intervention_count",
         "embedding", "created_at", "updated_at",

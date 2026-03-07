@@ -243,8 +243,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
                 key_points TEXT NOT NULL DEFAULT '[]',
                 participants TEXT NOT NULL DEFAULT '[]',
                 keywords TEXT NOT NULL DEFAULT '[]',
-                first_message_id INTEGER,
-                last_message_id INTEGER,
+                message_ids TEXT NOT NULL DEFAULT '[]',
                 message_count INTEGER DEFAULT 0,
                 started_at TEXT NOT NULL,
                 ended_at TEXT,
@@ -397,8 +396,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             if (data.participants !== undefined) builder.set("participants", toJSON(data.participants));
             if (data.keywords !== undefined) builder.set("keywords", toJSON(data.keywords));
             if (data.messageRange !== undefined) {
-                builder.set("first_message_id", data.messageRange.firstMessageId);
-                builder.set("last_message_id", data.messageRange.lastMessageId);
+                builder.set("message_ids", toJSON(data.messageRange.messageIds));
                 builder.set("message_count", data.messageRange.count);
             }
             if (data.startedAt !== undefined) builder.set("started_at", data.startedAt);
@@ -436,11 +434,11 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             this.db.prepare(`
                 INSERT INTO topics (
                     id, pipeline_topic_id, chat_id, label, summary, key_points, participants,
-                    keywords, first_message_id, last_message_id, message_count,
+                    keywords, message_ids, message_count,
                     started_at, ended_at, sentiment, related_topic_ids,
                     was_engaged, intervention_count, embedding,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
                 id,
                 pipelineTopicId,
@@ -450,8 +448,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
                 toJSON(data.keyPoints),
                 toJSON(data.participants),
                 toJSON(data.keywords),
-                data.messageRange?.firstMessageId ?? null,
-                data.messageRange?.lastMessageId ?? null,
+                toJSON(data.messageRange?.messageIds),
                 data.messageRange?.count ?? 0,
                 data.startedAt ?? ts,
                 data.endedAt ?? null,
@@ -492,8 +489,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         if (data.participants !== undefined) builder.set("participants", toJSON(data.participants));
         if (data.keywords !== undefined) builder.set("keywords", toJSON(data.keywords));
         if (data.messageRange !== undefined) {
-            builder.set("first_message_id", data.messageRange.firstMessageId);
-            builder.set("last_message_id", data.messageRange.lastMessageId);
+            builder.set("message_ids", toJSON(data.messageRange.messageIds));
             builder.set("message_count", data.messageRange.count);
         }
         if (data.startedAt !== undefined) builder.set("started_at", data.startedAt);
@@ -1378,8 +1374,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
                     if (vecTopics.length > 0) {
                         topicRows = vecTopics.map(t => ({
                             ...t,
-                            first_message_id: t.messageRange?.firstMessageId ?? null,
-                            last_message_id: t.messageRange?.lastMessageId ?? null,
+                            message_ids: toJSON(t.messageRange?.messageIds),
                             chat_id: t.chatId,
                             label: t.label,
                             started_at: t.startedAt,
@@ -1425,20 +1420,29 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         let totalMessagesRead = 0;
 
         for (const topicRow of topicRows) {
-            const firstMsgId = (topicRow.first_message_id ?? topicRow.firstMessageId) as number | null;
-            const lastMsgId = (topicRow.last_message_id ?? topicRow.lastMessageId) as number | null;
+            const messageIdsRaw = (topicRow.message_ids ?? topicRow.messageIds) as string | number[] | null;
             const chatId = (topicRow.chat_id ?? topicRow.chatId) as string;
 
-            if (firstMsgId == null || lastMsgId == null) continue;
+            // 解析 message_ids
+            let messageIds: number[];
+            if (Array.isArray(messageIdsRaw)) {
+                messageIds = messageIdsRaw;
+            } else {
+                messageIds = fromJSON<number[]>(messageIdsRaw as string, []);
+            }
+            if (messageIds.length === 0) continue;
 
+            // 用精确 message_ids 加上下文窗口扩展范围查询
+            const minId = Math.min(...messageIds);
+            const maxId = Math.max(...messageIds);
             const msgRows = this.db.prepare(`
                 SELECT * FROM message_log
                 WHERE chat_id = ? AND message_id >= ? AND message_id <= ?
                 ORDER BY message_id ASC
             `).all(
                 chatId,
-                Math.max(0, firstMsgId - contextWindow),
-                lastMsgId + contextWindow,
+                Math.max(0, minId - contextWindow),
+                maxId + contextWindow,
             ) as Record<string, unknown>[];
 
             const messages = msgRows.map(r => ({
@@ -1615,8 +1619,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             keyPoints: fromJSON(row.key_points as string, []),
             participants: fromJSON(row.participants as string, []),
             messageRange: {
-                firstMessageId: (row.first_message_id as number) ?? 0,
-                lastMessageId: (row.last_message_id as number) ?? 0,
+                messageIds: fromJSON<number[]>(row.message_ids as string, []),
                 count: (row.message_count as number) ?? 0,
             },
             startedAt: row.started_at as string,

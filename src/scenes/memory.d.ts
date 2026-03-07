@@ -48,7 +48,7 @@ interface TopicNode {
     summary: string;
     keyPoints: string[];
     participants: string[];
-    messageRange: { firstMessageId: number; lastMessageId: number; count: number };
+    messageRange: { messageIds: number[]; count: number };
     startedAt: string;
     endedAt: string | null;
     sentiment: 'positive' | 'neutral' | 'negative' | 'mixed';

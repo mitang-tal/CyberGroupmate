@@ -42,10 +42,9 @@ export interface TopicNode {
     keyPoints: string[];
     /** 参与者 userId 列表 */
     participants: string[];
-    /** 原始消息范围（便于用 message_log 回溯） */
+    /** 关联消息 ID 列表（完整存储每条归属消息的 ID） */
     messageRange: {
-        firstMessageId: number;
-        lastMessageId: number;
+        messageIds: number[];
         count: number;
     };
     /** 话题开始时间 (ISO 8601) */
