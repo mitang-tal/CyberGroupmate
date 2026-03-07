@@ -273,14 +273,8 @@ export async function runReflection(
         for (const ts of llmOutput.topicsSummary) {
             const topic = topicByLabel.get(ts.label);
             if (topic && ts.sentiment) {
-                memory.upsertTopic(topic.id, {
-                    chatId,
-                    label: topic.label,
-                    summary: topic.summary,
-                    keywords: topic.keywords,
-                    participants: topic.participants,
-                    messageRange: topic.messageRange,
-                    startedAt: topic.startedAt,
+                // 用 updateTopicById 按 SQLite id 更新，避免将 UUID 当作 pipeline_topic_id 插入重复行
+                memory.updateTopicById(topic.id, {
                     sentiment: ts.sentiment as TopicNode["sentiment"],
                 });
                 log.debug("Reflection 4b′: 回写话题情感", { label: ts.label, sentiment: ts.sentiment });
@@ -926,7 +920,7 @@ async function analyzeMergeWithLLM(
         ];
         const response = await callLLM(messages, llmConfig, {
             temperature: reflectionConfig?.temperature ?? 0.3,
-            maxTokens: 1024, // 合并分析输出较短
+            maxTokens: 65536,
             ...(reflectionConfig?.model ? { model: reflectionConfig.model } : {}),
         });
 
@@ -975,7 +969,7 @@ async function analyzeCascadeMergeWithLLM(
         ];
         const response = await callLLM(messages, llmConfig, {
             temperature: reflectionConfig?.temperature ?? 0.3,
-            maxTokens: 1024,
+            maxTokens: 65536,
             ...(reflectionConfig?.model ? { model: reflectionConfig.model } : {}),
         });
 

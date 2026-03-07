@@ -477,6 +477,52 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         }
     }
 
+    /**
+     * 按 SQLite id 更新话题节点（Reflection 等内部调用者使用）。
+     * 与 upsertTopic 的 UPDATE 分支逻辑一致，但按 id 查找而非 pipeline_topic_id。
+     */
+    updateTopicById(id: string, data: Partial<TopicNode>): void {
+        const ts = now();
+        const builder = new SafeUpdateBuilder("topics");
+
+        if (data.chatId !== undefined) builder.set("chat_id", data.chatId);
+        if (data.label !== undefined) builder.set("label", data.label);
+        if (data.summary !== undefined) builder.set("summary", data.summary);
+        if (data.keyPoints !== undefined) builder.set("key_points", toJSON(data.keyPoints));
+        if (data.participants !== undefined) builder.set("participants", toJSON(data.participants));
+        if (data.keywords !== undefined) builder.set("keywords", toJSON(data.keywords));
+        if (data.messageRange !== undefined) {
+            builder.set("first_message_id", data.messageRange.firstMessageId);
+            builder.set("last_message_id", data.messageRange.lastMessageId);
+            builder.set("message_count", data.messageRange.count);
+        }
+        if (data.startedAt !== undefined) builder.set("started_at", data.startedAt);
+        if (data.endedAt !== undefined) builder.set("ended_at", data.endedAt);
+        if (data.sentiment !== undefined) builder.set("sentiment", data.sentiment);
+        if (data.relatedTopicIds !== undefined) builder.set("related_topic_ids", toJSON(data.relatedTopicIds));
+        if (data.wasEngaged !== undefined) builder.set("was_engaged", data.wasEngaged ? 1 : 0);
+        if (data.interventionCount !== undefined) builder.set("intervention_count", data.interventionCount);
+        if (data.embedding !== undefined) builder.set("embedding", Buffer.from(data.embedding.buffer));
+        builder.set("updated_at", ts);
+        builder.where("id", id);
+
+        if (builder.hasSets) {
+            const { sql, params } = builder.build();
+            this.db.prepare(sql).run(...params);
+
+            this.syncTopicFTS(id);
+
+            if (data.embedding !== undefined) {
+                const chatIdForVec = data.chatId ?? (this.db.prepare(
+                    "SELECT chat_id FROM topics WHERE id = ?"
+                ).pluck().get(id) as string) ?? "";
+                this.syncTopicVec(id, chatIdForVec, data.embedding);
+            }
+        }
+
+        log.debug("updateTopicById", { id });
+    }
+
     /** 同步 topics_fts 与 topics 表中某行的数据（独立 FTS5 模式） */
     private syncTopicFTS(topicId: string): void {
         try {
@@ -1286,7 +1332,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             { role: "user", content: `查询：${query}\n\n相关记忆：\n${topicSummaries}\n${factSummaries}` },
         ];
 
-        const response = await callLLM(messages, this.cheapLlmConfig, { maxTokens: 500, temperature: 0.3 });
+        const response = await callLLM(messages, this.cheapLlmConfig, { maxTokens: 65536, temperature: 0.3 });
         return response.content.trim();
     }
 
@@ -1447,7 +1493,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             { role: "user", content: intent },
         ];
 
-        const response = await callLLM(messages, this.cheapLlmConfig, { maxTokens: 200, temperature: 0.1 });
+        const response = await callLLM(messages, this.cheapLlmConfig, { maxTokens: 65536, temperature: 0.1 });
         try {
             const parsed = JSON.parse(response.content.replace(/```json?\s*/g, "").replace(/```/g, "").trim());
             return {
@@ -1483,7 +1529,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             { role: "user", content: `问题：${intent}\n\n对话记录：\n${contextParts.join("\n\n---\n\n")}` },
         ];
 
-        const response = await callLLM(messages, this.cheapLlmConfig, { maxTokens: 500, temperature: 0.3 });
+        const response = await callLLM(messages, this.cheapLlmConfig, { maxTokens: 65536, temperature: 0.3 });
         return response.content.trim();
     }
 
