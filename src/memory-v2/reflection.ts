@@ -371,7 +371,7 @@ export async function runReflection(
 
     // ── Step 6: 追加反思记录到 agent-state ──
     try {
-        const AGENT_STATE_PATH = join(process.cwd(), "data", "agent-state.md");
+        const AGENT_STATE_PATH = join(process.cwd(), "workspace", "agent-state.md");
 
         const reflectionEntry = [
             `\n## Reflection ${startTime}`,

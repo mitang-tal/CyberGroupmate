@@ -174,6 +174,10 @@ export interface Topic {
     // ─── 上下文 ───
     /** 最近几条消息的摘要（LLM 生成，给 Triage 用） */
     recentContext: string;
+    /** 上一轮 Triage 生成的一句话摘要（跨 flush 持久化） */
+    lastSummary?: string;
+    /** 上一轮 Triage 生成的要点列表（跨 flush 持久化） */
+    lastKeyPoints?: string[];
 }
 
 // ─── quickTriage 相关类型 ───

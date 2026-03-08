@@ -87,7 +87,7 @@ AI 智能体人设：{PERSONA}
   "topics": [
     {
       "topicId": "<话题ID>",
-      "summary": "<一句话摘要>",
+      "summary": "<2-3句话摘要，和标题不重复>",
       "keyPoints": ["<要点1>", "<要点2>"],
       "should_intervene": true/false,
       "intervention_type": "FACTUAL_CORRECTION|KNOWLEDGE_GAP|QUESTION_ANSWER|RESOURCE_SHARING|CONFLICT_MEDIATION|CONSENSUS_SUMMARY|CASUAL_CHAT|NOT_APPLICABLE",
@@ -430,7 +430,7 @@ export class RecordingPipeline extends EventEmitter {
         clustering: TopicClusteringResult,
         chatId: number
     ): Promise<TopicSummaryTriageResult> {
-        // 按话题分组消息
+        // 按话题分组本批次消息
         const topicGroups = new Map<string, Message[]>();
         for (const assignment of clustering.assignments) {
             const msg = messages.find(m => m.id === assignment.messageId);
@@ -440,11 +440,9 @@ export class RecordingPipeline extends EventEmitter {
             topicGroups.set(assignment.topicId, group);
         }
 
-        const topicMessagesStr = Array.from(topicGroups.entries()).map(([topicId, msgs]) => {
-            const label = clustering.assignments.find(a => a.topicId === topicId)?.topicLabel ?? topicId;
-            const msgLines = msgs.map(m => `  ${m.senderName}: ${m.text}`).join("\n");
-            return `### 话题: ${label} (ID: ${topicId})\n${msgLines}`;
-        }).join("\n\n");
+        // 构建每个话题的上下文字符串
+        const allTopicIds = Array.from(topicGroups.keys());
+        const topicMessagesStr = this.buildTopicContextStr(allTopicIds, topicGroups, clustering);
 
         const prompt = TOPIC_TRIAGE_PROMPT
             .replace("{PERSONA}", this.personaDescription)
@@ -459,16 +457,116 @@ export class RecordingPipeline extends EventEmitter {
             temperature: 0.5,
         });
 
+        let result: TopicSummaryTriageResult;
         try {
             const jsonStr = response.content
                 .replace(/```json\s*/g, "")
                 .replace(/```\s*/g, "")
                 .trim();
-            return JSON.parse(jsonStr) as TopicSummaryTriageResult;
+            result = JSON.parse(jsonStr) as TopicSummaryTriageResult;
         } catch {
             log.warn("话题摘要 Triage LLM 输出解析失败", { raw: response.content.slice(0, 200) });
             return { topics: [] };
         }
+
+        // ─── 输出完整性校验 + 重试 ───
+        const returnedIds = new Set(result.topics.map(t => t.topicId));
+        const missingIds = allTopicIds.filter(id => !returnedIds.has(id));
+
+        if (missingIds.length > 0) {
+            log.warn("Step 2 LLM 遗漏话题，启动补全重试", {
+                expected: allTopicIds.length,
+                returned: returnedIds.size,
+                missingIds,
+            });
+
+            // 只对缺失的话题重跑一次
+            const retryStr = this.buildTopicContextStr(missingIds, topicGroups, clustering);
+            const retryPrompt = TOPIC_TRIAGE_PROMPT
+                .replace("{PERSONA}", this.personaDescription)
+                .replace("{TOPIC_MESSAGES}", retryStr);
+
+            const retryMessages: ChatMessage[] = [
+                { role: "system", content: "你是一个精确的 JSON 输出助手。只输出合法 JSON，不要任何其他内容。" },
+                { role: "user", content: retryPrompt },
+            ];
+
+            try {
+                const retryResponse = await callLLM(retryMessages, this.llmConfig, {
+                    temperature: 0.3,
+                });
+                const retryJson = retryResponse.content
+                    .replace(/```json\s*/g, "")
+                    .replace(/```\s*/g, "")
+                    .trim();
+                const retryResult = JSON.parse(retryJson) as TopicSummaryTriageResult;
+                result.topics.push(...retryResult.topics);
+
+                const stillMissing = missingIds.filter(
+                    id => !retryResult.topics.some(t => t.topicId === id)
+                );
+                if (stillMissing.length > 0) {
+                    log.error("Step 2 重试后仍有话题缺失", { stillMissing });
+                }
+            } catch (retryErr) {
+                log.error("Step 2 补全重试失败", { error: String(retryErr), missingIds });
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * 构建话题上下文字符串（供 Step 2 prompt 使用）
+     *
+     * 对旧话题：附带 label、上一轮 summary/keyPoints/reason、recentContext 历史消息
+     * 对新话题：只含本批次消息
+     */
+    private buildTopicContextStr(
+        topicIds: string[],
+        topicGroups: Map<string, Message[]>,
+        clustering: TopicClusteringResult
+    ): string {
+        return topicIds.map(topicId => {
+            const msgs = topicGroups.get(topicId) ?? [];
+            const newMsgLines = msgs.map(m => `  ${m.senderName}: ${m.text}`).join("\n");
+
+            if (topicId.startsWith("NEW_")) {
+                // 新话题：用 clustering 里的 label
+                const label = clustering.assignments.find(a => a.topicId === topicId)?.topicLabel ?? "新话题";
+                return `### 话题: ${label} (ID: ${topicId})\n${newMsgLines}`;
+            }
+
+            // 旧话题：从 registry 取完整上下文
+            const topic = this.registry.get(topicId);
+            const label = topic?.label ?? topicId;
+            const parts: string[] = [`### 话题: ${label} (ID: ${topicId}) [持续话题]`];
+
+            // 上一轮的摘要信息
+            if (topic?.lastSummary) {
+                parts.push(`  上一轮摘要: ${topic.lastSummary}`);
+            }
+            if (topic?.lastKeyPoints?.length) {
+                parts.push(`  上一轮要点: ${topic.lastKeyPoints.join("; ")}`);
+            }
+            if (topic?.decision?.reason) {
+                parts.push(`  上一轮判断: ${topic.decision.reason}`);
+            }
+
+            // 历史消息上下文
+            if (topic?.recentContext) {
+                parts.push(`  历史消息:`);
+                for (const line of topic.recentContext.split("\n")) {
+                    parts.push(`    ${line}`);
+                }
+            }
+
+            // 本轮新消息
+            parts.push(`  本轮新消息:`);
+            parts.push(newMsgLines);
+
+            return parts.join("\n");
+        }).join("\n\n");
     }
 
     /**
@@ -530,6 +628,10 @@ export class RecordingPipeline extends EventEmitter {
 
             const triage = triageResult.topics.find(t => t.topicId === topicId);
             if (triage) {
+                // 缓存摘要信息到 Topic 对象，供下一轮 flush 时作为旧话题上下文
+                topic.lastSummary = triage.summary;
+                topic.lastKeyPoints = triage.keyPoints;
+
                 const decision: TriageDecision = {
                     should_intervene: triage.should_intervene,
                     reason: triage.reason,

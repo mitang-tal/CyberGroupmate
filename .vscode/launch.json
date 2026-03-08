@@ -12,6 +12,9 @@
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
+            "env": {
+                "LOG_LEVEL": "debug"
+            },
             "skipFiles": [
                 "<node_internals>/**"
             ]
@@ -28,6 +31,9 @@
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
+            "env": {
+                "LOG_LEVEL": "debug"
+            },
             "skipFiles": [
                 "<node_internals>/**"
             ]
@@ -44,6 +50,9 @@
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
+            "env": {
+                "LOG_LEVEL": "debug"
+            },
             "skipFiles": [
                 "<node_internals>/**"
             ]
@@ -60,6 +69,9 @@
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
+            "env": {
+                "LOG_LEVEL": "debug"
+            },
             "skipFiles": [
                 "<node_internals>/**"
             ]
@@ -78,6 +90,9 @@
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
+            "env": {
+                "LOG_LEVEL": "debug"
+            },
             "skipFiles": [
                 "<node_internals>/**"
             ]
@@ -94,6 +109,9 @@
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
+            "env": {
+                "LOG_LEVEL": "debug"
+            },
             "skipFiles": [
                 "<node_internals>/**"
             ]
@@ -112,6 +130,9 @@
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
+            "env": {
+                "LOG_LEVEL": "debug"
+            },
             "skipFiles": [
                 "<node_internals>/**"
             ]
@@ -130,6 +151,9 @@
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
+            "env": {
+                "LOG_LEVEL": "debug"
+            },
             "skipFiles": [
                 "<node_internals>/**"
             ]
@@ -149,6 +173,9 @@
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
+            "env": {
+                "LOG_LEVEL": "debug"
+            },
             "skipFiles": [
                 "<node_internals>/**"
             ]
@@ -166,6 +193,9 @@
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
+            "env": {
+                "LOG_LEVEL": "debug"
+            },
             "skipFiles": [
                 "<node_internals>/**"
             ]
@@ -185,6 +215,9 @@
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
+            "env": {
+                "LOG_LEVEL": "debug"
+            },
             "skipFiles": [
                 "<node_internals>/**"
             ]
@@ -205,6 +238,9 @@
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
+            "env": {
+                "LOG_LEVEL": "debug"
+            },
             "skipFiles": [
                 "<node_internals>/**"
             ]
@@ -219,6 +255,9 @@
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
+            "env": {
+                "LOG_LEVEL": "debug"
+            },
             "skipFiles": [
                 "<node_internals>/**"
             ]
@@ -235,6 +274,9 @@
             ],
             "cwd": "${workspaceFolder}",
             "console": "integratedTerminal",
+            "env": {
+                "LOG_LEVEL": "debug"
+            },
             "skipFiles": [
                 "<node_internals>/**"
             ]
