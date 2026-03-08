@@ -48,6 +48,33 @@ describe("ReplyPipeline", () => {
         assert.equal(tasks.length, 2);
         assert.ok(tasks.every(task => task.source === "FAST_PATH"));
         assert.ok(tasks[0].prompt.includes("Reply Pipeline"));
+        assert.ok(tasks[0].prompt.includes("[unknown/chat]") || tasks[0].prompt.includes("["));
+    });
+
+    it("should render compact source metadata for direct messages", () => {
+        const registry = new TopicRegistry();
+        const router = new ModelRouter(llmConfig);
+        const pipeline = new ReplyPipeline({
+            recall: async () => ({ topics: [], facts: [], persons: [] }),
+        } as any, registry, router, llmConfig);
+
+        const tasks = pipeline.buildDirectTasks([
+            makeMessage({
+                id: "1354",
+                chatId: "682932098",
+                senderId: "682932098",
+                senderName: "莫思奇多",
+                text: "在吗在吗",
+                scene: "telegram",
+                platform: "telegram",
+                chatType: "private",
+                isDirectMessage: true,
+                timestamp: Date.now() - 3 * 60_000,
+            }),
+        ]);
+
+        assert.equal(tasks.length, 1);
+        assert.match(tasks[0].prompt, /\[telegram\/private\] 莫思奇多 \(u:682932098 c:682932098 m:1354\) .*: 在吗在吗/);
     });
 
     it("should build topic task with memory recall context", async () => {

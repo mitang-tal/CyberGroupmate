@@ -27,6 +27,10 @@ export interface Message {
     timestamp: number;
     /** 所属 scene / app */
     scene?: string;
+    /** 原始平台类型 */
+    platform?: string;
+    /** adapter 判定的聊天类型，如 private/supergroup/channel */
+    chatType?: string;
     /** 平台是否已判定为私聊 */
     isDirectMessage?: boolean;
     /** 平台是否已检测到明确提及 agent */

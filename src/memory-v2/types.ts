@@ -129,6 +129,10 @@ export interface InteractionEpisode {
     id: string;
     /** ISO date */
     date: string;
+    /** 所属会话 */
+    chatId: string;
+    /** 关联用户 */
+    userId: string;
     /** 关联话题 */
     topicId: string | null;
     /** 交互类型 */
@@ -393,6 +397,9 @@ export interface IMemoryStoreV2 {
 
     /** 获取群组画像 */
     getGroupModel(chatId: string): GroupModel | null;
+
+    /** 获取全局个体身份 */
+    getPersonIdentity(userId: string): PersonIdentity | null;
 
     /** 写入交互记录到 interactions 表 */
     storeInteraction(episode: Omit<InteractionEpisode, "id">): string;

@@ -38,6 +38,7 @@ export { EngagedTopicHandler } from "./engaged-topic-handler.js";
 export { ModelRouter } from "./model-router.js";
 export { ReplyPipeline } from "./reply-pipeline.js";
 export { FeedbackLoop } from "./feedback-loop.js";
+export { ContextAssembler } from "./context-assembler.js";
 
 // ─── Dry-Run ───
 export { runDryRun, saveDryRunReport } from "./dry-run.js";

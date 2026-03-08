@@ -16,6 +16,7 @@ describe("normalizeMessageEvent", () => {
             chatId: -100123,
             userId: 42,
             userName: "Alice",
+            chatType: "supergroup",
             text: "hello",
             messageId: 99,
             replyToMessageId: 12,
@@ -28,6 +29,9 @@ describe("normalizeMessageEvent", () => {
         assert.equal(normalized!.userId, "42");
         assert.equal(normalized!.messageId, "99");
         assert.equal(normalized!.replyToMessageId, "12");
+        assert.equal(normalized!.source?.platform, "telegram");
+        assert.equal(normalized!.source?.chatId, "-100123");
+        assert.equal(normalized!.chatType, "supergroup");
     });
 
     it("should normalize nc.message events", () => {
@@ -36,11 +40,20 @@ describe("normalizeMessageEvent", () => {
             _ts: "2026-03-08T10:00:00.000Z",
             type: "nc.message",
             scene: "discord",
+            source: {
+                scene: "discord",
+                platform: "discord",
+                chatId: "guild-1",
+                userId: "user-2",
+                chatType: "guild_text",
+                messageId: "m-5",
+            },
             payload: {
                 chatId: "guild-1",
                 userId: "user-2",
                 displayName: "Bob",
                 text: "ping",
+                chatType: "guild_text",
                 timestamp: "2026-03-08T10:00:00.000Z",
                 messageId: "m-5",
             },
@@ -53,5 +66,8 @@ describe("normalizeMessageEvent", () => {
         assert.equal(normalized!.userId, "user-2");
         assert.equal(normalized!.displayName, "Bob");
         assert.equal(normalized!.messageId, "m-5");
+        assert.equal(normalized!.source?.platform, "discord");
+        assert.equal(normalized!.source?.userId, "user-2");
+        assert.equal(normalized!.chatType, "guild_text");
     });
 });

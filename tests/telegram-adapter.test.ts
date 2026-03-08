@@ -178,6 +178,65 @@ describe("TelegramAdapter", () => {
         assert.equal(events[0].messageId, "555");
         assert.equal(events[0].displayName, "Alice");
         assert.equal(events[0].mentionsAgent, true);
+        assert.equal(events[0].chatType, "supergroup");
+        assert.deepEqual(events[0].source, {
+            scene: "telegram",
+            platform: "telegram",
+            chatId: "-100123",
+            userId: "777",
+            chatType: "supergroup",
+            messageId: "555",
+            replyToMessageId: undefined,
+        });
+
+        await adapter.stop();
+        nc.dispose();
+    });
+
+    it("should coerce numeric string peer ids before host calls", async () => {
+        const nc = makeNC();
+        const sendTextCalls: unknown[] = [];
+        const getHistoryCalls: unknown[] = [];
+
+        const fakeClient = {
+            async start() {
+                return { id: 99, displayName: "Userbot", isBot: false };
+            },
+            onNewMessage: {
+                add() {},
+                remove() {},
+            },
+            async sendText(chatId: unknown, text: unknown, opts?: unknown) {
+                sendTextCalls.push([chatId, text, opts]);
+                return {
+                    id: 1,
+                    text,
+                    date: new Date("2026-03-08T12:00:00.000Z"),
+                    chat: { id: chatId, title: "Test", type: "supergroup" },
+                    sender: { id: 99, displayName: "Bot", isBot: true },
+                };
+            },
+            async getHistory(chatId: unknown) {
+                getHistoryCalls.push(chatId);
+                return [];
+            },
+            async destroy() {},
+        };
+
+        const adapter = new TelegramAdapter(
+            makeConfig(),
+            nc,
+            async () => "",
+            () => {},
+            async () => fakeClient,
+        );
+
+        await adapter.start();
+        await adapter.handleCall("telegram.sendText", ["-100123", "hi", { replyTo: 7 }]);
+        await adapter.handleCall("telegram.getHistory", ["682932098", { limit: 5 }]);
+
+        assert.deepEqual(sendTextCalls[0], [-100123, "hi", { replyTo: 7 }]);
+        assert.equal(getHistoryCalls[0], 682932098);
 
         await adapter.stop();
         nc.dispose();

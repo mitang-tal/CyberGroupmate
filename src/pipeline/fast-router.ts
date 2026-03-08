@@ -69,7 +69,14 @@ export class FastRouter {
                     break;
 
                 case "RECORDING":
-                    log.debug("→ Recording 缓冲", { msgId: msg.id });
+                    log.debug("→ Recording 缓冲", {
+                        msgId: msg.id,
+                        chatId: msg.chatId,
+                        isDirectMessage: msg.isDirectMessage,
+                        mentionsAgent: msg.mentionsAgent,
+                        replyToMessageId: msg.replyToMessageId,
+                        textPreview: msg.text.slice(0, 80),
+                    });
                     this.recordingPipeline.onMessage(result.message);
                     break;
             }
@@ -82,6 +89,15 @@ export class FastRouter {
      * 路由单条消息
      */
     routeMessage(msg: Message): RouteResult {
+        log.debug("路由判定", {
+            msgId: msg.id,
+            chatId: msg.chatId,
+            isDirectMessage: msg.isDirectMessage,
+            mentionsAgent: msg.mentionsAgent,
+            replyToMessageId: msg.replyToMessageId,
+            textPreview: msg.text.slice(0, 80),
+        });
+
         // 1. FAST_PATH 检测
         if (this.isDirectMention(msg)) {
             return { type: "FAST_PATH", message: msg, reason: "direct_mention" };
@@ -138,6 +154,8 @@ export class FastRouter {
             replyToMessageId: normalized.replyToMessageId,
             timestamp: new Date(normalized.timestamp).getTime(),
             scene: normalized.scene,
+            platform: normalized.source?.platform ?? normalized.scene,
+            chatType: normalized.chatType ?? normalized.source?.chatType,
             isDirectMessage: normalized.isDirectMessage,
             mentionsAgent: normalized.mentionsAgent,
         };

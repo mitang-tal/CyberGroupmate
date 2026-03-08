@@ -74,9 +74,9 @@ interface ModelTierConfig {
 }
 
 const DEFAULT_MODEL_TIERS: ModelTierConfig = {
-    cheap: "gemini-2.0-flash",
-    mid: "gpt-4o",
-    sota: "claude-sonnet-4-20250514",
+    cheap: "",
+    mid: "",
+    sota: "",
 };
 
 /**
@@ -92,7 +92,11 @@ export class ModelRouter {
         modelTiers?: Partial<ModelTierConfig>,
     ) {
         this.rules = rules ?? DEFAULT_RULES;
-        this.modelTiers = { ...DEFAULT_MODEL_TIERS, ...modelTiers };
+        this.modelTiers = {
+            cheap: modelTiers?.cheap ?? baseLLMConfig.model,
+            mid: modelTiers?.mid ?? baseLLMConfig.model,
+            sota: modelTiers?.sota ?? baseLLMConfig.model,
+        };
     }
 
     /**

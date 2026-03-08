@@ -15,6 +15,7 @@ import type { MemoryStoreV2, RecallResult } from "../memory-v2/index.js";
 import type { Message, Topic, TriageDecision, PipelineMode, ModelRouteResult } from "./types.js";
 import type { ModelRouter } from "./model-router.js";
 import type { TopicRegistry } from "./topic-registry.js";
+import { ContextAssembler } from "./context-assembler.js";
 
 const log = createLogger("reply-pipeline");
 
@@ -33,6 +34,8 @@ export interface ReplyTask {
     messages: Message[];
     recall?: RecallResult;
     replyHint?: string;
+    sceneFocus?: string;
+    latentMemory?: string;
 }
 
 let taskCounter = 0;
@@ -46,13 +49,62 @@ function unique<T>(items: T[]): T[] {
     return Array.from(new Set(items));
 }
 
+function formatNaturalTime(timestampMs: number): string {
+    const diffMs = Date.now() - timestampMs;
+    const diffMin = Math.floor(diffMs / 60_000);
+    if (diffMin < 1) return "刚刚";
+    if (diffMin < 60) return `${diffMin}分钟前`;
+
+    const diffHours = Math.floor(diffMin / 60);
+    const remMin = diffMin % 60;
+    if (diffHours < 24) {
+        return remMin > 0 ? `${diffHours}小时${remMin}分钟前` : `${diffHours}小时前`;
+    }
+
+    const diffDays = Math.floor(diffHours / 24);
+    const remHours = diffHours % 24;
+    if (diffDays < 7) {
+        if (remHours > 0 && remMin > 0) return `${diffDays}天${remHours}小时${remMin}分钟前`;
+        if (remHours > 0) return `${diffDays}天${remHours}小时前`;
+        return `${diffDays}天前`;
+    }
+
+    const date = new Date(timestampMs);
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+    const hour = String(date.getHours()).padStart(2, "0");
+    const minute = String(date.getMinutes()).padStart(2, "0");
+    const now = new Date();
+    if (date.getFullYear() === now.getFullYear()) {
+        return `${month}月${day}日 ${hour}:${minute}`;
+    }
+    return `${date.getFullYear()}年${month}月${day}日 ${hour}:${minute}`;
+}
+
+function formatDirectMessageLine(message: Message): string {
+    const platform = message.platform ?? message.scene ?? "unknown";
+    const chatType = message.chatType ?? (message.isDirectMessage ? "private" : "chat");
+    const ids = [
+        `u:${message.senderId}`,
+        `c:${message.chatId}`,
+        `m:${message.id}`,
+        message.replyToMessageId ? `r:${message.replyToMessageId}` : null,
+    ].filter(Boolean).join(" ");
+
+    return `- [${platform}/${chatType}] ${message.senderName} (${ids}) ${formatNaturalTime(message.timestamp)}: ${message.text}`;
+}
+
 export class ReplyPipeline {
+    private contextAssembler: ContextAssembler;
+
     constructor(
         private memory: MemoryStoreV2,
         private topicRegistry: TopicRegistry,
         private modelRouter: ModelRouter,
         private baseLLMConfig: LLMConfig,
-    ) {}
+    ) {
+        this.contextAssembler = new ContextAssembler(memory);
+    }
 
     buildDirectTasks(messages: Message[]): ReplyTask[] {
         const byChat = new Map<string, Message[]>();
@@ -65,6 +117,11 @@ export class ReplyPipeline {
         const tasks: ReplyTask[] = [];
         for (const [chatId, group] of byChat) {
             const route = this.modelRouter.route(true, undefined, group);
+            const assembled = this.contextAssembler.assemble({
+                scene: "telegram",
+                chatId: String(chatId),
+                messages: group,
+            });
             tasks.push({
                 id: nextTaskId(),
                 source: "FAST_PATH",
@@ -73,8 +130,10 @@ export class ReplyPipeline {
                 pipelineMode: route.pipelineMode,
                 modelRoute: route,
                 title: `FAST_PATH chat=${chatId}`,
-                prompt: this.buildDirectPrompt(group, route),
+                prompt: this.buildDirectPrompt(group, route, assembled.sceneFocusBlock, assembled.latentMemoryBlock),
                 messages: group,
+                sceneFocus: assembled.sceneFocusBlock,
+                latentMemory: assembled.latentMemoryBlock,
             });
         }
         return tasks;
@@ -86,6 +145,12 @@ export class ReplyPipeline {
 
         const recall = await this.recallForTopic(topic);
         const route = this.modelRouter.route(false, topic.decision, []);
+        const assembled = this.contextAssembler.assemble({
+            scene: "telegram",
+            chatId: String(topic.chatId),
+            messages: topic.pendingMessages.slice(-3),
+            recentContext: topic.recentContext,
+        });
 
         return {
             id: nextTaskId(),
@@ -96,9 +161,11 @@ export class ReplyPipeline {
             pipelineMode: route.pipelineMode,
             modelRoute: route,
             title: `TOPIC_TRIAGE ${topic.label}`,
-            prompt: this.buildTopicPrompt(topic, topic.decision, recall, route),
+            prompt: this.buildTopicPrompt(topic, topic.decision, recall, route, assembled.sceneFocusBlock, assembled.latentMemoryBlock),
             messages: [],
             recall,
+            sceneFocus: assembled.sceneFocusBlock,
+            latentMemory: assembled.latentMemoryBlock,
         };
     }
 
@@ -115,6 +182,12 @@ export class ReplyPipeline {
         };
         const recall = await this.recallForTopic(topic);
         const route = this.modelRouter.route(true, decision, messages);
+        const assembled = this.contextAssembler.assemble({
+            scene: "telegram",
+            chatId: String(topic.chatId),
+            messages,
+            recentContext: topic.recentContext,
+        });
 
         return {
             id: nextTaskId(),
@@ -125,10 +198,12 @@ export class ReplyPipeline {
             pipelineMode: route.pipelineMode,
             modelRoute: route,
             title: `ENGAGED ${topic.label}`,
-            prompt: this.buildEngagedPrompt(topic, messages, replyHint, recall, route),
+            prompt: this.buildEngagedPrompt(topic, messages, replyHint, recall, route, assembled.sceneFocusBlock, assembled.latentMemoryBlock),
             messages,
             recall,
             replyHint,
+            sceneFocus: assembled.sceneFocusBlock,
+            latentMemory: assembled.latentMemoryBlock,
         };
     }
 
@@ -154,19 +229,22 @@ export class ReplyPipeline {
         }
     }
 
-    private buildDirectPrompt(messages: Message[], route: ModelRouteResult): string {
-        const lines = messages.map(m =>
-            `- [${m.id}] ${m.senderName} @ ${new Date(m.timestamp).toISOString()}: ${m.text}`
-        ).join("\n");
+    private buildDirectPrompt(messages: Message[], route: ModelRouteResult, sceneFocus: string, latentMemory: string): string {
+        const lines = messages.map(formatDirectMessageLine).join("\n");
 
         return [
             `[Reply Pipeline] 来源: FAST_PATH`,
             `模式: ${route.pipelineMode}`,
             `建议模型: ${route.model}`,
             "",
+            sceneFocus,
+            "",
+            latentMemory,
+            "",
             "以下消息需要立即处理。你仍然通过写 TypeScript 代码来行动，不使用 tool calling。",
             "如需读取历史或记忆，请主动调用 memory.recall() / memory.browseHistory()；如需发消息，请进入对应 scene 后调用代码 API。",
             "",
+            "[Incoming Messages]",
             lines,
         ].join("\n");
     }
@@ -176,6 +254,8 @@ export class ReplyPipeline {
         decision: TriageDecision,
         recall: RecallResult | undefined,
         route: ModelRouteResult,
+        sceneFocus: string,
+        latentMemory: string,
     ): string {
         return [
             `[Reply Pipeline] 来源: TOPIC_TRIAGE`,
@@ -185,6 +265,10 @@ export class ReplyPipeline {
             `chatId: ${topic.chatId}`,
             `决策: ${decision.intervention_type} (confidence=${decision.confidence.toFixed(2)})`,
             `理由: ${decision.reason}`,
+            "",
+            sceneFocus,
+            "",
+            latentMemory,
             "",
             "以下是框架预处理后的结构化上下文。你仍然需要通过 CodeAct 写代码来完成任务。",
             "",
@@ -202,6 +286,8 @@ export class ReplyPipeline {
         replyHint: string,
         recall: RecallResult | undefined,
         route: ModelRouteResult,
+        sceneFocus: string,
+        latentMemory: string,
     ): string {
         const lines = messages.map(m => `- ${m.senderName}: ${m.text}`).join("\n");
 
@@ -213,6 +299,10 @@ export class ReplyPipeline {
             `chatId: ${topic.chatId}`,
             `对话轮次: ${topic.turnCount}/${topic.maxTurns}`,
             `回复方向提示: ${replyHint || "（无）"}`,
+            "",
+            sceneFocus,
+            "",
+            latentMemory,
             "",
             `新消息:\n${lines}`,
             "",

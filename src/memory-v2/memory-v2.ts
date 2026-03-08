@@ -898,6 +898,24 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         };
     }
 
+    getPersonIdentity(userId: string): PersonIdentity | null {
+        const row = this.db.prepare("SELECT * FROM person_identities WHERE user_id = ?").get(userId) as Record<string, unknown> | undefined;
+        if (!row) {
+            log.debug("getPersonIdentity: 未找到", { userId });
+            return null;
+        }
+
+        return {
+            userId: row.user_id as string,
+            displayName: row.display_name as string,
+            aliases: fromJSON(row.aliases as string, []),
+            totalMessageCount: row.total_message_count as number,
+            lastSeenAt: row.last_seen_at as string,
+            firstSeenAt: row.first_seen_at as string,
+            updatedAt: row.updated_at as string,
+        };
+    }
+
     storeInteraction(episode: Omit<InteractionEpisode, "id">): string {
         const id = randomUUID();
         const ts = now();
@@ -1553,6 +1571,8 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         return rows.map(r => ({
             id: r.id as string,
             date: r.created_at as string,
+            chatId: r.chat_id as string,
+            userId: r.user_id as string,
             topicId: (r.topic_id as string) ?? null,
             type: r.type as InteractionEpisode["type"],
             summary: r.summary as string,

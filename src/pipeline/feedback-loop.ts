@@ -61,7 +61,7 @@ export class FeedbackLoop {
             summary: event.text.slice(0, 200),
             sentiment: "neutral",
             significance: 0.6,
-            createdAt: event.timestamp,
+            date: event.timestamp,
         });
 
         const old = this.timers.get(key);

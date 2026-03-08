@@ -10,6 +10,9 @@
 import type { NotificationCenter } from "../event/notification-center.js";
 import type { TelegramConfig } from "../core/config.js";
 import type { PlatformAdapter } from "./platform-adapter.js";
+import { createLogger } from "../core/logger.js";
+
+const log = createLogger("telegram-adapter");
 
 interface PromptHandler {
     (prompt: string): Promise<string>;
@@ -114,9 +117,28 @@ export class TelegramAdapter implements PlatformAdapter {
             const normalized = this.normalizeIncomingMessage(msg);
             if (!normalized || !normalized.messageId || !normalized.text) return;
 
+            log.debug("接收 Telegram 消息", {
+                messageId: normalized.messageId,
+                chatId: normalized.chatId,
+                userId: normalized.userId,
+                chatType: normalized.chatType,
+                isDirectMessage: normalized.isDirectMessage,
+                mentionsAgent: normalized.mentionsAgent,
+                textPreview: normalized.text.slice(0, 80),
+            });
+
             this.nc.push({
                 type: "nc.message",
                 scene: "telegram",
+                source: {
+                    scene: "telegram",
+                    platform: "telegram",
+                    chatId: normalized.chatId,
+                    userId: normalized.userId,
+                    chatType: normalized.chatType,
+                    messageId: normalized.messageId,
+                    replyToMessageId: normalized.replyToMessageId,
+                },
                 chatId: normalized.chatId,
                 userId: normalized.userId,
                 displayName: normalized.displayName,
@@ -125,6 +147,7 @@ export class TelegramAdapter implements PlatformAdapter {
                 messageId: normalized.messageId,
                 replyToMessageId: normalized.replyToMessageId,
                 chatTitle: normalized.chatTitle,
+                chatType: normalized.chatType,
                 isDirectMessage: normalized.isDirectMessage,
                 mentionsAgent: normalized.mentionsAgent,
                 payload: {
@@ -137,8 +160,18 @@ export class TelegramAdapter implements PlatformAdapter {
                     messageId: normalized.messageId,
                     replyToMessageId: normalized.replyToMessageId,
                     chatTitle: normalized.chatTitle,
+                    chatType: normalized.chatType,
                     isDirectMessage: normalized.isDirectMessage,
                     mentionsAgent: normalized.mentionsAgent,
+                    source: {
+                        scene: "telegram",
+                        platform: "telegram",
+                        chatId: normalized.chatId,
+                        userId: normalized.userId,
+                        chatType: normalized.chatType,
+                        messageId: normalized.messageId,
+                        replyToMessageId: normalized.replyToMessageId,
+                    },
                     platformData: {
                         originalType: "telegram.message",
                     },
@@ -181,22 +214,22 @@ export class TelegramAdapter implements PlatformAdapter {
                 return this.selfUser ?? this.normalizeUser(await this.client.getMe());
             case "telegram.sendText":
                 return this.normalizeMessage(
-                    await this.client.sendText(args[0], args[1], args[2]),
+                    await this.client.sendText(this.normalizePeerArg(args[0]), args[1], args[2]),
                 );
             case "telegram.sendMedia":
                 return this.normalizeMessage(
-                    await this.client.sendMedia(args[0], args[1], args[2]),
+                    await this.client.sendMedia(this.normalizePeerArg(args[0]), args[1], args[2]),
                 );
             case "telegram.getChat":
-                return this.normalizeChat(await this.client.getChat(args[0]));
+                return this.normalizeChat(await this.client.getChat(this.normalizePeerArg(args[0])));
             case "telegram.getUser":
-                return this.normalizeUser(await this.client.getUser(args[0]));
+                return this.normalizeUser(await this.client.getUser(this.normalizePeerArg(args[0])));
             case "telegram.getChatMembers": {
-                const peers = await this.client.getChatMembers(args[0], args[1]);
+                const peers = await this.client.getChatMembers(this.normalizePeerArg(args[0]), args[1]);
                 return peers.map((peer: any) => this.normalizePeer(peer));
             }
             case "telegram.getHistory": {
-                const messages = await this.client.getHistory(args[0], args[1]);
+                const messages = await this.client.getHistory(this.normalizePeerArg(args[0]), args[1]);
                 return messages.map((message: any) => this.normalizeMessage(message));
             }
             case "telegram.getDialogs": {
@@ -208,10 +241,10 @@ export class TelegramAdapter implements PlatformAdapter {
                 return dialogs;
             }
             case "telegram.readHistory":
-                await this.client.readHistory(args[0]);
+                await this.client.readHistory(this.normalizePeerArg(args[0]));
                 return null;
             case "telegram.sendTyping":
-                await this.client.sendTyping(args[0]);
+                await this.client.sendTyping(this.normalizePeerArg(args[0]));
                 return null;
             default:
                 throw new Error(`Unsupported TelegramAdapter call: ${method}`);
@@ -240,6 +273,16 @@ export class TelegramAdapter implements PlatformAdapter {
         return fallback;
     }
 
+    private normalizePeerArg(value: unknown): unknown {
+        if (typeof value !== "string") return value;
+        const trimmed = value.trim();
+        if (/^-?\d+$/.test(trimmed)) {
+            const asNumber = Number(trimmed);
+            if (Number.isSafeInteger(asNumber)) return asNumber;
+        }
+        return value;
+    }
+
     private normalizeIncomingMessage(msg: any): {
         chatId: string;
         userId: string;
@@ -249,6 +292,7 @@ export class TelegramAdapter implements PlatformAdapter {
         messageId?: string;
         replyToMessageId?: string;
         chatTitle?: string;
+        chatType?: string;
         isDirectMessage?: boolean;
         mentionsAgent?: boolean;
     } | null {
@@ -256,6 +300,8 @@ export class TelegramAdapter implements PlatformAdapter {
         if (!plain.chat?.id) return null;
 
         const senderId = plain.sender?.id ?? "0";
+        const numericChatId = Number(plain.chat.id);
+        const isDirectMessage = plain.chat.type === "private" || (!Number.isNaN(numericChatId) && numericChatId > 0);
         const mentionsAgent = Boolean(
             plain.isMention ||
             (this.selfUser && plain.replyToMessage && plain.sender?.id !== this.selfUser.id),
@@ -270,7 +316,8 @@ export class TelegramAdapter implements PlatformAdapter {
             messageId: plain.id,
             replyToMessageId: plain.replyToMessage?.id ?? undefined,
             chatTitle: plain.chat.title,
-            isDirectMessage: plain.chat.type === "private",
+            chatType: plain.chat.type,
+            isDirectMessage,
             mentionsAgent,
         };
     }
@@ -328,6 +375,9 @@ export class TelegramAdapter implements PlatformAdapter {
     private normalizeChatType(value: unknown): PlainChat["type"] {
         if (value === "private" || value === "group" || value === "supergroup" || value === "channel") {
             return value;
+        }
+        if (value === "user") {
+            return "private";
         }
         return "group";
     }

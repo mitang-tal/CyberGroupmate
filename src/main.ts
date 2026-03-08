@@ -10,7 +10,7 @@
  * - 主循环中 drain 事件 → 组装 context → 运行 CodeAct session
  */
 
-import { NotificationCenter } from "./event/notification-center.js";
+import { NotificationCenter, type NotificationEvent } from "./event/notification-center.js";
 import { Sandbox } from "./sandbox/sandbox.js";
 import { MemoryStoreV2 } from "./memory-v2/index.js";
 import { SceneManager } from "./scenes/scene-manager.js";
@@ -79,6 +79,23 @@ const MAX_EVENT_PREVIEW_CHARS = 300;
 /** Reply task 事件类型 */
 const REPLY_TASK_EVENT_TYPE = "system.reply_task";
 
+function summarizeEvent(event: Record<string, unknown>): Record<string, unknown> {
+    const source = (event.source ?? (event.payload as Record<string, unknown> | undefined)?.source ?? {}) as Record<string, unknown>;
+    return {
+        type: event.type,
+        scene: event.scene ?? source.scene,
+        sourcePlatform: source.platform,
+        chatId: event.chatId ?? event.chat_id ?? source.chatId,
+        userId: event.userId ?? event.user_id ?? source.userId,
+        chatType: event.chatType ?? source.chatType,
+        messageId: event.messageId ?? source.messageId,
+        isDirectMessage: event.isDirectMessage,
+        mentionsAgent: event.mentionsAgent ?? event.isMention,
+        urgent: event._urgent,
+        textPreview: typeof event.text === "string" ? event.text.slice(0, 80) : undefined,
+    };
+}
+
 // ─── 辅助函数 ───
 
 /**
@@ -146,8 +163,13 @@ function formatEvents(events: Array<Record<string, unknown>>): string {
         .join("\n\n");
 }
 
-function isReplyTaskEvent(event: Record<string, unknown>): event is Record<string, unknown> & { task: ReplyTask } {
+function isReplyTaskEvent(event: NotificationEvent): event is NotificationEvent & { task: ReplyTask } {
     return event.type === REPLY_TASK_EVENT_TYPE && !!event.task;
+}
+
+function getReplyTask(event: NotificationEvent): ReplyTask | null {
+    if (!isReplyTaskEvent(event)) return null;
+    return event.task as ReplyTask;
 }
 
 function serializeTopic(topic: ReturnType<TopicRegistry["get"]>): Record<string, unknown> | null {
@@ -409,9 +431,6 @@ async function mainEventLoop(
         }
     }, checkInterval);
 
-    // ─── 维护唯一的长生命周期 session ───
-    const messages: ChatMessage[] = [];
-
     while (true) {
         // ─── 等待事件 ───
         const events = await nc.drain(
@@ -426,7 +445,9 @@ async function mainEventLoop(
             continue;
         }
 
-        log.info(`收到 ${events.length} 个新事件`);
+        log.info(`收到 ${events.length} 个新事件`, {
+            events: events.map(event => summarizeEvent(event as Record<string, unknown>)),
+        });
 
         // 更新各 chat 的最后活跃时间（用于 Reflection 冷场触发）
         for (const ev of events) {
@@ -451,12 +472,11 @@ async function mainEventLoop(
         }
 
         const replyTasks: ReplyTask[] = [];
-        const regularEvents = events.filter((event) => !isReplyTaskEvent(event as Record<string, unknown>));
+        const regularEvents = events.filter((event) => !isReplyTaskEvent(event));
 
         for (const event of events) {
-            if (isReplyTaskEvent(event as Record<string, unknown>)) {
-                replyTasks.push((event as Record<string, unknown> & { task: ReplyTask }).task);
-            }
+            const replyTask = getReplyTask(event);
+            if (replyTask) replyTasks.push(replyTask);
         }
 
         if (fastRouter && replyPipeline) {
@@ -516,23 +536,27 @@ async function mainEventLoop(
         }
 
         for (const task of replyTasks) {
+            const taskMessages: ChatMessage[] = [];
             let activeScene = sceneManager.current;
             let isFirstTurnOfTask = true;
 
             while (true) {
-                if (messages.length > 0 && messages[0].role === "system") {
-                    messages.shift();
+                if (taskMessages.length > 0 && taskMessages[0].role === "system") {
+                    taskMessages.shift();
                 }
 
                 const agentState = loadAgentState();
                 const sceneDef = sceneManager.getScene(activeScene);
                 const typeDefs = sceneDef?.typeDefs ?? "";
-                const currentSystemPrompt = `${systemPrompt}\n\n[System Inject] 当前场景: ${activeScene}\n类型定义:\n\`\`\`typescript\n${typeDefs}\n\`\`\`\nAgent State:\n${agentState}`;
+                const sceneFocus = activeScene === task.scene && task.sceneFocus
+                    ? `\n${task.sceneFocus}\n${task.latentMemory ?? ""}`
+                    : "";
+                const currentSystemPrompt = `${systemPrompt}\n\n[System Inject] 当前场景: ${activeScene}\n类型定义:\n\`\`\`typescript\n${typeDefs}\n\`\`\`${sceneFocus}\nAgent State:\n${agentState}`;
 
-                messages.unshift({ role: "system", content: currentSystemPrompt, scope: "global" });
+                taskMessages.unshift({ role: "system", content: currentSystemPrompt, scope: "global" });
 
                 if (isFirstTurnOfTask) {
-                    messages.push({
+                    taskMessages.push({
                         role: "user",
                         content: task.prompt,
                         scope: "global",
@@ -543,7 +567,7 @@ async function mainEventLoop(
                 try {
                     const taskConfig = replyPipeline ? replyPipeline.getTaskLLMConfig(task) : llmConfig;
                     const result = await runCodeActSession(
-                        messages,
+                        taskMessages,
                         activeScene,
                         sandbox,
                         nc,
@@ -557,7 +581,7 @@ async function mainEventLoop(
                             activeScene = result.nextScene;
                             continue;
                         } catch {
-                            messages.push({
+                            taskMessages.push({
                                 role: "user",
                                 content: `[⚠ 严重错误] 尝试进入场景 ${result.nextScene} 失败。场景不存在！`,
                                 scope: "global",
@@ -590,24 +614,24 @@ async function mainEventLoop(
                     }
 
                     const contextBudget = mergeContextBudget(appConfig.contextBudget);
-                    if (shouldCompact(messages, contextBudget)) {
+                    if (shouldCompact(taskMessages, contextBudget)) {
                         try {
-                            const compacted = await compact(messages, cheapConfig, contextBudget);
-                            messages.length = 0;
-                            messages.push(...compacted);
+                            const compacted = await compact(taskMessages, cheapConfig, contextBudget);
+                            taskMessages.length = 0;
+                            taskMessages.push(...compacted);
                         } catch (compactErr) {
                             log.error("Context Compaction 失败，回退到简单截断", { error: String(compactErr) });
-                            const sys = messages[0];
-                            const tail = messages.slice(-10);
-                            const omitted = messages.length - 11;
-                            messages.length = 0;
-                            messages.push(sys);
-                            messages.push({
+                            const sys = taskMessages[0];
+                            const tail = taskMessages.slice(-10);
+                            const omitted = taskMessages.length - 11;
+                            taskMessages.length = 0;
+                            taskMessages.push(sys);
+                            taskMessages.push({
                                 role: "user",
                                 content: `[系统] 由于上下文长度限制，在此之前的 ${omitted} 条场景对话记录已被压缩归档并从上下文中移除。`,
                                 scope: "global",
                             });
-                            messages.push(...tail);
+                            taskMessages.push(...tail);
                         }
                     }
 
@@ -676,11 +700,17 @@ async function main(): Promise<void> {
 
     // ─── Phase 6: 初始化管线组件 ───
     const cheapConfig = resolveTierProfile("cheap", appConfig);
+    const midConfig = resolveTierProfile("mid", appConfig);
+    const sotaConfig = resolveTierProfile("sota", appConfig);
     const topicRegistry = new TopicRegistry();
     const engagedHandler = new EngagedTopicHandler(topicRegistry, llmConfig);
     const recordingPipeline = new RecordingPipeline(topicRegistry, cheapConfig, appConfig.persona?.description ?? "赛博群友", memory);
     const fastRouter = new FastRouter(topicRegistry, engagedHandler, recordingPipeline, "");
-    const modelRouter = new ModelRouter(llmConfig);
+    const modelRouter = new ModelRouter(midConfig, undefined, {
+        cheap: cheapConfig.model,
+        mid: midConfig.model,
+        sota: sotaConfig.model,
+    });
     const replyPipeline = new ReplyPipeline(memory, topicRegistry, modelRouter, llmConfig);
     const feedbackLoop = new FeedbackLoop(topicRegistry, memory, nc);
 
