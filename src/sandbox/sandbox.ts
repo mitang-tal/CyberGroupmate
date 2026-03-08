@@ -14,6 +14,7 @@ import { createInterface, Interface } from "node:readline";
 import { EventEmitter } from "node:events";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { existsSync } from "node:fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -101,8 +102,13 @@ export class Sandbox extends EventEmitter {
         }
 
         const workerPath = join(this.projectRoot, "src", "sandbox", "sandbox-worker.ts");
+        const tsxCliPath = join(this.projectRoot, "node_modules", "tsx", "dist", "cli.mjs");
 
-        this.child = spawn("npx", ["tsx", workerPath], {
+        if (!existsSync(tsxCliPath)) {
+            throw new Error(`tsx runtime not found at ${tsxCliPath}. Did you run npm install?`);
+        }
+
+        this.child = spawn(process.execPath, [tsxCliPath, workerPath], {
             stdio: ["pipe", "pipe", "pipe"],
             cwd: this.projectRoot,
             env: { ...process.env },
@@ -128,7 +134,15 @@ export class Sandbox extends EventEmitter {
         });
 
         this.child.on("error", (err) => {
-            this.emit("error", err);
+            const readyPending = this.pendingRequests.get("__ready__");
+            if (readyPending) {
+                this.pendingRequests.delete("__ready__");
+                readyPending.reject(err instanceof Error ? err : new Error(String(err)));
+            }
+
+            if (this.listenerCount("error") > 0) {
+                this.emit("error", err);
+            }
         });
 
         this.rl = createInterface({
