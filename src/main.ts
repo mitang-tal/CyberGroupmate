@@ -26,6 +26,8 @@ import {
     FastRouter,
     EngagedTopicHandler,
     ModelRouter,
+    ReplyPipeline,
+    type ReplyTask,
 } from "./pipeline/index.js";
 import {
     readFileSync,
@@ -70,6 +72,9 @@ const MAX_AGENT_STATE_CHARS = 4000;
 
 /** 事件预览最大字符数 */
 const MAX_EVENT_PREVIEW_CHARS = 300;
+
+/** Reply task 事件类型 */
+const REPLY_TASK_EVENT_TYPE = "system.reply_task";
 
 // ─── 辅助函数 ───
 
@@ -136,6 +141,26 @@ function formatEvents(events: Array<Record<string, unknown>>): string {
             return `[事件 ${i + 1}] ${e.type ?? "unknown"}: ${preview}`;
         })
         .join("\n\n");
+}
+
+function isReplyTaskEvent(event: Record<string, unknown>): event is Record<string, unknown> & { task: ReplyTask } {
+    return event.type === REPLY_TASK_EVENT_TYPE && !!event.task;
+}
+
+function serializeTopic(topic: ReturnType<TopicRegistry["get"]>): Record<string, unknown> | null {
+    if (!topic) return null;
+    return {
+        ...topic,
+        participantIds: [...topic.participantIds].map(String),
+        messageIds: topic.messageIds.map(String),
+        pendingMessages: topic.pendingMessages.map(msg => ({
+            ...msg,
+            id: String(msg.id),
+            chatId: String(msg.chatId),
+            senderId: String(msg.senderId),
+            replyToMessageId: msg.replyToMessageId ? String(msg.replyToMessageId) : undefined,
+        })),
+    };
 }
 
 /**
@@ -292,6 +317,7 @@ async function mainEventLoop(
     appConfig: AppConfig,
     fastRouter?: FastRouter,
     topicRegistry?: TopicRegistry,
+    replyPipeline?: ReplyPipeline,
 ): Promise<void> {
     log.info("进入主事件循环");
 
@@ -401,16 +427,43 @@ async function mainEventLoop(
             if (chatId) lastActivityPerChat.set(String(chatId), Date.now());
         }
 
-        // ─── Phase 6: FastRouter 路由 ───
-        // FAST_PATH 消息进入 CodeAct session，其他由 Pipeline 异步处理
-        if (fastRouter) {
-            const fastPathMessages = fastRouter.routeEvents(events);
-            if (fastPathMessages.length === 0) {
-                // 没有需要立即处理的消息，全部由 Recording Pipeline 异步消费
-                log.debug("所有消息由 Recording Pipeline 处理，跳过 CodeAct session");
+        const replyTasks: ReplyTask[] = [];
+        const regularEvents = events.filter((event) => !isReplyTaskEvent(event as Record<string, unknown>));
+
+        for (const event of events) {
+            if (isReplyTaskEvent(event as Record<string, unknown>)) {
+                replyTasks.push((event as Record<string, unknown> & { task: ReplyTask }).task);
+            }
+        }
+
+        if (fastRouter && replyPipeline) {
+            const fastPathMessages = fastRouter.routeEvents(regularEvents);
+            replyTasks.push(...replyPipeline.buildDirectTasks(fastPathMessages));
+
+            if (fastPathMessages.length === 0 && replyTasks.length === 0) {
+                log.debug("所有消息由 Recording Pipeline 处理，当前无需 CodeAct session");
                 continue;
             }
-            log.info(`FastRouter: ${fastPathMessages.length} 条 FAST_PATH，${events.length - fastPathMessages.length} 条进入 Pipeline`);
+
+            if (fastPathMessages.length > 0) {
+                log.info(`FastRouter: ${fastPathMessages.length} 条 FAST_PATH，${regularEvents.length - fastPathMessages.length} 条进入 Pipeline`);
+            }
+        } else if (regularEvents.length > 0) {
+            replyTasks.push({
+                id: `legacy_${Date.now()}`,
+                source: "FAST_PATH",
+                scene: "home",
+                chatId: String((regularEvents[0] as any)?.chatId ?? ""),
+                pipelineMode: "FULL_CODEACT",
+                modelRoute: { model: llmConfig.model, pipelineMode: "FULL_CODEACT", overrides: {} },
+                title: "legacy-event-batch",
+                prompt: `[新事件到达] (${regularEvents.length} 条)\n${formatEvents(regularEvents)}\n请处理以上事件。你可以切换场景来使用不同的 API。处理完毕后不要输出代码块即可。`,
+                messages: [],
+            });
+        }
+
+        if (replyTasks.length === 0) {
+            continue;
         }
 
         // ─── 检查 sandbox 健康 ───
@@ -431,7 +484,6 @@ async function mainEventLoop(
                 const errorMsg =
                     err instanceof Error ? err.message : String(err);
                 log.error("Sandbox 重启失败", { error: errorMsg });
-                // 将事件推回队列
                 for (const event of events) {
                     nc.push(event);
                 }
@@ -440,111 +492,113 @@ async function mainEventLoop(
             }
         }
 
-        let activeScene = sceneManager.current;
-        let isFirstTurnOfBatch = true;
+        for (const task of replyTasks) {
+            let activeScene = sceneManager.current;
+            let isFirstTurnOfTask = true;
 
-        while (true) {
-            // 移除旧的系统 prompt（如果在头两行的话）
-            if (messages.length > 0 && messages[0].role === "system") {
-                messages.shift();
-            }
-
-            // 更新 system prompt，必须作为首位插入
-            const agentState = loadAgentState();
-            const sceneDef = sceneManager.getScene(activeScene);
-            const typeDefs = sceneDef?.typeDefs ?? "";
-            const currentSystemPrompt = `${systemPrompt}\n\n[System Inject] 当前场景: ${activeScene}\n类型定义:\n\`\`\`typescript\n${typeDefs}\n\`\`\`\nAgent State:\n${agentState}`;
-
-            messages.unshift({ role: "system", content: currentSystemPrompt, scope: "global" });
-
-            if (isFirstTurnOfBatch) {
-                const eventText = formatEvents(events);
-                messages.push({
-                    role: "user",
-                    content: `[新事件到达] (${events.length} 条)\n${eventText}\n请处理以上事件。你可以切换场景来使用不同的 API。处理完毕后不要输出代码块即可。`,
-                    scope: "global"
-                });
-                isFirstTurnOfBatch = false;
-            }
-
-            try {
-                const result = await runCodeActSession(
-                    messages,
-                    activeScene,
-                    sandbox,
-                    nc,
-                    llmConfig,
-                    SESSIONS_DIR
-                );
-
-                if (result.endReason === "scene_changed" && result.nextScene) {
-                    try {
-                        sceneManager.enter(result.nextScene);
-                        activeScene = result.nextScene;
-                        continue; // 继续外层 while 循环重新拼装 system prompt 切入新阶段
-                    } catch (e: any) {
-                        messages.push({
-                            role: "user",
-                            content: `[⚠ 严重错误] 尝试进入场景 ${result.nextScene} 失败。场景不存在！`,
-                            scope: "global"
-                        });
-                        continue;
-                    }
+            while (true) {
+                if (messages.length > 0 && messages[0].role === "system") {
+                    messages.shift();
                 }
 
-                // 正常结束 (no_code, max_turns, error)
-                if (result.endReason === "error") {
-                    log.error(`Session 失败 in scene ${activeScene}`, { error: result.error, turns: result.turns.length });
-                } else {
-                    log.info(`Session 完成 in scene ${activeScene}`, { turns: result.turns.length, reason: result.endReason });
+                const agentState = loadAgentState();
+                const sceneDef = sceneManager.getScene(activeScene);
+                const typeDefs = sceneDef?.typeDefs ?? "";
+                const currentSystemPrompt = `${systemPrompt}\n\n[System Inject] 当前场景: ${activeScene}\n类型定义:\n\`\`\`typescript\n${typeDefs}\n\`\`\`\nAgent State:\n${agentState}`;
+
+                messages.unshift({ role: "system", content: currentSystemPrompt, scope: "global" });
+
+                if (isFirstTurnOfTask) {
+                    messages.push({
+                        role: "user",
+                        content: task.prompt,
+                        scope: "global",
+                    });
+                    isFirstTurnOfTask = false;
                 }
 
-                // ─── Session Compaction ───
                 try {
-                    const firstEvent = events[0] as Record<string, unknown>;
-                    const chatId = firstEvent?.chatId as string | undefined;
-                    const chatTitle = firstEvent?.chatTitle as string | undefined;
-                    await runCompaction(result, memory, llmConfig, chatId, chatTitle);
-                } catch (compErr: unknown) {
-                    const compErrMsg = compErr instanceof Error ? compErr.message : String(compErr);
-                    log.error("Compaction 失败", { error: compErrMsg });
-                }
+                    const taskConfig = replyPipeline ? replyPipeline.getTaskLLMConfig(task) : llmConfig;
+                    const result = await runCodeActSession(
+                        messages,
+                        activeScene,
+                        sandbox,
+                        nc,
+                        taskConfig,
+                        SESSIONS_DIR
+                    );
 
-                // Context Compaction (M3): 基于 token 预算的智能压缩
-                const contextBudget = mergeContextBudget(appConfig.contextBudget);
-                if (shouldCompact(messages, contextBudget)) {
-                    try {
-                        const compacted = await compact(messages, cheapConfig, contextBudget);
-                        messages.length = 0;
-                        messages.push(...compacted);
-                    } catch (compactErr) {
-                        log.error("Context Compaction 失败，回退到简单截断", { error: String(compactErr) });
-                        // 回退：保留 system prompt + 最近 10 条
-                        const sys = messages[0];
-                        const tail = messages.slice(-10);
-                        const omitted = messages.length - 11;
-                        messages.length = 0;
-                        messages.push(sys);
-                        messages.push({
-                            role: "user",
-                            content: `[系统] 由于上下文长度限制，在此之前的 ${omitted} 条场景对话记录已被压缩归档并从上下文中移除。`,
-                            scope: "global"
-                        });
-                        messages.push(...tail);
+                    if (result.endReason === "scene_changed" && result.nextScene) {
+                        try {
+                            sceneManager.enter(result.nextScene);
+                            activeScene = result.nextScene;
+                            continue;
+                        } catch {
+                            messages.push({
+                                role: "user",
+                                content: `[⚠ 严重错误] 尝试进入场景 ${result.nextScene} 失败。场景不存在！`,
+                                scope: "global",
+                            });
+                            continue;
+                        }
                     }
+
+                    if (result.endReason === "error") {
+                        log.error(`Session 失败 in scene ${activeScene}`, {
+                            error: result.error,
+                            turns: result.turns.length,
+                            taskId: task.id,
+                            taskSource: task.source,
+                        });
+                    } else {
+                        log.info(`Session 完成 in scene ${activeScene}`, {
+                            turns: result.turns.length,
+                            reason: result.endReason,
+                            taskId: task.id,
+                            taskSource: task.source,
+                        });
+                    }
+
+                    try {
+                        await runCompaction(result, memory, llmConfig, task.chatId);
+                    } catch (compErr: unknown) {
+                        const compErrMsg = compErr instanceof Error ? compErr.message : String(compErr);
+                        log.error("Compaction 失败", { error: compErrMsg, taskId: task.id });
+                    }
+
+                    const contextBudget = mergeContextBudget(appConfig.contextBudget);
+                    if (shouldCompact(messages, contextBudget)) {
+                        try {
+                            const compacted = await compact(messages, cheapConfig, contextBudget);
+                            messages.length = 0;
+                            messages.push(...compacted);
+                        } catch (compactErr) {
+                            log.error("Context Compaction 失败，回退到简单截断", { error: String(compactErr) });
+                            const sys = messages[0];
+                            const tail = messages.slice(-10);
+                            const omitted = messages.length - 11;
+                            messages.length = 0;
+                            messages.push(sys);
+                            messages.push({
+                                role: "user",
+                                content: `[系统] 由于上下文长度限制，在此之前的 ${omitted} 条场景对话记录已被压缩归档并从上下文中移除。`,
+                                scope: "global",
+                            });
+                            messages.push(...tail);
+                        }
+                    }
+
+                    break;
+                } catch (err: unknown) {
+                    const errorMsg = err instanceof Error ? err.message : String(err);
+                    log.error("Session 异常", { error: errorMsg, taskId: task.id, taskSource: task.source });
+
+                    nc.push({
+                        type: "system.session_error",
+                        error: errorMsg,
+                    });
+                    break;
                 }
-
-                break; // 结束这个 Batch，等待 next drain!
-            } catch (err: unknown) {
-                const errorMsg = err instanceof Error ? err.message : String(err);
-                log.error("Session 异常", { error: errorMsg });
-
-                // 记录错误事件
-                nc.push({
-                    type: "system.session_error",
-                    error: errorMsg,
-                });
-                break;
             }
         }
     }
@@ -588,14 +642,38 @@ async function main(): Promise<void> {
     const recordingPipeline = new RecordingPipeline(topicRegistry, cheapConfig, appConfig.persona?.description ?? "赛博群友", memory);
     const fastRouter = new FastRouter(topicRegistry, engagedHandler, recordingPipeline, 0);
     const modelRouter = new ModelRouter(llmConfig);
+    const replyPipeline = new ReplyPipeline(memory, topicRegistry, modelRouter, llmConfig);
 
     // Phase 6 事件监听
     recordingPipeline.on("topic:triage-passed", (topic: any, decision: any) => {
         log.info("话题通过 Triage", { topicId: topic.id, label: topic.label, type: decision.intervention_type });
+        void (async () => {
+            const task = await replyPipeline.buildTopicTask(topic.id);
+            if (!task) return;
+            nc.push({
+                type: REPLY_TASK_EVENT_TYPE,
+                task,
+                chatId: task.chatId,
+                scene: task.scene,
+                topicId: task.topicId,
+                _urgent: true,
+            });
+        })();
     });
     engagedHandler.on("engaged:response-ready", (topicId: string, msgs: any[], hint: string) => {
         log.info("对话模式就绪", { topicId, messageCount: msgs.length, hint: hint.slice(0, 50) });
-        // TODO: 将 ENGAGED 消息送入 Reply Pipeline
+        void (async () => {
+            const task = await replyPipeline.buildEngagedTask(topicId, msgs, hint);
+            if (!task) return;
+            nc.push({
+                type: REPLY_TASK_EVENT_TYPE,
+                task,
+                chatId: task.chatId,
+                scene: task.scene,
+                topicId: task.topicId,
+                _urgent: true,
+            });
+        })();
     });
     engagedHandler.on("engaged:exit", (topicId: string, signal: any, style: string) => {
         log.info("对话模式退出", { topicId, signal: signal.type, style });
@@ -610,6 +688,40 @@ async function main(): Promise<void> {
     // ─── 连接 sandbox 事件 ───
     sandbox.on("notify", (event: Record<string, unknown>) => {
         nc.push(event as { type: string;[key: string]: unknown });
+    });
+
+    sandbox.setHostCallHandler(async (method, args) => {
+        switch (method) {
+            case "memory.recall":
+                return memory.recall(args[0] as string, args[1] as any);
+            case "memory.browseHistory":
+                return memory.browseHistory(args[0] as any);
+            case "memory.reflect":
+                return memory.reflect(String(args[0]), llmConfig, appConfig.reflection);
+            case "actions.getTopicContext":
+                return serializeTopic(topicRegistry.get(String(args[0])));
+            case "actions.listActiveTopics": {
+                const chatId = args[0];
+                if (typeof chatId === "string" && chatId.length > 0) {
+                    const parsed = Number(chatId);
+                    if (!Number.isNaN(parsed)) {
+                        return topicRegistry.getActive(parsed).map(serializeTopic);
+                    }
+                }
+                return topicRegistry.getAll().map(serializeTopic);
+            }
+            case "actions.recallForTopic": {
+                const topic = topicRegistry.get(String(args[0]));
+                if (!topic) return null;
+                const query = [topic.label, ...topic.keywords].filter(Boolean).join(" ");
+                return memory.recall(query, {
+                    chatId: String(topic.chatId),
+                    ...(args[1] as Record<string, unknown> ?? {}),
+                } as any);
+            }
+            default:
+                throw new Error(`Unsupported host call: ${method}`);
+        }
     });
 
     sandbox.on("stderr", (data: string) => {
@@ -662,6 +774,7 @@ async function main(): Promise<void> {
         appConfig,
         fastRouter,
         topicRegistry,
+        replyPipeline,
     );
 }
 

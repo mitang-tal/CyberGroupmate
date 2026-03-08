@@ -27,6 +27,7 @@ export type {
     TopicClusteringResult,
     TopicSummaryTriageResult,
 } from "./types.js";
+export type { ReplyTask, ReplyTaskSource } from "./reply-pipeline.js";
 
 // ─── 核心组件 ───
 export { TopicRegistry } from "./topic-registry.js";
@@ -34,6 +35,7 @@ export { RecordingPipeline } from "./recording-pipeline.js";
 export { FastRouter } from "./fast-router.js";
 export { EngagedTopicHandler } from "./engaged-topic-handler.js";
 export { ModelRouter } from "./model-router.js";
+export { ReplyPipeline } from "./reply-pipeline.js";
 
 // ─── Dry-Run ───
 export { runDryRun, saveDryRunReport } from "./dry-run.js";

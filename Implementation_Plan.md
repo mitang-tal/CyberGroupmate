@@ -29,6 +29,7 @@
 3. **平台接入通过官方 `PlatformAdapter` 实现，而不是把监听逻辑长期托付给 bootstrap 代码。**
 4. **Agent 继续拥有发送能力、CodeAct 自主性、Memory API、Scene API，以及扩展新平台的实验能力。**
 5. **`NotificationCenter` 的心智模型应接近手机通知中心；`scene` 的心智模型应接近手机 app。**
+6. **整个项目坚持 CodeAct 路线：不用 JSON/Text tool use，所有能力、Action API、Skill 都必须以代码形态提供。**
 
 一句话概括新的职责划分：
 
@@ -37,6 +38,10 @@
 进一步说：
 
 > **scene 像 app，NotificationCenter 像手机通知中心。不同 scene 产生的通知统一进入 NC，Agent 在 NC 中看到“哪个 app 发来了什么通知”，再决定是否点开、切换过去、阅读、回复。**
+
+同时：
+
+> **所有能力暴露给 Agent 的方式，都应是 TypeScript 代码接口，而不是额外的 tool-calling 协议。Skill 也不是神秘外部工具，而是可被导入、调用、组合、调试的代码能力包。**
 
 ---
 
@@ -76,9 +81,10 @@
 | 6.6 | Dry-Run System | ✅ 完成 | 历史回放验证 |
 | 6.7 | Model Router | ✅ 完成 | 规则驱动模型与模式路由 |
 | 6B.0 | Ingress Boundary Refactor | 📝 规划中 | 将平台监听从 bootstrap 主路径迁到 `PlatformAdapter` |
-| 6.3 | Reply Pipeline Framework | 📝 规划中 | Advisory / Guided / Enforced |
-| 6.4 | High-Level Action API | 📝 规划中 | 弱模型可直接消费的高层动作 |
-| 6.5 | Feedback Loop | 📝 规划中 | 发言后行为评估 |
+| 6.3 | Reply Pipeline Framework | 🚧 进行中 | `ReplyPipeline` 已落地，主循环开始消费 `ReplyTask`，正在补齐剩余路由与回写 |
+| 6.4 | Code-First Action Surface | 🚧 进行中 | sandbox 已注入 `actions` 命名空间，host-call 已桥接到 host memory/topic 上下文 |
+| 6.5 | Agent-Skill Runtime | 🚧 进行中 | sandbox 已注入最小 `skills.memory` / `skills.social` 代码技能表面，后续继续扩展 |
+| 6.6 | Feedback Loop | 📝 规划中 | 发言后行为评估 |
 | 7.1 | Playbook System | 📝 规划中 | SOTA 行为知识下沉 |
 | 7.2 | Skill Auto-Generation | 📝 规划中 | 失败场景沉淀为可复用 skill |
 | 7.3 | CoT Template Distillation | 📝 规划中 | 典型推理模板下沉 |
@@ -115,6 +121,7 @@ CyberGroupmate（赛博群友）是一个长期在线、具备社会感、记忆
 3. **可演进性**：可以从 Telegram 扩展到 Discord 等其他 IM。
 4. **可观测性**：任何一次误行为都能回溯到事件流、路由决策和模型调用。
 5. **可维护性**：平台接入、消息处理、记忆系统、回复策略要分层清晰。
+6. **统一动作空间**：所有能力必须能以 TypeScript 代码接口被调用、组合和调试。
 
 ### 2.3 明确不再追求的目标
 
@@ -124,6 +131,7 @@ CyberGroupmate（赛博群友）是一个长期在线、具备社会感、记忆
 2. **不再把 Scene 当作平台接入机制。**
 3. **不再让 bootstrap 代码承担 canonical ingress 的责任。**
 4. **不再为旧 bootstrap-listener 路线保留兼容设计。**
+5. **不引入额外的 JSON / 文本 tool use 体系。**
 
 Agent 仍然可以探索平台接入，但那属于**实验扩展能力**，不是系统主干。
 
@@ -164,7 +172,7 @@ Agent 仍然可以探索平台接入，但那属于**实验扩展能力**，不�
 ┌──────────────────────────────▼───────────────────────────────┐
 │                    Agent Runtime / Sandbox                   │
 │                                                              │
-│  CodeAct / Scenes / Memory API / Docs / Action API           │
+│  CodeAct / Scenes / Memory API / Docs / Code Actions / Skills│
 │  Outbound send / recalls / optional experimental adapters    │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -176,10 +184,10 @@ Agent 仍然可以探索平台接入，但那属于**实验扩展能力**，不�
 | 平台连接 | 官方 adapter 的实现、重连、限流、日志、标准化 | 可选地编写实验 adapter，但非主路径 |
 | 消息接收 | 接收原始平台事件并转成 `NCEvent` | 不拥有 canonical ingress |
 | 消息消费 | Fast Router / Recording / Memory / Reply / Feedback 全部由框架掌控 | 不直接操纵消息流转规则 |
-| 消息发送 | 提供发送 API、审计与限流 | 决定何时发、发什么、调用哪个 API |
+| 消息发送 | 提供代码形式的发送 API、审计与限流 | 决定何时发、发什么、调用哪个 API |
 | 记忆 | 落盘、检索、压缩、反思、核心事实 | 调用 recall / browse / store 等接口 |
 | 场景 | 提供类型上下文和动作边界 | 切换场景、按场景写代码 |
-| 扩展 | 定义 adapter、event schema、action API | 在此基础上发明策略、流程和实验能力 |
+| 扩展 | 定义 adapter、event schema、代码接口、skill 模块 | 在此基础上发明策略、流程和实验能力 |
 
 ### 3.3 设计原则
 
@@ -188,6 +196,8 @@ Agent 仍然可以探索平台接入，但那属于**实验扩展能力**，不�
 3. **Agent 拥有主动性，但不拥有系统真相的唯一来源。**
 4. **平台无关依赖的是标准化事件契约，不是把平台监听权下放给 Agent。**
 5. **未来扩展到 Discord 依赖“新增 adapter + scene + action surface”，而不是只新增一个 scene。**
+6. **代码即统一动作空间**：不引入独立 tool use；所有系统能力都通过代码 API 暴露。
+7. **Skill 也是代码，不是工具**：skill 应表现为可导入、可调用、可测试、可审计的代码模块。
 
 ### 3.4 核心心智模型
 
@@ -220,8 +230,8 @@ Agent 仍然可以探索平台接入，但那属于**实验扩展能力**，不�
    - Engaged Topic Handler
    - Recording Pipeline 缓冲
 5. `Recording Pipeline` 批量提取话题、摘要、Triage、写入记忆
-6. `Reply Pipeline` 决定是否触发 CodeAct / Action API
-7. Agent 在 sandbox 中执行动作，使用发送 API 对外发言
+6. `Reply Pipeline` 将话题级判断转换为可执行的 Agent 输入
+7. Agent 在 sandbox 中通过 CodeAct 消费这些输入，调用代码接口与 skill 模块完成感知、检索、思考与行动
 8. `Feedback Loop` 追踪发言后的后效
 
 ### 4.2 Agent Loop 的新角色
@@ -235,6 +245,36 @@ Agent 不再负责“先把 Telegram 连上再说”。它的新职责是：
 5. 在需要时编写辅助工具或实验扩展
 
 这使得 bootstrap 从“建立生命支持系统”变成“初始化人格与行为环境”。
+
+### 4.3 Phase 6B 的真正目标：接上 Agent 侧与 Memory 侧
+
+从工程现实看，当前项目里两块最重、最真实的资产是：
+
+1. **Phase 1-5 的 Agent 侧执行引擎**
+   - CodeAct Session Runner
+   - Sandbox / Worker
+   - Scene System
+   - `ctx` / `runtime` / docs
+   - 长 session 与 scope 隔离
+2. **Phase 6A 的 Memory / Pipeline 侧**
+   - Fast Router
+   - Recording Pipeline
+   - TopicRegistry
+   - Memory V2
+   - Dry-Run / Model Router
+
+因此，Phase 6B 的本质不是“再加几个新模块”，而是：
+
+> **把 Agent 侧的代码执行能力，和 Memory 侧已经形成的话题判断、记忆检索、上下文预处理能力，接成一条完整闭环。**
+
+在新架构下，这条闭环应当是：
+
+1. NC 收到某个 scene 的通知
+2. Pipeline 将消息提炼成话题、摘要、triage、memory context
+3. Reply Pipeline 把这些结构化结果变成 Agent 可消费的输入
+4. Agent 仍然通过 CodeAct 写代码决策，而不是切到 tool use
+5. Agent 通过代码 API / skill 模块执行动作
+6. 行动结果再回流到 Memory / Feedback
 
 ---
 
@@ -560,6 +600,13 @@ Reply Pipeline 仍然负责三种模式：
 
 但在本版架构中，它明确位于 **NC 之后**，因此不参与平台接入，也不拥有消息监听逻辑。
 
+它的真正职责是把 Memory / Pipeline 侧的结构化输出，桥接成 Agent 侧可执行的输入：
+
+1. 接收 topic、summary、triage、memory_context、scene 信息
+2. 决定这次交给 Agent 的自由度等级
+3. 以 prompt + typed API + 代码能力表面的形式，把任务交给 CodeAct
+4. 保证即使在 `Guided` / `Enforced` 模式下，也仍然是“生成并执行代码”，而不是切换到外部 tool use
+
 ### 8.7 Feedback Loop
 
 Feedback Loop 也只消费标准化事件与系统动作结果：
@@ -653,6 +700,30 @@ bootstrap 从现在开始只负责：
 3. 不再负责向 NC 推送生产消息
 
 如果 Agent 在实验模式下自己写 adapter，必须显式标记为实验，不进入主干计划。
+
+### 10.4 Skill 与 Action 的提供方式
+
+本项目保留旧版方案里的核心立场：
+
+1. **不使用独立 tool use 协议**
+2. **不向 Agent 暴露一套 JSON tool schema**
+3. **所有能力都以代码接口提供**
+
+因此：
+
+1. `memory.recall()`、`browseHistory()`、`ctx.tg.sendText()` 这类能力是代码 API
+2. Reply Pipeline 中的“Action API”也必须表现为代码函数，而不是工具调用
+3. Phase 7 引入的 skill 也必须是代码模块，例如 `skills.replyInGroup()`、`skills.recallPersonContext()`
+
+Agent 获得能力的方式应该始终是：
+
+- 看到类型定义
+- 写 TypeScript 代码
+- 执行
+- 观察结果
+- 修正
+
+这条链不能被 tool use 破坏。
 
 ---
 
@@ -766,6 +837,10 @@ bootstrap 从现在开始只负责：
 
 > **先把 ingress 边界做对，再继续往上叠回复与反馈。**
 
+但从项目价值上看，Phase 6B 的核心交付不是单个组件，而是：
+
+> **把 Phase 1-5 的 Agent 侧执行能力，与 Phase 6A 的 Memory / Pipeline 侧观察能力，无缝接成一个真正可运行的决策闭环。**
+
 ### 13.2 Phase 6A（已完成，但语义更新）
 
 已完成内容继续有效：
@@ -853,15 +928,87 @@ bootstrap 从现在开始只负责：
 1. bootstrap 不做平台监听也能完成正常运行
 2. bootstrap 重放不再影响 canonical ingress
 
-### 13.4 Phase 6B.1：Reply Pipeline
+### 13.4 Phase 6B.1：Agent-Memory Bridge（6B 主体）
 
-在 ingress 边界稳定后，再实现 Reply Pipeline。
+在 ingress 边界稳定后，Phase 6B 的主体工作是把 Agent 侧和 Memory 侧真正接上。
+
+#### Task 6.3 — Reply Pipeline Framework
+
+职责：
+
+1. 接收来自 Recording Pipeline / TopicRegistry / Model Router 的结构化结果
+2. 组装出 Agent 本轮应该看到的任务输入
+3. 决定 `Advisory / Guided / Enforced` 三种代码执行模式
+4. 把话题、记忆、动作建议转成 CodeAct session 的高质量上下文
+
+关键要求：
+
+1. 输出给 Agent 的仍然是 prompt + typed code surface
+2. 不引入 tool use
+3. SOTA 模型仍保留完全自由写代码的能力
+
+#### Task 6.4 — Code-First Action Surface
+
+旧文档里的 “High-Level Action API” 在新架构下应重命名理解为：
+
+> **Code-First Action Surface**
+
+它不是 tools，而是一组以代码形式提供的辅助函数 / helper 模块。
+
+例如：
+
+```ts
+actions.getTopicContext(topicId)
+actions.recallPerson(userId)
+actions.replyInScene(scene, chatId, content)
+actions.markTopicHandled(topicId)
+```
+
+这些能力必须满足：
+
+1. 有 `.d.ts` 类型定义
+2. 可在 sandbox 中被代码直接调用
+3. 可组合、可调试、可测试
+4. 底层仍可退回原始 API，如 `ctx.tg.*`、`memory.*`
+
+#### Task 6.5 — Agent-Skill Runtime
+
+为了和你的原始设计一致，Phase 6B 就要把 skill 的运行形态定下来，而不是等到 7.2 再想。
+
+约束：
+
+1. skill 不是 tool
+2. skill 不是 prompt 片段
+3. skill 是代码模块 / 函数库
+
+推荐形式：
+
+```ts
+import { replyInGroup, recallPersonContext } from "skills/social";
+```
+
+或者通过预注入命名空间：
+
+```ts
+skills.social.replyInGroup(...)
+```
+
+验收要求：
+
+1. skill 可被 Agent 通过代码直接调用
+2. skill 有类型定义和测试
+3. skill 调用结果与普通代码执行一样可观察、可报错、可调试
+
+#### Task 6.6 — Feedback Loop
+
+Feedback Loop 保持原计划，但它现在依赖的是已经接通的 Agent-Memory 闭环。
 
 | Task | 内容 | 依赖 | 估时 |
 |------|------|------|------|
 | 6.3 | Reply Pipeline Framework | 6B.0 | 3天 |
-| 6.4 | High-Level Action API | 6B.0, sandbox | 2天 |
-| 6.5 | Feedback Loop | 6.3 | 2天 |
+| 6.4 | Code-First Action Surface | 6B.0, sandbox | 2天 |
+| 6.5 | Agent-Skill Runtime | 6.4, sandbox | 2天 |
+| 6.6 | Feedback Loop | 6.3 | 2天 |
 
 ### 13.5 Phase 7：知识下沉与自动化
 
@@ -891,8 +1038,9 @@ bootstrap 从现在开始只负责：
 2. 迁移内部 ID 类型
 3. 实现 TelegramAdapter
 4. 改写 bootstrap prompt 与默认行为
-5. 跑 dry-run 与真实 Telegram 验证
-6. 再继续 Reply Pipeline
+5. 实现 Reply Pipeline，把 topic/memory 输出正式喂给 Agent
+6. 实现 Code-First Action Surface 与 skill runtime
+7. 跑 dry-run 与真实 Telegram 验证 Agent-Memory 闭环
 
 ### 14.3 切换策略
 
@@ -920,15 +1068,16 @@ bootstrap 从现在开始只负责：
 
 1. Recording Pipeline 连续运行 24h 无异常
 2. Engaged Topic Handler 在真实对话中回复延迟 < 20 秒
-3. Guided / Enforced 模式可稳定运行
-4. 退出机制有效，身份探测或拥挤场景能正确退出
-5. 误触发率与迟到率可量化追踪
+3. Reply Pipeline 能稳定把 topic / triage / memory context 交给 Agent
+4. Guided / Enforced 模式下，Agent 仍通过代码接口行动，而不是依赖 tool use
+5. 退出机制有效，身份探测或拥挤场景能正确退出
+6. 误触发率与迟到率可量化追踪
 
 ### 15.3 Phase 7 验收标准
 
 1. Playbook 能反映近期群聊动态
-2. Skill Auto-Generation 能产出至少 3 个可复用 skill
-3. 弱模型在 Skill + Playbook 下的成功率提升可测
+2. Skill Auto-Generation 能产出至少 3 个可复用代码 skill
+3. 弱模型在代码 skill + Playbook 下的成功率提升可测
 4. 系统连续运行 48h 无不可恢复崩溃
 
 ---
@@ -969,7 +1118,8 @@ bootstrap 从现在开始只负责：
 
 1. 明确告诉 Agent：它失去的是“基础设施责任”，不是“行动能力”
 2. 保留实验 adapter 能力
-3. 强化 Action API、Scene、Docs、Memory 能力
+3. 强调 CodeAct 主体地位不变：Reply Pipeline 只是给它更好的输入
+4. 强化代码形式的 Action API、Scene、Docs、Memory 能力
 
 ### 16.4 风险：Discord 等未来平台被低估
 
@@ -995,8 +1145,9 @@ bootstrap 从现在开始只负责：
 2. 你在 `home` scene 看到的是类似“手机通知中心”的统一通知流
 3. 每条通知都明确标识来自哪个 scene / app
 4. 你可以消费通知、回忆记忆、决定是否切换 scene、是否发言
-5. 你可以使用平台发送 API 与场景能力行动
-6. 若你要探索新平台，可先写实验 adapter，但必须显式声明其实验性质
+5. 你获得能力的方式始终是写 TypeScript 代码，不使用 tool calling
+6. 你可以使用代码形式的 API / actions / skills 与场景能力行动
+7. 若你要探索新平台，可先写实验 adapter，但必须显式声明其实验性质
 
 这会显著减少“为了把生命支持搭起来，先写一堆监听脚本”的上下文浪费。
 
@@ -1021,6 +1172,10 @@ src/
     recording-pipeline.ts
     topic-registry.ts
     reply-pipeline.ts
+  skills/
+    social/
+    memory/
+    platform/
   scenes/
     home.d.ts
     telegram.d.ts

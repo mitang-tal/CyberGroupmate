@@ -5,8 +5,8 @@
  * 与 worker 通信，提供代码执行、交互式输入和崩溃检测能力。
  *
  * IPC 协议：
- * - Host → Worker: execute, input_response
- * - Worker → Host: result, notify, input_request, print
+ * - Host → Worker: execute, input_response, host_call_result
+ * - Worker → Host: result, notify, input_request, print, host_call
  */
 
 import { spawn, ChildProcess } from "node:child_process";
@@ -30,7 +30,7 @@ export interface ExecutionResult {
 
 /** Worker → Host 消息 */
 interface WorkerMessage {
-    type: "result" | "notify" | "input_request" | "print";
+    type: "result" | "notify" | "input_request" | "print" | "host_call";
     id?: string;
     output?: string;
     error?: boolean;
@@ -38,6 +38,12 @@ interface WorkerMessage {
     event?: Record<string, unknown>;
     prompt?: string;
     message?: string;
+    method?: string;
+    args?: unknown[];
+}
+
+interface HostCallHandler {
+    (method: string, args: unknown[]): Promise<unknown> | unknown;
 }
 
 /**
@@ -78,6 +84,7 @@ export class Sandbox extends EventEmitter {
     > = new Map();
     private requestCounter = 0;
     private projectRoot: string;
+    private hostCallHandler: HostCallHandler | null = null;
 
     constructor(projectRoot?: string) {
         super();
@@ -182,6 +189,35 @@ export class Sandbox extends EventEmitter {
         } else if (msg.type === "print" && msg.message) {
             // Agent 直接打印
             this.emit("print", msg.message);
+        } else if (msg.type === "host_call" && msg.id && msg.method) {
+            void this.handleHostCall(msg.id, msg.method, msg.args ?? []);
+        }
+    }
+
+    private async handleHostCall(id: string, method: string, args: unknown[]): Promise<void> {
+        if (!this.child?.stdin) return;
+
+        try {
+            if (!this.hostCallHandler) {
+                throw new Error(`No host call handler registered for ${method}`);
+            }
+
+            const value = await this.hostCallHandler(method, args);
+            const msg = JSON.stringify({
+                type: "host_call_result",
+                id,
+                ok: true,
+                value,
+            });
+            this.child.stdin.write(msg + "\n");
+        } catch (err) {
+            const msg = JSON.stringify({
+                type: "host_call_result",
+                id,
+                ok: false,
+                error: err instanceof Error ? err.message : String(err),
+            });
+            this.child.stdin.write(msg + "\n");
         }
     }
 
@@ -221,6 +257,15 @@ export class Sandbox extends EventEmitter {
 
         const msg = JSON.stringify({ type: "input_response", id, value });
         this.child.stdin.write(msg + "\n");
+    }
+
+    /**
+     * 注册 worker 侧 host_call 的处理函数。
+     *
+     * 用于把 sandbox 中的 memory/actions/skills 代理到 host 进程中的真实实现。
+     */
+    setHostCallHandler(handler: HostCallHandler): void {
+        this.hostCallHandler = handler;
     }
 
     isAlive(): boolean {

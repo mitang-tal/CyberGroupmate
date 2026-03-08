@@ -4,7 +4,7 @@
  * Home 场景是 agent 的默认起点 — 通知中心。
  * 在这里 agent 查看通知、决定下一步、切换场景。
  *
- * 始终可用的全局对象：scene, runtime, ctx
+ * 始终可用的全局对象：scene, runtime, ctx, actions, skills
  */
 
 // ─── 场景管理 ───
@@ -78,6 +78,44 @@ declare const runtime: {
      * @param fn - 触发时执行的函数
      */
     cron(expr: string, name: string, fn: () => Promise<void>): void;
+};
+
+// ─── Code-First Action Surface ───
+
+declare const actions: {
+    /**
+     * 获取某个话题的结构化上下文
+     * @example const topic = await actions.getTopicContext("topic_xxx")
+     */
+    getTopicContext(topicId: string): Promise<Record<string, unknown> | null>;
+
+    /**
+     * 列出当前活跃话题
+     * @example const topics = await actions.listActiveTopics()
+     */
+    listActiveTopics(chatId?: string): Promise<Array<Record<string, unknown> | null>>;
+
+    /**
+     * 以话题为中心触发一次记忆检索
+     * @example const ctx = await actions.recallForTopic("topic_xxx")
+     */
+    recallForTopic(topicId: string, options?: Record<string, unknown>): Promise<unknown>;
+};
+
+// ─── Skills（代码模块） ───
+
+declare const skills: {
+    memory: {
+        recallAndSummarize(query: string, options?: Record<string, unknown>): Promise<unknown>;
+        browseForAnswer(request: Record<string, unknown>): Promise<unknown>;
+    };
+    social: {
+        replyInTelegram(
+            chatId: number | string,
+            text: string,
+            opts?: { replyTo?: number }
+        ): Promise<unknown>;
+    };
 };
 
 // ─── 持久化上下文 ───

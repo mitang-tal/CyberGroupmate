@@ -1,0 +1,246 @@
+/**
+ * reply-pipeline.ts — Agent-Memory Bridge
+ *
+ * 把 Memory / Pipeline 侧的结构化结果桥接成 Agent 侧可消费的 CodeAct 输入。
+ *
+ * 设计目标：
+ * - 不引入 tool use
+ * - 输出仍然是 prompt + typed code surface
+ * - 为 FAST_PATH / 话题介入 / ENGAGED 对话三种来源统一组装任务
+ */
+
+import { createLogger } from "../core/logger.js";
+import type { LLMConfig } from "../core/config.js";
+import type { MemoryStoreV2, RecallResult } from "../memory-v2/index.js";
+import type { Message, Topic, TriageDecision, PipelineMode, ModelRouteResult } from "./types.js";
+import type { ModelRouter } from "./model-router.js";
+import type { TopicRegistry } from "./topic-registry.js";
+
+const log = createLogger("reply-pipeline");
+
+export type ReplyTaskSource = "FAST_PATH" | "TOPIC_TRIAGE" | "ENGAGED";
+
+export interface ReplyTask {
+    id: string;
+    source: ReplyTaskSource;
+    scene: string;
+    chatId: string;
+    topicId?: string;
+    pipelineMode: PipelineMode;
+    modelRoute: ModelRouteResult;
+    title: string;
+    prompt: string;
+    messages: Message[];
+    recall?: RecallResult;
+    replyHint?: string;
+}
+
+let taskCounter = 0;
+
+function nextTaskId(): string {
+    taskCounter += 1;
+    return `reply_${Date.now().toString(36)}_${taskCounter.toString(36).padStart(4, "0")}`;
+}
+
+function unique<T>(items: T[]): T[] {
+    return Array.from(new Set(items));
+}
+
+export class ReplyPipeline {
+    constructor(
+        private memory: MemoryStoreV2,
+        private topicRegistry: TopicRegistry,
+        private modelRouter: ModelRouter,
+        private baseLLMConfig: LLMConfig,
+    ) {}
+
+    buildDirectTasks(messages: Message[]): ReplyTask[] {
+        const byChat = new Map<number, Message[]>();
+        for (const msg of messages) {
+            const group = byChat.get(msg.chatId) ?? [];
+            group.push(msg);
+            byChat.set(msg.chatId, group);
+        }
+
+        const tasks: ReplyTask[] = [];
+        for (const [chatId, group] of byChat) {
+            const route = this.modelRouter.route(true, undefined, group);
+            tasks.push({
+                id: nextTaskId(),
+                source: "FAST_PATH",
+                scene: "telegram",
+                chatId: String(chatId),
+                pipelineMode: route.pipelineMode,
+                modelRoute: route,
+                title: `FAST_PATH chat=${chatId}`,
+                prompt: this.buildDirectPrompt(group, route),
+                messages: group,
+            });
+        }
+        return tasks;
+    }
+
+    async buildTopicTask(topicId: string): Promise<ReplyTask | null> {
+        const topic = this.topicRegistry.get(topicId);
+        if (!topic || !topic.decision?.should_intervene) return null;
+
+        const recall = await this.recallForTopic(topic);
+        const route = this.modelRouter.route(false, topic.decision, []);
+
+        return {
+            id: nextTaskId(),
+            source: "TOPIC_TRIAGE",
+            scene: "telegram",
+            chatId: String(topic.chatId),
+            topicId: topic.id,
+            pipelineMode: route.pipelineMode,
+            modelRoute: route,
+            title: `TOPIC_TRIAGE ${topic.label}`,
+            prompt: this.buildTopicPrompt(topic, topic.decision, recall, route),
+            messages: [],
+            recall,
+        };
+    }
+
+    async buildEngagedTask(topicId: string, messages: Message[], replyHint: string): Promise<ReplyTask | null> {
+        const topic = this.topicRegistry.get(topicId);
+        if (!topic) return null;
+
+        const decision = topic.decision ?? {
+            should_intervene: true,
+            reason: "engaged conversation",
+            intervention_type: "CASUAL_CHAT",
+            confidence: 0.8,
+            pipelineMode: "GUIDED" as PipelineMode,
+        };
+        const recall = await this.recallForTopic(topic);
+        const route = this.modelRouter.route(true, decision, messages);
+
+        return {
+            id: nextTaskId(),
+            source: "ENGAGED",
+            scene: "telegram",
+            chatId: String(topic.chatId),
+            topicId: topic.id,
+            pipelineMode: route.pipelineMode,
+            modelRoute: route,
+            title: `ENGAGED ${topic.label}`,
+            prompt: this.buildEngagedPrompt(topic, messages, replyHint, recall, route),
+            messages,
+            recall,
+            replyHint,
+        };
+    }
+
+    getTaskLLMConfig(task: ReplyTask): LLMConfig {
+        return {
+            ...this.baseLLMConfig,
+            ...task.modelRoute.overrides,
+        };
+    }
+
+    private async recallForTopic(topic: Topic): Promise<RecallResult | undefined> {
+        const queryParts = unique([topic.label, ...topic.keywords]).filter(Boolean);
+        if (queryParts.length === 0) return undefined;
+
+        try {
+            return await this.memory.recall(queryParts.join(" "), {
+                chatId: String(topic.chatId),
+                maxResults: 5,
+            });
+        } catch (err) {
+            log.warn("topic recall failed", { topicId: topic.id, error: String(err) });
+            return undefined;
+        }
+    }
+
+    private buildDirectPrompt(messages: Message[], route: ModelRouteResult): string {
+        const lines = messages.map(m =>
+            `- [${m.id}] ${m.senderName} @ ${new Date(m.timestamp).toISOString()}: ${m.text}`
+        ).join("\n");
+
+        return [
+            `[Reply Pipeline] 来源: FAST_PATH`,
+            `模式: ${route.pipelineMode}`,
+            `建议模型: ${route.model}`,
+            "",
+            "以下消息需要立即处理。你仍然通过写 TypeScript 代码来行动，不使用 tool calling。",
+            "如需读取历史或记忆，请主动调用 memory.recall() / memory.browseHistory()；如需发消息，请进入对应 scene 后调用代码 API。",
+            "",
+            lines,
+        ].join("\n");
+    }
+
+    private buildTopicPrompt(
+        topic: Topic,
+        decision: TriageDecision,
+        recall: RecallResult | undefined,
+        route: ModelRouteResult,
+    ): string {
+        return [
+            `[Reply Pipeline] 来源: TOPIC_TRIAGE`,
+            `模式: ${route.pipelineMode}`,
+            `建议模型: ${route.model}`,
+            `话题: ${topic.label}`,
+            `chatId: ${topic.chatId}`,
+            `决策: ${decision.intervention_type} (confidence=${decision.confidence.toFixed(2)})`,
+            `理由: ${decision.reason}`,
+            "",
+            "以下是框架预处理后的结构化上下文。你仍然需要通过 CodeAct 写代码来完成任务。",
+            "",
+            `最近上下文:\n${topic.recentContext || "（无）"}`,
+            "",
+            this.formatRecall(recall),
+            "",
+            "请判断是否需要进入 telegram / memory 场景，并自行写代码完成检索、补充上下文、生成回复、发送消息。",
+        ].join("\n");
+    }
+
+    private buildEngagedPrompt(
+        topic: Topic,
+        messages: Message[],
+        replyHint: string,
+        recall: RecallResult | undefined,
+        route: ModelRouteResult,
+    ): string {
+        const lines = messages.map(m => `- ${m.senderName}: ${m.text}`).join("\n");
+
+        return [
+            `[Reply Pipeline] 来源: ENGAGED`,
+            `模式: ${route.pipelineMode}`,
+            `建议模型: ${route.model}`,
+            `话题: ${topic.label}`,
+            `chatId: ${topic.chatId}`,
+            `对话轮次: ${topic.turnCount}/${topic.maxTurns}`,
+            `回复方向提示: ${replyHint || "（无）"}`,
+            "",
+            `新消息:\n${lines}`,
+            "",
+            `最近话题上下文:\n${topic.recentContext || "（无）"}`,
+            "",
+            this.formatRecall(recall),
+            "",
+            "你正处于一段已经介入的话题中。请保持自然节奏，必要时先检索记忆，再通过代码发送回复。",
+        ].join("\n");
+    }
+
+    private formatRecall(recall: RecallResult | undefined): string {
+        if (!recall) return "Memory Context: （未命中）";
+
+        const parts: string[] = [];
+        if (recall.topics.length > 0) {
+            parts.push(`相关话题: ${recall.topics.slice(0, 3).map(t => t.label).join("、")}`);
+        }
+        if (recall.facts.length > 0) {
+            parts.push(`相关事实: ${recall.facts.slice(0, 5).map(f => f.content).join("；")}`);
+        }
+        if (recall.persons.length > 0) {
+            parts.push(`相关人物: ${recall.persons.slice(0, 3).map(p => p.userId).join("、")}`);
+        }
+        if (recall.deepSummary) {
+            parts.push(`Deep Summary: ${recall.deepSummary}`);
+        }
+
+        return parts.length > 0 ? `Memory Context:\n${parts.join("\n")}` : "Memory Context: （未命中）";
+    }
+}

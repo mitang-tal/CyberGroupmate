@@ -5,8 +5,8 @@
  * 维护持久化的 ctx 命名空间，执行 agent 写的 TypeScript/JavaScript 代码。
  *
  * IPC 协议：
- * - Host → Worker: execute, input_response
- * - Worker → Host: result, notify, input_request, print
+ * - Host → Worker: execute, input_response, host_call_result
+ * - Worker → Host: result, notify, input_request, print, host_call
  */
 
 import { createInterface } from "node:readline";
@@ -27,6 +27,15 @@ interface InputResponseMessage {
     type: "input_response";
     id: string;
     value: string;
+}
+
+/** Host → Worker: host call 返回值 */
+interface HostCallResultMessage {
+    type: "host_call_result";
+    id: string;
+    ok: boolean;
+    value?: unknown;
+    error?: string;
 }
 
 /** Worker → Host: 代码执行结果 */
@@ -57,8 +66,16 @@ interface PrintMessage {
     message: string;
 }
 
-type IncomingMessage = ExecuteMessage | InputResponseMessage;
-type OutgoingMessage = ResultMessage | NotifyMessage | InputRequestMessage | PrintMessage;
+/** Worker → Host: 请求 Host 端执行方法 */
+interface HostCallMessage {
+    type: "host_call";
+    id: string;
+    method: string;
+    args: unknown[];
+}
+
+type IncomingMessage = ExecuteMessage | InputResponseMessage | HostCallResultMessage;
+type OutgoingMessage = ResultMessage | NotifyMessage | InputRequestMessage | PrintMessage | HostCallMessage;
 
 // ─── 全局上下文 ───
 
@@ -118,6 +135,11 @@ function printToHost(message: string): void {
 /** 等待中的 input 请求 */
 const pendingInputs = new Map<string, (value: string) => void>();
 let inputCounter = 0;
+let hostCallCounter = 0;
+const pendingHostCalls = new Map<string, {
+    resolve: (value: unknown) => void;
+    reject: (error: Error) => void;
+}>();
 
 /**
  * 向 Host 请求用户输入（阻塞当前代码执行直到用户响应）
@@ -130,6 +152,14 @@ function requestInput(prompt: string): Promise<string> {
         const id = `input_${++inputCounter}`;
         pendingInputs.set(id, resolve);
         sendToHost({ type: "input_request", id, prompt });
+    });
+}
+
+function callHost(method: string, args: unknown[] = []): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+        const id = `host_${++hostCallCounter}`;
+        pendingHostCalls.set(id, { resolve, reject });
+        sendToHost({ type: "host_call", id, method, args });
     });
 }
 
@@ -194,13 +224,15 @@ async function executeCode(id: string, code: string): Promise<void> {
     console.info = captureLog;
 
     try {
-        // 构造 async wrapper，注入 ctx, runtime, memory, scene, docs
+        // 构造 async wrapper，注入 ctx, runtime, memory, scene, docs, actions, skills
         const asyncFn = new Function(
             "ctx",
             "runtime",
             "memory",
             "scene",
             "docs",
+            "actions",
+            "skills",
             `return (async () => { ${code} })()`
         );
 
@@ -234,42 +266,59 @@ async function executeCode(id: string, code: string): Promise<void> {
         };
 
         const memory = {
-            // V2 API — sandbox 进程中的代理存根
-            // 当前返回空结果；后续通过 IPC 桥接到 Host 端的 MemoryStoreV2
-
             /**
              * 统一记忆检索
              * @example const result = await memory.recall("京都 旅行");
              */
-            recall: async (_query: string, _options?: Record<string, unknown>) => ({
-                topics: [] as unknown[],
-                facts: [] as unknown[],
-                persons: [] as unknown[],
-            }),
+            recall: async (query: string, options?: Record<string, unknown>) =>
+                callHost("memory.recall", [query, options]),
 
             /**
              * 消息档案检索
              * @example const result = await memory.browseHistory({ intent: "之前谁推荐过岚山" });
              */
-            browseHistory: async (_request: Record<string, unknown>) => ({
-                answer: "",
-                segments: [] as unknown[],
-                messagesRead: 0,
-            }),
+            browseHistory: async (request: Record<string, unknown>) =>
+                callHost("memory.browseHistory", [request]),
 
             /**
              * 对指定群组进行反思总结
              * @example const result = await memory.reflect("-100123");
              */
-            reflect: async (_chatId: string) => ({
-                reflectedPeriod: { from: "", to: "" },
-                topicsSummary: [] as unknown[],
-                personUpdates: [] as unknown[],
-                groupUpdates: "",
-                newCoreFacts: [] as string[],
-                mergedEpisodes: 0,
-                insights: "[Memory V2] Reflection 将在 Phase M2 实现。",
-            }),
+            reflect: async (chatId: string) =>
+                callHost("memory.reflect", [chatId]),
+        };
+
+        const actions = {
+            getTopicContext: async (topicId: string) =>
+                callHost("actions.getTopicContext", [topicId]),
+            listActiveTopics: async (chatId?: string) =>
+                callHost("actions.listActiveTopics", [chatId]),
+            recallForTopic: async (topicId: string, options?: Record<string, unknown>) =>
+                callHost("actions.recallForTopic", [topicId, options]),
+        };
+
+        const skills = {
+            memory: {
+                recallAndSummarize: async (query: string, options?: Record<string, unknown>) =>
+                    memory.recall(query, options),
+                browseForAnswer: async (request: Record<string, unknown>) =>
+                    memory.browseHistory(request),
+            },
+            social: {
+                replyInTelegram: async (
+                    chatId: number | string,
+                    text: string,
+                    opts?: { replyTo?: number }
+                ) => {
+                    const tg = ctx.tg as {
+                        sendText?: (chatId: number | string, text: string, opts?: { replyTo?: number }) => Promise<unknown>;
+                    } | undefined;
+                    if (!tg?.sendText) {
+                        throw new Error("ctx.tg.sendText is not available");
+                    }
+                    return tg.sendText(chatId, text, opts);
+                },
+            },
         };
         const scene = {
             get current() { return globalSceneState; },
@@ -287,7 +336,7 @@ async function executeCode(id: string, code: string): Promise<void> {
             },
         };
 
-        await asyncFn(ctx, runtime, memory, scene, docs);
+        await asyncFn(ctx, runtime, memory, scene, docs, actions, skills);
 
         sendToHost({
             type: "result",
@@ -338,6 +387,16 @@ rl.on("line", async (line: string) => {
             if (resolver) {
                 pendingInputs.delete(msg.id);
                 resolver(msg.value);
+            }
+        } else if (msg.type === "host_call_result") {
+            const pending = pendingHostCalls.get(msg.id);
+            if (pending) {
+                pendingHostCalls.delete(msg.id);
+                if (msg.ok) {
+                    pending.resolve(msg.value);
+                } else {
+                    pending.reject(new Error(msg.error ?? "Unknown host call error"));
+                }
             }
         }
     } catch (err: unknown) {

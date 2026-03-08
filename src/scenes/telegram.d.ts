@@ -22,6 +22,26 @@ declare const runtime: {
     ps(): string[];
 };
 
+declare const actions: {
+    getTopicContext(topicId: string): Promise<Record<string, unknown> | null>;
+    listActiveTopics(chatId?: string): Promise<Array<Record<string, unknown> | null>>;
+    recallForTopic(topicId: string, options?: Record<string, unknown>): Promise<unknown>;
+};
+
+declare const skills: {
+    memory: {
+        recallAndSummarize(query: string, options?: Record<string, unknown>): Promise<unknown>;
+        browseForAnswer(request: Record<string, unknown>): Promise<unknown>;
+    };
+    social: {
+        replyInTelegram(
+            chatId: number | string,
+            text: string,
+            opts?: { replyTo?: number }
+        ): Promise<Message>;
+    };
+};
+
 declare const ctx: {
     tg: TelegramClient;
     self: User;

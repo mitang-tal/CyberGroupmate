@@ -117,6 +117,50 @@ describe("Sandbox", () => {
         assert.equal(event.data, "hello");
     });
 
+    it("should bridge memory and actions calls to host", async () => {
+        const sb = await makeSandbox();
+
+        sb.setHostCallHandler(async (method, args) => {
+            if (method === "memory.recall") {
+                return { topics: [{ id: "topic_1", label: args[0] }], facts: [], persons: [] };
+            }
+            if (method === "actions.getTopicContext") {
+                return { id: args[0], label: "测试话题" };
+            }
+            throw new Error(`unexpected method: ${method}`);
+        });
+
+        const result = await sb.execute(`
+          const recall = await memory.recall("京都");
+          const topic = await actions.getTopicContext("topic_1");
+          console.log(JSON.stringify({ recall, topic }));
+        `);
+
+        assert.equal(result.error, false);
+        const parsed = JSON.parse(result.output);
+        assert.equal(parsed.recall.topics[0].label, "京都");
+        assert.equal(parsed.topic.label, "测试话题");
+    });
+
+    it("should expose code-based social skill helpers", async () => {
+        const sb = await makeSandbox();
+        const result = await sb.execute(`
+          ctx.tg = {
+            async sendText(chatId, text, opts) {
+              return { chatId, text, opts };
+            }
+          };
+          const sent = await skills.social.replyInTelegram(123, "hello", { replyTo: 9 });
+          console.log(JSON.stringify(sent));
+        `);
+
+        assert.equal(result.error, false);
+        const parsed = JSON.parse(result.output);
+        assert.equal(parsed.chatId, 123);
+        assert.equal(parsed.text, "hello");
+        assert.equal(parsed.opts.replyTo, 9);
+    });
+
     it("should stop cleanly", async () => {
         const sb = new Sandbox();
         await sb.start();
