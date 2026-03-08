@@ -27,7 +27,9 @@ import {
     EngagedTopicHandler,
     ModelRouter,
     ReplyPipeline,
+    FeedbackLoop,
     type ReplyTask,
+    type AgentMessageSentEvent,
 } from "./pipeline/index.js";
 import {
     readFileSync,
@@ -318,6 +320,7 @@ async function mainEventLoop(
     fastRouter?: FastRouter,
     topicRegistry?: TopicRegistry,
     replyPipeline?: ReplyPipeline,
+    feedbackLoop?: FeedbackLoop,
 ): Promise<void> {
     log.info("进入主事件循环");
 
@@ -425,6 +428,25 @@ async function mainEventLoop(
         for (const ev of events) {
             const chatId = (ev as any).chatId ?? (ev as any).chat_id;
             if (chatId) lastActivityPerChat.set(String(chatId), Date.now());
+
+            if ((ev as any).type === "system.agent_message_sent" && feedbackLoop) {
+                const sentEvent = ev as Record<string, unknown>;
+                feedbackLoop.recordAgentMessage({
+                    scene: String(sentEvent.scene ?? "telegram"),
+                    chatId: String(sentEvent.chatId ?? ""),
+                    messageId: sentEvent.messageId ? String(sentEvent.messageId) : undefined,
+                    text: String(sentEvent.text ?? ""),
+                    timestamp: String(sentEvent.timestamp ?? new Date().toISOString()),
+                    replyToMessageId: sentEvent.replyToMessageId ? String(sentEvent.replyToMessageId) : undefined,
+                } satisfies AgentMessageSentEvent);
+
+                if (fastRouter && sentEvent.messageId !== undefined) {
+                    const parsedId = Number(sentEvent.messageId);
+                    if (!Number.isNaN(parsedId)) {
+                        fastRouter.recordAgentMessage(parsedId);
+                    }
+                }
+            }
         }
 
         const replyTasks: ReplyTask[] = [];
@@ -643,6 +665,7 @@ async function main(): Promise<void> {
     const fastRouter = new FastRouter(topicRegistry, engagedHandler, recordingPipeline, 0);
     const modelRouter = new ModelRouter(llmConfig);
     const replyPipeline = new ReplyPipeline(memory, topicRegistry, modelRouter, llmConfig);
+    const feedbackLoop = new FeedbackLoop(topicRegistry, memory, nc);
 
     // Phase 6 事件监听
     recordingPipeline.on("topic:triage-passed", (topic: any, decision: any) => {
@@ -775,6 +798,7 @@ async function main(): Promise<void> {
         fastRouter,
         topicRegistry,
         replyPipeline,
+        feedbackLoop,
     );
 }
 

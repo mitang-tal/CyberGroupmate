@@ -80,11 +80,11 @@
 | 6.2 | Recording Pipeline | ✅ 完成 | 50 条 / 2 分钟缓冲；强信号加速 |
 | 6.6 | Dry-Run System | ✅ 完成 | 历史回放验证 |
 | 6.7 | Model Router | ✅ 完成 | 规则驱动模型与模式路由 |
-| 6B.0 | Ingress Boundary Refactor | 📝 规划中 | 将平台监听从 bootstrap 主路径迁到 `PlatformAdapter` |
+| 6B.0 | Ingress Boundary Refactor | 🚧 进行中 | `nc.message` 标准化 schema 与 `PlatformAdapter` 抽象已落地，`FastRouter` 开始兼容统一消息层 |
 | 6.3 | Reply Pipeline Framework | 🚧 进行中 | `ReplyPipeline` 已落地，主循环开始消费 `ReplyTask`，正在补齐剩余路由与回写 |
 | 6.4 | Code-First Action Surface | 🚧 进行中 | sandbox 已注入 `actions` 命名空间，host-call 已桥接到 host memory/topic 上下文 |
 | 6.5 | Agent-Skill Runtime | 🚧 进行中 | sandbox 已注入最小 `skills.memory` / `skills.social` 代码技能表面，后续继续扩展 |
-| 6.6 | Feedback Loop | 📝 规划中 | 发言后行为评估 |
+| 6.6 | Feedback Loop | 🚧 进行中 | `system.agent_message_sent` → `FeedbackLoop` → `system.feedback_evaluated` 闭环已接通，正在继续细化评估策略 |
 | 7.1 | Playbook System | 📝 规划中 | SOTA 行为知识下沉 |
 | 7.2 | Skill Auto-Generation | 📝 规划中 | 失败场景沉淀为可复用 skill |
 | 7.3 | CoT Template Distillation | 📝 规划中 | 典型推理模板下沉 |

@@ -14,6 +14,7 @@ import type { EngagedTopicHandler } from "./engaged-topic-handler.js";
 import type { RecordingPipeline } from "./recording-pipeline.js";
 import type { Message, RouteResult, EngagedRelevance } from "./types.js";
 import type { NotificationEvent } from "../event/notification-center.js";
+import { normalizeMessageEvent } from "../event/nc-event.js";
 
 const log = createLogger("fast-router");
 
@@ -121,29 +122,25 @@ export class FastRouter {
      * 将 NotificationEvent 转换为 Message
      */
     private eventToMessage(event: NotificationEvent): Message | null {
-        if (event.type !== "telegram.message" && event.type !== "telegram.edited") {
+        const normalized = normalizeMessageEvent(event);
+        if (!normalized) return null;
+
+        const messageId = normalized.messageId ? Number(normalized.messageId) : NaN;
+        const chatId = Number(normalized.chatId);
+        const userId = Number(normalized.userId);
+
+        if (Number.isNaN(messageId) || Number.isNaN(chatId) || !normalized.text) {
             return null;
         }
 
-        const e = event as NotificationEvent & {
-            messageId?: number;
-            chatId?: number;
-            userId?: number;
-            userName?: string;
-            text?: string;
-            replyToMessageId?: number;
-        };
-
-        if (!e.messageId || !e.chatId || !e.text) return null;
-
         return {
-            id: e.messageId,
-            chatId: e.chatId,
-            senderId: e.userId ?? 0,
-            senderName: e.userName ?? "Unknown",
-            text: e.text,
-            replyToMessageId: e.replyToMessageId,
-            timestamp: new Date(event._ts).getTime(),
+            id: messageId,
+            chatId,
+            senderId: Number.isNaN(userId) ? 0 : userId,
+            senderName: normalized.displayName ?? "Unknown",
+            text: normalized.text,
+            replyToMessageId: normalized.replyToMessageId ? Number(normalized.replyToMessageId) : undefined,
+            timestamp: new Date(normalized.timestamp).getTime(),
         };
     }
 

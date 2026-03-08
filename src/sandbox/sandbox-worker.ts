@@ -316,7 +316,17 @@ async function executeCode(id: string, code: string): Promise<void> {
                     if (!tg?.sendText) {
                         throw new Error("ctx.tg.sendText is not available");
                     }
-                    return tg.sendText(chatId, text, opts);
+                    const sent = await tg.sendText(chatId, text, opts);
+                    notifyHost({
+                        type: "system.agent_message_sent",
+                        scene: "telegram",
+                        chatId: String(chatId),
+                        messageId: typeof sent === "object" && sent && "id" in sent ? (sent as { id?: unknown }).id : undefined,
+                        text,
+                        replyToMessageId: opts?.replyTo,
+                        timestamp: new Date().toISOString(),
+                    });
+                    return sent;
                 },
             },
         };
