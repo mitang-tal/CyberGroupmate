@@ -192,9 +192,9 @@ describe("storeMessageBatch", () => {
     after(() => { cleanupTestMemory(mem, "msg-batch"); });
 
     const baseMsgs = [
-        { messageId: 1, chatId: "-100", userId: "u1", displayName: "alice", text: "你好", timestamp: "2026-01-01T10:00:00Z" },
-        { messageId: 2, chatId: "-100", userId: "u2", displayName: "bob", text: "你好！今天天气不错", timestamp: "2026-01-01T10:00:30Z" },
-        { messageId: 3, chatId: "-100", userId: "u1", displayName: "alice", text: "是啊~", replyToMessageId: 2, timestamp: "2026-01-01T10:01:00Z" },
+        { messageId: "1", chatId: "-100", userId: "u1", displayName: "alice", text: "你好", timestamp: "2026-01-01T10:00:00Z" },
+        { messageId: "2", chatId: "-100", userId: "u2", displayName: "bob", text: "你好！今天天气不错", timestamp: "2026-01-01T10:00:30Z" },
+        { messageId: "3", chatId: "-100", userId: "u1", displayName: "alice", text: "是啊~", replyToMessageId: "2", timestamp: "2026-01-01T10:01:00Z" },
     ];
 
     it("should insert a batch of messages", () => {
@@ -209,7 +209,7 @@ describe("storeMessageBatch", () => {
         // 再次插入相同消息 + 1 条新消息
         const msgs = [
             ...baseMsgs,
-            { messageId: 4, chatId: "-100", userId: "u2", displayName: "bob", text: "出去走走吧", timestamp: "2026-01-01T10:02:00Z" },
+            { messageId: "4", chatId: "-100", userId: "u2", displayName: "bob", text: "出去走走吧", timestamp: "2026-01-01T10:02:00Z" },
         ];
         mem.storeMessageBatch(msgs);
 
@@ -220,8 +220,8 @@ describe("storeMessageBatch", () => {
 
     it("should store replyToMessageId correctly", () => {
         const db = (mem as any).db;
-        const row = db.prepare("SELECT reply_to_message_id FROM message_log WHERE message_id = 3 AND chat_id = ?").get("-100");
-        assert.equal(row.reply_to_message_id, 2);
+        const row = db.prepare("SELECT reply_to_message_id FROM message_log WHERE message_id = '3' AND chat_id = ?").get("-100");
+        assert.equal(row.reply_to_message_id, "2");
     });
 });
 
@@ -528,9 +528,9 @@ describe("browseHistory", () => {
             interventionCount: 0,
         });
         mem.storeMessageBatch([
-            { messageId: 50, chatId: "-100", userId: "u3", displayName: "carol", text: "这季新番大家看了吗", timestamp: "2026-01-01T12:00:00Z" },
-            { messageId: 51, chatId: "-100", userId: "u1", displayName: "alice", text: "葬送的芙莉莲超好看！", timestamp: "2026-01-01T12:01:00Z" },
-            { messageId: 52, chatId: "-100", userId: "u3", displayName: "carol", text: "对对！画面太精致了", timestamp: "2026-01-01T12:02:00Z" },
+            { messageId: "50", chatId: "-100", userId: "u3", displayName: "carol", text: "这季新番大家看了吗", timestamp: "2026-01-01T12:00:00Z" },
+            { messageId: "51", chatId: "-100", userId: "u1", displayName: "alice", text: "葬送的芙莉莲超好看！", timestamp: "2026-01-01T12:01:00Z" },
+            { messageId: "52", chatId: "-100", userId: "u3", displayName: "carol", text: "对对！画面太精致了", timestamp: "2026-01-01T12:02:00Z" },
         ]);
     });
     after(() => { cleanupTestMemory(mem, "browse"); });

@@ -68,7 +68,7 @@ interface TopicNode {
     summary: string;
     keyPoints: string[];
     participants: string[];
-    messageRange: { messageIds: number[]; count: number };
+    messageRange: { messageIds: string[]; count: number };
     startedAt: string;
     endedAt: string | null;
     sentiment: 'positive' | 'neutral' | 'negative' | 'mixed';
@@ -198,7 +198,7 @@ interface HistoryBrowseResult {
         topicLabel: string;
         timeRange: { from: string; to: string };
         messages: Array<{
-            messageId: number;
+            messageId: string;
             userId: string;
             displayName: string;
             text: string;

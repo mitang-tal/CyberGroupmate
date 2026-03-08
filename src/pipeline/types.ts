@@ -12,19 +12,25 @@
 /** 标准化消息结构（从 Telegram 事件转换而来） */
 export interface Message {
     /** 消息 ID */
-    id: number;
+    id: string;
     /** 所属群/聊天 ID */
-    chatId: number;
+    chatId: string;
     /** 发送者 user_id */
-    senderId: number;
+    senderId: string;
     /** 发送者显示名称 */
     senderName: string;
     /** 消息文本 */
     text: string;
     /** 回复目标消息 ID（如果有） */
-    replyToMessageId?: number;
+    replyToMessageId?: string;
     /** 消息时间戳（毫秒） */
     timestamp: number;
+    /** 所属 scene / app */
+    scene?: string;
+    /** 平台是否已判定为私聊 */
+    isDirectMessage?: boolean;
+    /** 平台是否已检测到明确提及 agent */
+    mentionsAgent?: boolean;
     /** 内部标记：是否歧义归属 */
     _ambiguous?: boolean;
 }
@@ -117,15 +123,15 @@ export interface Topic {
     /** topic_<ulid> */
     id: string;
     /** 所属群组 */
-    chatId: number;
+    chatId: string;
     /** 3-5 词的话题标签（LLM 生成） */
     label: string;
     /** 关键词集合 */
     keywords: string[];
     /** 参与者 user_id 集合 */
-    participantIds: Set<number>;
+    participantIds: Set<string>;
     /** 属于此话题的消息 ID 列表 */
-    messageIds: number[];
+    messageIds: string[];
     /** 当前状态 */
     state: TopicState;
     /** 最近一次 Triage 的结果 */
@@ -153,7 +159,7 @@ export interface Topic {
     /** agent 最后一次回复时间（毫秒） */
     lastAgentReplyAt?: number;
     /** 主要对话对象 user_id */
-    primaryInterlocutor?: number;
+    primaryInterlocutor?: string;
     /** 待处理消息缓冲 */
     pendingMessages: Message[];
     /** 累积的退出信号 */
@@ -261,7 +267,7 @@ export interface ModelRouteRule {
 /** Dry-Run 配置 */
 export interface DryRunConfig {
     /** 聊天 ID */
-    chatId: number;
+    chatId: string;
     /** 拉取最近 N 天的历史消息 */
     daysBack: number;
     /** 使用哪个模型 */
@@ -328,7 +334,7 @@ export interface DryRunResult {
 export interface TopicClusteringResult {
     /** 每条消息的话题归属 */
     assignments: Array<{
-        messageId: number;
+        messageId: string;
         topicId: string;        // 已有话题 ID 或 "NEW_n"
         topicLabel?: string;    // 仅新话题需要
         keywords?: string[];    // 仅新话题需要

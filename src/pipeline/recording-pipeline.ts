@@ -59,7 +59,7 @@ const TOPIC_CLUSTERING_PROMPT = `你是一个群聊消息话题分析器。
 请输出 JSON 格式：
 {
   "assignments": [
-    { "messageId": <数字>, "topicId": "<已有话题ID或NEW_1/NEW_2等>", "topicLabel": "<仅新话题>", "keywords": ["<仅新话题>"] }
+    { "messageId": "<字符串消息ID>", "topicId": "<已有话题ID或NEW_1/NEW_2等>", "topicLabel": "<仅新话题>", "keywords": ["<仅新话题>"] }
   ],
   "evolutions": [
     { "parentTopicId": "<父话题ID>", "newTopicLabel": "<新话题标签>", "reason": "<演变原因>" }
@@ -273,8 +273,8 @@ export class RecordingPipeline extends EventEmitter {
                     })));
 
                     // 更新参与者身份信息 + 群内画像统计
-                    const seenUsers = new Set<number>();
-                    const userStats = new Map<number, { count: number; hours: number[]; lastTs: string }>();
+                    const seenUsers = new Set<string>();
+                    const userStats = new Map<string, { count: number; hours: number[]; lastTs: string }>();
 
                     for (const m of chatMessages) {
                         if (!seenUsers.has(m.senderId)) {
@@ -428,7 +428,7 @@ export class RecordingPipeline extends EventEmitter {
     private async llmTopicSummaryTriage(
         messages: Message[],
         clustering: TopicClusteringResult,
-        chatId: number
+        chatId: string
     ): Promise<TopicSummaryTriageResult> {
         // 按话题分组本批次消息
         const topicGroups = new Map<string, Message[]>();
@@ -573,7 +573,7 @@ export class RecordingPipeline extends EventEmitter {
      * Step 3: 更新 TopicRegistry
      */
     private updateRegistry(
-        chatId: number,
+        chatId: string,
         messages: Message[],
         clustering: TopicClusteringResult,
         triageResult: TopicSummaryTriageResult
@@ -669,8 +669,8 @@ export class RecordingPipeline extends EventEmitter {
     /**
      * 按 chatId 分组消息
      */
-    private groupByChat(messages: Message[]): Map<number, Message[]> {
-        const groups = new Map<number, Message[]>();
+    private groupByChat(messages: Message[]): Map<string, Message[]> {
+        const groups = new Map<string, Message[]>();
         for (const msg of messages) {
             const group = groups.get(msg.chatId) ?? [];
             group.push(msg);

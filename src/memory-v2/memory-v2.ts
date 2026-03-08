@@ -341,12 +341,12 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
 
             -- 消息日志
             CREATE TABLE IF NOT EXISTS message_log (
-                message_id INTEGER NOT NULL,
+                message_id TEXT NOT NULL,
                 chat_id TEXT NOT NULL,
                 user_id TEXT NOT NULL,
                 display_name TEXT NOT NULL DEFAULT '',
                 text TEXT NOT NULL DEFAULT '',
-                reply_to_message_id INTEGER,
+                reply_to_message_id TEXT,
                 timestamp TEXT NOT NULL,
                 PRIMARY KEY (chat_id, message_id)
             );
@@ -1420,15 +1420,15 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         let totalMessagesRead = 0;
 
         for (const topicRow of topicRows) {
-            const messageIdsRaw = (topicRow.message_ids ?? topicRow.messageIds) as string | number[] | null;
+            const messageIdsRaw = (topicRow.message_ids ?? topicRow.messageIds) as string | string[] | null;
             const chatId = (topicRow.chat_id ?? topicRow.chatId) as string;
 
             // 解析 message_ids
-            let messageIds: number[];
+            let messageIds: string[];
             if (Array.isArray(messageIdsRaw)) {
-                messageIds = messageIdsRaw;
+                messageIds = messageIdsRaw.map(String);
             } else {
-                messageIds = fromJSON<number[]>(messageIdsRaw as string, []);
+                messageIds = fromJSON<string[]>(messageIdsRaw as string, []);
             }
             if (messageIds.length === 0) continue;
 
@@ -1437,14 +1437,14 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             const msgRows = this.db.prepare(`
                 SELECT * FROM message_log
                 WHERE chat_id = ? AND message_id IN (${placeholders})
-                ORDER BY message_id ASC
+                ORDER BY timestamp ASC, message_id ASC
             `).all(
                 chatId,
                 ...messageIds,
             ) as Record<string, unknown>[];
 
             const messages = msgRows.map(r => ({
-                messageId: r.message_id as number,
+                messageId: String(r.message_id),
                 userId: r.user_id as string,
                 displayName: r.display_name as string,
                 text: r.text as string,
@@ -1617,7 +1617,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             keyPoints: fromJSON(row.key_points as string, []),
             participants: fromJSON(row.participants as string, []),
             messageRange: {
-                messageIds: fromJSON<number[]>(row.message_ids as string, []),
+                messageIds: fromJSON<string[]>(row.message_ids as string, []),
                 count: (row.message_count as number) ?? 0,
             },
             startedAt: row.started_at as string,

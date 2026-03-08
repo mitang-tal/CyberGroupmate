@@ -165,20 +165,20 @@ export function seedTestData(memory: MemoryStoreV2, chatId = "-100001"): void {
     // ─── 消息日志 ───
     const messages = [
         // 京都话题
-        { messageId: 100, chatId, userId: "111", displayName: "alice", text: "有人去过京都吗？想问问交通", timestamp: hourAgo.toISOString() },
-        { messageId: 101, chatId, userId: "222", displayName: "bob", text: "去过！坐阪急到桂站转岚电最方便", timestamp: new Date(hourAgo.getTime() + 60_000).toISOString() },
-        { messageId: 102, chatId, userId: "111", displayName: "alice", text: "岚山竹林什么时候去比较好？", replyToMessageId: 101, timestamp: new Date(hourAgo.getTime() + 120_000).toISOString() },
-        { messageId: 103, chatId, userId: "222", displayName: "bob", text: "早上去人少，下午全是旅行团", timestamp: new Date(hourAgo.getTime() + 180_000).toISOString() },
-        { messageId: 104, chatId, userId: "111", displayName: "alice", text: "好的谢谢！", timestamp: new Date(hourAgo.getTime() + 240_000).toISOString() },
+        { messageId: "100", chatId, userId: "111", displayName: "alice", text: "有人去过京都吗？想问问交通", timestamp: hourAgo.toISOString() },
+        { messageId: "101", chatId, userId: "222", displayName: "bob", text: "去过！坐阪急到桂站转岚电最方便", timestamp: new Date(hourAgo.getTime() + 60_000).toISOString() },
+        { messageId: "102", chatId, userId: "111", displayName: "alice", text: "岚山竹林什么时候去比较好？", replyToMessageId: "101", timestamp: new Date(hourAgo.getTime() + 120_000).toISOString() },
+        { messageId: "103", chatId, userId: "222", displayName: "bob", text: "早上去人少，下午全是旅行团", timestamp: new Date(hourAgo.getTime() + 180_000).toISOString() },
+        { messageId: "104", chatId, userId: "111", displayName: "alice", text: "好的谢谢！", timestamp: new Date(hourAgo.getTime() + 240_000).toISOString() },
         // Python 话题
-        { messageId: 120, chatId, userId: "222", displayName: "bob", text: "遇到一个 Python TypeError 不知道怎么解决", timestamp: new Date(hourAgo.getTime() + 1800_000).toISOString() },
-        { messageId: 121, chatId, userId: "111", displayName: "alice", text: "什么 error message？贴一下", timestamp: new Date(hourAgo.getTime() + 1860_000).toISOString() },
-        { messageId: 122, chatId, userId: "222", displayName: "bob", text: "TypeError: cannot convert 'int' object to str implicitly", timestamp: new Date(hourAgo.getTime() + 1920_000).toISOString() },
-        { messageId: 123, chatId, userId: "111", displayName: "alice", text: "用 str() 包一下就行", timestamp: new Date(hourAgo.getTime() + 1980_000).toISOString() },
+        { messageId: "120", chatId, userId: "222", displayName: "bob", text: "遇到一个 Python TypeError 不知道怎么解决", timestamp: new Date(hourAgo.getTime() + 1800_000).toISOString() },
+        { messageId: "121", chatId, userId: "111", displayName: "alice", text: "什么 error message？贴一下", timestamp: new Date(hourAgo.getTime() + 1860_000).toISOString() },
+        { messageId: "122", chatId, userId: "222", displayName: "bob", text: "TypeError: cannot convert 'int' object to str implicitly", timestamp: new Date(hourAgo.getTime() + 1920_000).toISOString() },
+        { messageId: "123", chatId, userId: "111", displayName: "alice", text: "用 str() 包一下就行", timestamp: new Date(hourAgo.getTime() + 1980_000).toISOString() },
         // 新番话题
-        { messageId: 135, chatId, userId: "333", displayName: "carol", text: "这季新番大家看了吗", timestamp: dayAgo.toISOString() },
-        { messageId: 136, chatId, userId: "111", displayName: "alice", text: "葬送的芙莉莲超好看！", timestamp: new Date(dayAgo.getTime() + 60_000).toISOString() },
-        { messageId: 137, chatId, userId: "333", displayName: "carol", text: "对对！画面太精致了", timestamp: new Date(dayAgo.getTime() + 120_000).toISOString() },
+        { messageId: "135", chatId, userId: "333", displayName: "carol", text: "这季新番大家看了吗", timestamp: dayAgo.toISOString() },
+        { messageId: "136", chatId, userId: "111", displayName: "alice", text: "葬送的芙莉莲超好看！", timestamp: new Date(dayAgo.getTime() + 60_000).toISOString() },
+        { messageId: "137", chatId, userId: "333", displayName: "carol", text: "对对！画面太精致了", timestamp: new Date(dayAgo.getTime() + 120_000).toISOString() },
     ];
     memory.storeMessageBatch(messages);
 

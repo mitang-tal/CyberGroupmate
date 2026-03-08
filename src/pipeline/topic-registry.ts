@@ -87,7 +87,7 @@ export class TopicRegistry extends EventEmitter {
      * 创建新话题
      */
     create(
-        chatId: number,
+        chatId: string,
         label: string,
         keywords: string[],
         messages: Message[],
@@ -131,7 +131,7 @@ export class TopicRegistry extends EventEmitter {
     /**
      * 获取指定群组的所有非归档话题
      */
-    getByChat(chatId: number): Topic[] {
+    getByChat(chatId: string): Topic[] {
         return Array.from(this.topics.values())
             .filter(t => t.chatId === chatId && t.state !== "ARCHIVED");
     }
@@ -139,7 +139,7 @@ export class TopicRegistry extends EventEmitter {
     /**
      * 获取指定群组的所有 ENGAGED 话题
      */
-    getEngaged(chatId: number): Topic[] {
+    getEngaged(chatId: string): Topic[] {
         return Array.from(this.topics.values())
             .filter(t => t.chatId === chatId && t.state === "ENGAGED");
     }
@@ -147,7 +147,7 @@ export class TopicRegistry extends EventEmitter {
     /**
      * 获取指定群组的所有 ACTIVE 话题（供 Recording Pipeline 用）
      */
-    getActive(chatId: number): Topic[] {
+    getActive(chatId: string): Topic[] {
         return Array.from(this.topics.values())
             .filter(t => t.chatId === chatId && t.state === "ACTIVE");
     }
@@ -364,7 +364,7 @@ export class TopicRegistry extends EventEmitter {
      * 是否有其他 ENGAGED 话题（某群内）
      * 用于消息归属判定时的回退
      */
-    hasOtherEngagedTopic(chatId: number, excludeTopicId?: string): boolean {
+    hasOtherEngagedTopic(chatId: string, excludeTopicId?: string): boolean {
         return Array.from(this.topics.values()).some(
             t => t.chatId === chatId && t.state === "ENGAGED" && t.id !== excludeTopicId
         );

@@ -32,13 +32,13 @@ const log = createLogger("dry-run");
 
 /** 历史消息文件格式（每行一个 JSON 对象） */
 interface HistoryMessage {
-    id: number;
-    chat_id: number;
-    user_id: number;
+    id: string | number;
+    chat_id: string | number;
+    user_id: string | number;
     user_name: string;
     text: string;
     date: string;          // ISO 8601
-    reply_to?: number;
+    reply_to?: string | number;
 }
 
 /**
@@ -50,12 +50,14 @@ interface HistoryMessage {
  * 判断逻辑：如果 chat_id > 0 且位数 >= 10，很可能是超级群 ID，需要取反。
  * Telegram 用户 ID 通常 < 10亿（10位数跨界），而超级群 ID 通常都是 10 位以上。
  */
-function normalizeChatId(chatId: number): number {
-    if (chatId > 0 && chatId > 1_000_000_000) {
+function normalizeChatId(chatId: string | number): string {
+    const raw = String(chatId);
+    const asNumber = Number(raw);
+    if (!Number.isNaN(asNumber) && asNumber > 0 && asNumber > 1_000_000_000) {
         // 很可能是超级群/频道 ID，需要取反
-        return -chatId;
+        return String(-asNumber);
     }
-    return chatId;
+    return raw;
 }
 
 /**
@@ -65,7 +67,7 @@ export async function runDryRun(
     config: DryRunConfig,
     appConfig: AppConfig,
     persona: string = "赛博群友",
-    agentUserId: number = 0,
+    agentUserId: string = "",
 ): Promise<DryRunResult> {
     const startTime = Date.now();
     log.info("Dry-Run 开始", {
@@ -375,15 +377,15 @@ function loadHistoryMessages(config: DryRunConfig): Message[] {
             for (const line of lines) {
                 try {
                     const hist = JSON.parse(line) as HistoryMessage;
-                    if (config.chatId && hist.chat_id !== config.chatId) continue;
+                    if (config.chatId && String(hist.chat_id) !== config.chatId) continue;
                     const normalizedChatId = normalizeChatId(hist.chat_id);
                     messages.push({
-                        id: hist.id,
+                        id: String(hist.id),
                         chatId: normalizedChatId,
-                        senderId: hist.user_id,
+                        senderId: String(hist.user_id),
                         senderName: hist.user_name,
                         text: hist.text,
-                        replyToMessageId: hist.reply_to,
+                        replyToMessageId: hist.reply_to !== undefined ? String(hist.reply_to) : undefined,
                         timestamp: new Date(hist.date).getTime(),
                     });
                 } catch {

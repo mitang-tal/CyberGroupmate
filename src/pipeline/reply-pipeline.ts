@@ -55,7 +55,7 @@ export class ReplyPipeline {
     ) {}
 
     buildDirectTasks(messages: Message[]): ReplyTask[] {
-        const byChat = new Map<number, Message[]>();
+        const byChat = new Map<string, Message[]>();
         for (const msg of messages) {
             const group = byChat.get(msg.chatId) ?? [];
             group.push(msg);

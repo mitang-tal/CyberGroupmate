@@ -35,10 +35,10 @@ describe("FeedbackLoop", () => {
         const registry = new TopicRegistry();
         const loop = new FeedbackLoop(registry, memory, nc, 20);
 
-        const topic = registry.create(-1001, "测试话题", ["测试"], [{
-            id: 1,
-            chatId: -1001,
-            senderId: 10,
+        const topic = registry.create("-1001", "测试话题", ["测试"], [{
+            id: "1",
+            chatId: "-1001",
+            senderId: "10",
             senderName: "Alice",
             text: "你怎么看？",
             timestamp: Date.now(),
@@ -54,9 +54,9 @@ describe("FeedbackLoop", () => {
 
         await new Promise(r => setTimeout(r, 5));
         registry.addMessages(topic.id, [{
-            id: 2,
-            chatId: -1001,
-            senderId: 11,
+            id: "2",
+            chatId: "-1001",
+            senderId: "11",
             senderName: "Bob",
             text: "那我们周末去？",
             timestamp: Date.now(),

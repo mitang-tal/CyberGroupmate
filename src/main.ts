@@ -441,10 +441,7 @@ async function mainEventLoop(
                 } satisfies AgentMessageSentEvent);
 
                 if (fastRouter && sentEvent.messageId !== undefined) {
-                    const parsedId = Number(sentEvent.messageId);
-                    if (!Number.isNaN(parsedId)) {
-                        fastRouter.recordAgentMessage(parsedId);
-                    }
+                    fastRouter.recordAgentMessage(String(sentEvent.messageId));
                 }
             }
         }
@@ -662,7 +659,7 @@ async function main(): Promise<void> {
     const topicRegistry = new TopicRegistry();
     const engagedHandler = new EngagedTopicHandler(topicRegistry, llmConfig);
     const recordingPipeline = new RecordingPipeline(topicRegistry, cheapConfig, appConfig.persona?.description ?? "赛博群友", memory);
-    const fastRouter = new FastRouter(topicRegistry, engagedHandler, recordingPipeline, 0);
+    const fastRouter = new FastRouter(topicRegistry, engagedHandler, recordingPipeline, "");
     const modelRouter = new ModelRouter(llmConfig);
     const replyPipeline = new ReplyPipeline(memory, topicRegistry, modelRouter, llmConfig);
     const feedbackLoop = new FeedbackLoop(topicRegistry, memory, nc);
@@ -726,10 +723,7 @@ async function main(): Promise<void> {
             case "actions.listActiveTopics": {
                 const chatId = args[0];
                 if (typeof chatId === "string" && chatId.length > 0) {
-                    const parsed = Number(chatId);
-                    if (!Number.isNaN(parsed)) {
-                        return topicRegistry.getActive(parsed).map(serializeTopic);
-                    }
+                    return topicRegistry.getActive(chatId).map(serializeTopic);
                 }
                 return topicRegistry.getAll().map(serializeTopic);
             }

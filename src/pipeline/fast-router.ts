@@ -25,16 +25,16 @@ const log = createLogger("fast-router");
  */
 export class FastRouter {
     /** Agent 自身的 user ID（用于检测 @ 和回复） */
-    private agentUserId: number;
+    private agentUserId: string;
 
     /** Agent 发送过的消息 ID 集合（用于检测回复） */
-    private agentMessageIds: Set<number> = new Set();
+    private agentMessageIds: Set<string> = new Set();
 
     constructor(
         private registry: TopicRegistry,
         private engagedHandler: EngagedTopicHandler,
         private recordingPipeline: RecordingPipeline,
-        agentUserId: number
+        agentUserId: string
     ) {
         this.agentUserId = agentUserId;
     }
@@ -109,7 +109,7 @@ export class FastRouter {
     /**
      * 记录 Agent 发出的消息 ID（用于回复检测）
      */
-    recordAgentMessage(messageId: number): void {
+    recordAgentMessage(messageId: string): void {
         this.agentMessageIds.add(messageId);
         // 只保留最近 500 条
         if (this.agentMessageIds.size > 500) {
@@ -125,22 +125,21 @@ export class FastRouter {
         const normalized = normalizeMessageEvent(event);
         if (!normalized) return null;
 
-        const messageId = normalized.messageId ? Number(normalized.messageId) : NaN;
-        const chatId = Number(normalized.chatId);
-        const userId = Number(normalized.userId);
-
-        if (Number.isNaN(messageId) || Number.isNaN(chatId) || !normalized.text) {
+        if (!normalized.messageId || !normalized.chatId || !normalized.text) {
             return null;
         }
 
         return {
-            id: messageId,
-            chatId,
-            senderId: Number.isNaN(userId) ? 0 : userId,
+            id: normalized.messageId,
+            chatId: normalized.chatId,
+            senderId: normalized.userId,
             senderName: normalized.displayName ?? "Unknown",
             text: normalized.text,
-            replyToMessageId: normalized.replyToMessageId ? Number(normalized.replyToMessageId) : undefined,
+            replyToMessageId: normalized.replyToMessageId,
             timestamp: new Date(normalized.timestamp).getTime(),
+            scene: normalized.scene,
+            isDirectMessage: normalized.isDirectMessage,
+            mentionsAgent: normalized.mentionsAgent,
         };
     }
 
@@ -151,7 +150,8 @@ export class FastRouter {
      * 只检查明确的 @mention。
      */
     private isDirectMention(msg: Message): boolean {
-        if (this.agentUserId === 0) return false;  // dry-run 模式下没有 agent ID
+        if (msg.mentionsAgent) return true;
+        if (!this.agentUserId) return false;  // dry-run 模式下没有 agent ID
         // 检查 @userId 格式的提及
         return msg.text.includes(`@${this.agentUserId}`);
     }
@@ -168,7 +168,6 @@ export class FastRouter {
      * 检测是否私聊
      */
     private isPrivateChat(msg: Message): boolean {
-        // Telegram 私聊 chatId > 0（群组是负数）
-        return msg.chatId > 0;
+        return msg.isDirectMessage === true;
     }
 }

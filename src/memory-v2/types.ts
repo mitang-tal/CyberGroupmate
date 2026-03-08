@@ -44,7 +44,7 @@ export interface TopicNode {
     participants: string[];
     /** 关联消息 ID 列表（完整存储每条归属消息的 ID） */
     messageRange: {
-        messageIds: number[];
+        messageIds: string[];
         count: number;
     };
     /** 话题开始时间 (ISO 8601) */
@@ -286,7 +286,7 @@ export interface HistoryBrowseResult {
         topicLabel: string;
         timeRange: { from: string; to: string };
         messages: Array<{
-            messageId: number;
+            messageId: string;
             userId: string;
             displayName: string;
             text: string;
@@ -325,7 +325,7 @@ export interface ReflectionResult {
 /** message_log 表的写入条目 */
 export interface MessageLogEntry {
     /** Telegram 消息 ID */
-    messageId: number;
+    messageId: string;
     /** 所属群组 */
     chatId: string;
     /** 发送者 userId */
@@ -335,7 +335,7 @@ export interface MessageLogEntry {
     /** 消息文本 */
     text: string;
     /** 回复目标消息 ID */
-    replyToMessageId?: number;
+    replyToMessageId?: string;
     /** 消息时间 (ISO 8601) */
     timestamp: string;
 }

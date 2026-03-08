@@ -21,9 +21,9 @@ const llmConfig: LLMConfig = {
 
 function makeMessage(overrides: Partial<Message> = {}): Message {
     return {
-        id: 1,
-        chatId: -1001,
-        senderId: 101,
+        id: "1",
+        chatId: "-1001",
+        senderId: "101",
         senderName: "Alice",
         text: "京都怎么去？",
         timestamp: Date.now(),
@@ -40,9 +40,9 @@ describe("ReplyPipeline", () => {
         } as any, registry, router, llmConfig);
 
         const tasks = pipeline.buildDirectTasks([
-            makeMessage({ id: 1, chatId: -1001 }),
-            makeMessage({ id: 2, chatId: -1001, senderName: "Bob" }),
-            makeMessage({ id: 3, chatId: -1002, text: "hello" }),
+            makeMessage({ id: "1", chatId: "-1001" }),
+            makeMessage({ id: "2", chatId: "-1001", senderName: "Bob" }),
+            makeMessage({ id: "3", chatId: "-1002", text: "hello" }),
         ]);
 
         assert.equal(tasks.length, 2);
@@ -61,8 +61,8 @@ describe("ReplyPipeline", () => {
             }),
         } as any, registry, router, llmConfig);
 
-        const topic = registry.create(-1001, "京都交通", ["京都", "交通"], [
-            makeMessage({ id: 1, text: "京都交通怎么安排？" }),
+        const topic = registry.create("-1001", "京都交通", ["京都", "交通"], [
+            makeMessage({ id: "1", text: "京都交通怎么安排？" }),
         ]);
         const decision: TriageDecision = {
             should_intervene: true,
@@ -87,8 +87,8 @@ describe("ReplyPipeline", () => {
             recall: async () => ({ topics: [], facts: [], persons: [] }),
         } as any, registry, router, llmConfig);
 
-        const topic = registry.create(-1001, "Rust 性能", ["Rust"], [
-            makeMessage({ id: 1, text: "Rust 真比 Go 快吗？" }),
+        const topic = registry.create("-1001", "Rust 性能", ["Rust"], [
+            makeMessage({ id: "1", text: "Rust 真比 Go 快吗？" }),
         ]);
         registry.transition(topic.id, "TRIAGING");
         registry.transition(topic.id, "PRELOADING");
@@ -96,7 +96,7 @@ describe("ReplyPipeline", () => {
 
         const task = await pipeline.buildEngagedTask(
             topic.id,
-            [makeMessage({ id: 2, text: "那内存占用呢？" })],
+            [makeMessage({ id: "2", text: "那内存占用呢？" })],
             "先回答差异，再补一个 caveat"
         );
 

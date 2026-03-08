@@ -84,10 +84,9 @@ export class FeedbackLoop {
 
     private async evaluate(pending: PendingFeedback): Promise<void> {
         try {
-            const chatIdNum = Number(pending.chatId);
-            const topics = Number.isNaN(chatIdNum)
-                ? this.registry.getAll()
-                : this.registry.getByChat(chatIdNum);
+            const topics = pending.chatId
+                ? this.registry.getByChat(pending.chatId)
+                : this.registry.getAll();
 
             const followUp = topics.some(topic => topic.lastActivityAt > pending.sentAtMs);
             const recentFeedback = followUp ? "agent 发言后群里有后续互动" : "agent 发言后暂无明显互动";

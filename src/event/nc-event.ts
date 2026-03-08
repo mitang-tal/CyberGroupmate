@@ -87,7 +87,11 @@ export function normalizeMessageEvent(event: NotificationEvent): NCMessageEventP
             messageId: event.messageId !== undefined ? String(event.messageId) : undefined,
             replyToMessageId: event.replyToMessageId !== undefined ? String(event.replyToMessageId) : undefined,
             chatTitle: event.chatTitle ? String(event.chatTitle) : undefined,
-            isDirectMessage: typeof chatId === "number" ? chatId > 0 : undefined,
+            isDirectMessage: typeof chatId === "number"
+                ? chatId > 0
+                : typeof chatId === "string" && /^-?\d+$/.test(chatId)
+                    ? Number(chatId) > 0
+                    : undefined,
             mentionsAgent: typeof event.isMention === "boolean" ? event.isMention : undefined,
             platformData: {
                 originalType: event.type,
