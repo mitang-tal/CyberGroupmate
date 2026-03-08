@@ -74,12 +74,17 @@ describe("installCapabilityRegistry", () => {
         assert.ok(notifications.some(event => event.type === "system.agent_message_sent"));
 
         const scene = capabilities.scene as {
-            enter: (name: string) => void;
+            enter: (name: string, focus?: { chatId?: string }) => void;
+            focus: (focus: { scene?: string; chatId?: string }) => void;
             current: string;
         };
-        scene.enter("telegram");
+        assert.throws(() => scene.enter("telegram", { chatId: "100" }), /Scene transition requested/);
         assert.equal(scene.current, "telegram");
-        assert.ok(outputs.some(line => line.includes("[Scene switched to: telegram]")));
+        assert.ok(outputs.some(line => line.includes("[Scene switched to: telegram focus=")));
+        assert.deepEqual(ctx.__sceneFocus, { scene: "telegram", chatId: "100" });
+
+        assert.throws(() => scene.focus({ scene: "memory", chatId: "100" }), /Scene transition requested/);
+        assert.equal(scene.current, "memory");
 
         assert.ok(hostCalls.some(call => call.method === "telegram.sendText"));
         assert.ok(hostCalls.some(call => call.method === "memory.recall") === false);

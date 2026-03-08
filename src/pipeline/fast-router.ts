@@ -58,7 +58,7 @@ export class FastRouter {
                     log.info("FAST_PATH", { msgId: msg.id, reason: result.reason });
                     fastPathMessages.push(result.message);
                     // FAST_PATH 消息也进 recording 缓冲，用于记忆更新
-                    this.recordingPipeline.onMessage(msg);
+                    this.recordingPipeline.onMessage({ ...msg, _viaFastPath: true });
                     break;
 
                 case "ENGAGED":

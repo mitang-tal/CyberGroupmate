@@ -35,6 +35,8 @@ export interface Message {
     isDirectMessage?: boolean;
     /** 平台是否已检测到明确提及 agent */
     mentionsAgent?: boolean;
+    /** 内部标记：该消息已走过 FAST_PATH，即时回复侧已处理 */
+    _viaFastPath?: boolean;
     /** 内部标记：是否歧义归属 */
     _ambiguous?: boolean;
 }

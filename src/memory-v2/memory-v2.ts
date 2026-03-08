@@ -37,6 +37,7 @@ import type {
     CoreFact,
     FactCategory,
     MessageLogEntry,
+    RecentMessageEntry,
     RecallOptions,
     RecallResult,
     HistoryBrowseRequest,
@@ -1604,6 +1605,26 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         }));
         log.debug("getProfilesForChat", { chatId, count: profiles.length });
         return profiles;
+    }
+
+    getRecentMessages(chatId: string, limit: number = 5): RecentMessageEntry[] {
+        const rows = this.db.prepare(
+            `SELECT message_id, chat_id, user_id, display_name, text, reply_to_message_id, timestamp
+             FROM message_log
+             WHERE chat_id = ?
+             ORDER BY timestamp DESC
+             LIMIT ?`
+        ).all(chatId, limit) as Record<string, unknown>[];
+
+        return rows.map((row) => ({
+            messageId: row.message_id as string,
+            chatId: row.chat_id as string,
+            userId: row.user_id as string,
+            displayName: (row.display_name as string) ?? "",
+            text: (row.text as string) ?? "",
+            replyToMessageId: (row.reply_to_message_id as string) ?? undefined,
+            timestamp: row.timestamp as string,
+        }));
     }
 
     // ─── Reflection (M2.4: 调用 reflection.ts) ───

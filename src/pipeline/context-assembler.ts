@@ -3,6 +3,7 @@ import type {
     IMemoryStoreV2,
     PersonGroupProfile,
     PersonIdentity,
+    RecentMessageEntry,
     TopicNode,
 } from "../memory-v2/index.js";
 import type { Message } from "./types.js";
@@ -76,16 +77,22 @@ function formatTopics(topics: TopicNode[]): string | null {
 }
 
 function formatRecentMessages(messages: Message[]): string[] {
-    return messages.slice(-3).map(message => {
+    return messages.slice(-5).map(message => {
         const platform = message.platform ?? message.scene ?? "unknown";
         const chatType = message.chatType ?? (message.isDirectMessage ? "private" : "chat");
         return `- [${platform}/${chatType}] ${message.senderName}: ${message.text}`;
     });
 }
 
+function formatStoredRecentMessages(messages: RecentMessageEntry[], scene: string): string[] {
+    return messages.map(message => {
+        return `- [${scene}] ${message.displayName || message.userId}: ${message.text}`;
+    });
+}
+
 export class ContextAssembler {
     constructor(private memory: Pick<IMemoryStoreV2,
-        "getGroupModel" | "getPersonIdentity" | "getProfilesForChat" | "getTopicsSince">) {}
+        "getGroupModel" | "getPersonIdentity" | "getProfilesForChat" | "getTopicsSince" | "getRecentMessages">) {}
 
     assemble(input: ContextAssemblyInput): ContextAssemblyResult {
         const latestMessage = input.messages[input.messages.length - 1];
@@ -111,12 +118,19 @@ export class ContextAssembler {
         const recentTopics = typeof this.memory.getTopicsSince === "function"
             ? this.memory.getTopicsSince(input.chatId, since)
             : [];
+        const storedRecentMessages = typeof this.memory.getRecentMessages === "function"
+            ? this.memory.getRecentMessages(input.chatId, 5)
+            : [];
+
+        const inlineRecent = formatRecentMessages(input.messages);
+        const fallbackRecent = formatStoredRecentMessages(storedRecentMessages, input.scene);
+        const recentLines = Array.from(new Set([...fallbackRecent, ...inlineRecent])).slice(-5);
 
         const focusLines = [
             "[Scene Focus]",
             `scene=${input.scene} chat=${input.chatId}${chatType ? ` type=${chatType}` : ""} target=${targetName}`,
-            ...formatRecentMessages(input.messages).length > 0
-                ? ["recent:", ...formatRecentMessages(input.messages)]
+            ...recentLines.length > 0
+                ? ["recent:", ...recentLines]
                 : [],
         ];
 

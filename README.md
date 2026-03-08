@@ -223,6 +223,7 @@ npx tsx src/cli.ts drain
 
 - Agent 发送消息时，不需要自己创建 Telegram client
 - 发送通过宿主侧 `ctx.tg` host proxy 完成
+- 如果要跨 scene 行动，应先 `scene.enter("telegram", { chatId })`；切换后当前代码块会立即结束，由下一回合继续
 - 发言后反馈会进入 `FeedbackLoop`
 - 首轮 prompt 里应能看到：
   - `Scene Focus`
@@ -290,8 +291,16 @@ npx tsx src/cli.ts memory status
   - `person_group_profiles`
   - `group_models`
   - 近 7 天相关 topics
+  - 当前 chat 最近几条 `message_log`
 - scene 仍然只是 `telegram` / `memory` / `home`
 - 不会出现动态 scene 名如 `telegram/682932098`
+
+### F. 验证 docs 是按需读取而不是默认前置
+
+预期：
+
+- 普通回复任务里，Agent 会优先基于已注入的类型定义、消息摘要、`Scene Focus` 和 `Latent Memory` 直接写代码
+- 只有在需要高级能力或不确定 API 细节时，才会显式调用 `docs.read(...)`
 
 ## CLI
 

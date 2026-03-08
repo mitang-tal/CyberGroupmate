@@ -53,10 +53,10 @@ export type {
     CoreFact,
     FactCategory,
     MessageLogEntry,
+    RecentMessageEntry,
     RecallOptions,
     RecallResult,
     HistoryBrowseRequest,
     HistoryBrowseResult,
     ReflectionResult,
 } from "./types.js";
-

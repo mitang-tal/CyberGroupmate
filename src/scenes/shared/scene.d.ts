@@ -7,7 +7,21 @@ declare const scene: {
      * 切换到指定场景。会输出目标场景的类型定义和说明。
      * @param name - 场景名称，如 "telegram", "memory"
      */
-    enter(name: string): void;
+    enter(name: string, focus?: {
+        chatId?: string;
+        userId?: string;
+        messageId?: string;
+    }): never;
+
+    /**
+     * 切换当前处理焦点。常用于进入某个 scene 时显式绑定目标 chat。
+     */
+    focus(target: {
+        scene?: string;
+        chatId?: string;
+        userId?: string;
+        messageId?: string;
+    }): never;
 
     /** 当前所在场景名称 */
     current: string;

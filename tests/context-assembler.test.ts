@@ -67,6 +67,24 @@ describe("ContextAssembler", () => {
                 createdAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString(),
             }],
+            getRecentMessages: () => [
+                {
+                    messageId: "1352",
+                    chatId: "682932098",
+                    userId: "682932098",
+                    displayName: "莫思奇多",
+                    text: "hello",
+                    timestamp: new Date(Date.now() - 5 * 60_000).toISOString(),
+                },
+                {
+                    messageId: "1353",
+                    chatId: "682932098",
+                    userId: "682932098",
+                    displayName: "莫思奇多",
+                    text: "在吗",
+                    timestamp: new Date(Date.now() - 3 * 60_000).toISOString(),
+                },
+            ],
         });
 
         const messages: Message[] = [{
@@ -91,6 +109,8 @@ describe("ContextAssembler", () => {
 
         assert.ok(result.sceneFocusBlock.includes("[Scene Focus]"));
         assert.ok(result.sceneFocusBlock.includes("scene=telegram chat=682932098 type=private target=莫思奇多"));
+        assert.ok(result.sceneFocusBlock.includes("hello"));
+        assert.ok(result.sceneFocusBlock.includes("在吗在吗"));
         assert.ok(result.latentMemoryBlock.includes("identities=莫思奇多 (user:682932098, aliases:mozzie)"));
         assert.ok(result.latentMemoryBlock.includes("profiles=tier=2"));
         assert.ok(result.latentMemoryBlock.includes("group=title=莫思奇多私聊"));

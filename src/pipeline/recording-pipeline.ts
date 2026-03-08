@@ -632,6 +632,24 @@ export class RecordingPipeline extends EventEmitter {
                 topic.lastSummary = triage.summary;
                 topic.lastKeyPoints = triage.keyPoints;
 
+                const wasAlreadyHandledByFastPath = topicMsgs.some(msg => msg._viaFastPath);
+                if (wasAlreadyHandledByFastPath) {
+                    const decision: TriageDecision = {
+                        should_intervene: false,
+                        reason: "already handled via fast path",
+                        intervention_type: "NOT_APPLICABLE",
+                        confidence: 1.0,
+                        pipelineMode: "ENFORCED",
+                    };
+
+                    this.registry.transition(topic.id, "TRIAGING");
+                    this.registry.setDecision(topic.id, decision);
+                    topic.ignoreReason = decision.reason;
+                    this.registry.transition(topic.id, "IGNORED");
+                    updatedTopics.push(topic);
+                    continue;
+                }
+
                 const decision: TriageDecision = {
                     should_intervene: triage.should_intervene,
                     reason: triage.reason,

@@ -12,6 +12,19 @@ export interface CapabilityRegistryEnv {
     setSceneState: (name: string) => void;
 }
 
+export interface SceneFocusRequest {
+    scene?: string;
+    chatId?: string;
+    userId?: string;
+    messageId?: string;
+}
+
+function createSceneTransitionError(): Error {
+    const error = new Error("Scene transition requested");
+    (error as Error & { code?: string }).code = "SCENE_TRANSITION";
+    return error;
+}
+
 interface CapabilityRegistration {
     key: string;
     install: (env: CapabilityRegistryEnv) => unknown;
@@ -164,9 +177,23 @@ const REGISTRY: CapabilityRegistration[] = [
         key: "scene",
         install: (env) => ({
             get current() { return env.getSceneState(); },
-            enter: (name: string) => {
-                env.emitOutput(`[Scene switched to: ${name}]`);
+            enter: (name: string, focus?: SceneFocusRequest) => {
+                if (focus && Object.keys(focus).length > 0) {
+                    env.ctx.__sceneFocus = { scene: name, ...focus };
+                    env.emitOutput(`[Scene switched to: ${name} focus=${JSON.stringify(env.ctx.__sceneFocus)}]`);
+                } else {
+                    delete env.ctx.__sceneFocus;
+                    env.emitOutput(`[Scene switched to: ${name}]`);
+                }
                 env.setSceneState(name);
+                throw createSceneTransitionError();
+            },
+            focus: (focus: SceneFocusRequest) => {
+                const nextScene = focus.scene ?? env.getSceneState();
+                env.ctx.__sceneFocus = { ...focus, scene: nextScene };
+                env.emitOutput(`[Scene switched to: ${nextScene} focus=${JSON.stringify(env.ctx.__sceneFocus)}]`);
+                env.setSceneState(nextScene);
+                throw createSceneTransitionError();
             },
             list: () => {
                 env.emitOutput("[Available scenes: home, telegram, memory]");

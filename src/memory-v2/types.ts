@@ -344,6 +344,16 @@ export interface MessageLogEntry {
     timestamp: string;
 }
 
+export interface RecentMessageEntry {
+    messageId: string;
+    chatId: string;
+    userId: string;
+    displayName: string;
+    text: string;
+    replyToMessageId?: string;
+    timestamp: string;
+}
+
 // ─── MemoryStoreV2 接口 ───
 
 /**
@@ -433,6 +443,9 @@ export interface IMemoryStoreV2 {
 
     /** 获取指定 chatId 的所有群内画像 */
     getProfilesForChat(chatId: string): PersonGroupProfile[];
+
+    /** 获取指定 chatId 最近的原始消息 */
+    getRecentMessages(chatId: string, limit?: number): RecentMessageEntry[];
 
     /**
      * 对指定群组进行反思总结

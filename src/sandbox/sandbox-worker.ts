@@ -271,6 +271,18 @@ async function executeCode(id: string, code: string): Promise<void> {
             sceneState: globalSceneState,
         });
     } catch (err: unknown) {
+        const errorWithCode = err as Error & { code?: string };
+        if (errorWithCode?.code === "SCENE_TRANSITION") {
+            sendToHost({
+                type: "result",
+                id,
+                output: outputLines.join("\n"),
+                error: false,
+                sceneState: globalSceneState,
+            });
+            return;
+        }
+
         const errorMsg =
             err instanceof Error
                 ? `${err.name}: ${err.message}\n${err.stack ?? ""}`

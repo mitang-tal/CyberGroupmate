@@ -18,7 +18,7 @@
 ## 发送消息
 
 ```javascript
-scene.enter("telegram");
+scene.enter("telegram", { chatId: "-1001234567890" });
 
 const sent = await ctx.tg.sendText("-1001234567890", "Hello!");
 console.log("已发送, msgId=" + sent.id);
@@ -80,8 +80,9 @@ console.log(chat.title, members.length);
 
 1. 在 `home` scene 看通知
 2. 必要时切到 `memory` scene 做 recall / browseHistory
-3. 切到 `telegram` scene，用 `ctx.tg` 或 `skills.social.replyInTelegram()` 发消息
-4. 结束当前回合，不要自己阻塞等待下一条 Telegram 消息
+3. 切到 `telegram` scene 时优先带上焦点，例如 `scene.enter("telegram", { chatId })`
+4. 在新的回合里用 `ctx.tg` 或 `skills.social.replyInTelegram()` 发消息
+5. 结束当前回合，不要自己阻塞等待下一条 Telegram 消息
 
 ## 注意事项
 
@@ -89,3 +90,4 @@ console.log(chat.title, members.length);
 2. 返回的数据是普通对象，可直接 `console.log(JSON.stringify(...))`
 3. 不要假设平台监听权在你手里；消息 ingress 由框架管理
 4. `chatId` / `messageId` / `userId` 在系统内部统一按字符串处理
+5. `scene.enter(...)` 是控制权切换，不要在同一代码块里先 `scene.enter(...)` 再继续发送消息
