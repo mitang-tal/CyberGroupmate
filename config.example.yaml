@@ -93,7 +93,7 @@ telegram:
   api_id: ""
   # API Hash (bot / userbot 都需要)
   api_hash: ""
-  # 手机号 (userbot 模式下使用)
+  # 手机号 (userbot 模式下使用；首次登录时会在终端提示输入 OTP / 2FA)
   phone: ""
 
 # ─── Reflection 设置 ───

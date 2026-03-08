@@ -120,6 +120,13 @@ telegram:
 LLM、Telegram、embedding 等业务配置现在都只从 `config.yaml` 读取。
 环境变量只建议用于调试开关，例如 `LOG_LEVEL`。
 
+`userbot` 模式下，首次登录会在启动过程中通过终端提示你输入：
+
+- Telegram OTP 验证码
+- 两步验证密码（如果账号开启了 2FA）
+
+会话会持久化到 `workspace/tg-session/account`，后续重启会自动复用。
+
 检查配置：
 
 ```bash

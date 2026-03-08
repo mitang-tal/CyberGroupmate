@@ -19,6 +19,27 @@ interface PrintHandler {
     (message: string): void;
 }
 
+interface TelegramClientLike {
+    start(params: Record<string, unknown>): Promise<unknown>;
+    onNewMessage: {
+        add(handler: (msg: unknown) => void | Promise<void>): void;
+        remove(handler: (msg: unknown) => void | Promise<void>): void;
+    };
+    destroy?(): Promise<void>;
+    getMe?(): Promise<unknown>;
+    sendText?(chatId: unknown, text: unknown, opts?: unknown): Promise<unknown>;
+    sendMedia?(chatId: unknown, media: unknown, opts?: unknown): Promise<unknown>;
+    getChat?(chatId: unknown): Promise<unknown>;
+    getUser?(userId: unknown): Promise<unknown>;
+    getChatMembers?(chatId: unknown, params?: unknown): Promise<unknown[]>;
+    getHistory?(chatId: unknown, params?: unknown): Promise<unknown[]>;
+    iterDialogs?(params?: unknown): AsyncIterable<unknown>;
+    readHistory?(chatId: unknown): Promise<void>;
+    sendTyping?(chatId: unknown): Promise<void>;
+}
+
+type TelegramClientFactory = (config: TelegramConfig) => Promise<TelegramClientLike>;
+
 interface PlainUser {
     id: string;
     displayName?: string;
@@ -65,6 +86,7 @@ export class TelegramAdapter implements PlatformAdapter {
         private nc: NotificationCenter,
         private promptUser: PromptHandler,
         private print: PrintHandler = console.log,
+        private createClient: TelegramClientFactory = defaultTelegramClientFactory,
     ) {}
 
     async start(): Promise<void> {
@@ -72,12 +94,7 @@ export class TelegramAdapter implements PlatformAdapter {
 
         this.validateConfig();
 
-        const { TelegramClient } = await import("@mtcute/node");
-        const client = new TelegramClient({
-            apiId: Number(this.config.apiId),
-            apiHash: this.config.apiHash,
-            storage: "workspace/tg-session/account",
-        });
+        const client = await this.createClient(this.config);
 
         const self = this.config.mode === "bot"
             ? await client.start({ botToken: this.config.botToken })
@@ -335,4 +352,13 @@ export class TelegramAdapter implements PlatformAdapter {
         if (typeof value?.username === "string" && value.username.length > 0) return value.username;
         return undefined;
     }
+}
+
+async function defaultTelegramClientFactory(config: TelegramConfig): Promise<TelegramClientLike> {
+    const { TelegramClient } = await import("@mtcute/node");
+    return new TelegramClient({
+        apiId: Number(config.apiId),
+        apiHash: config.apiHash,
+        storage: "workspace/tg-session/account",
+    }) as TelegramClientLike;
 }

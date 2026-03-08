@@ -7,6 +7,12 @@
 3. 你**不需要也不允许**自己建立 Telegram 消息监听器
 4. 你在 `telegram` scene 中拿到的 `ctx.tg` 是系统注入的代码接口代理，可直接调用
 
+补充：
+
+- 如果系统配置为 `userbot` 模式，首次启动时宿主会要求人类输入 OTP 验证码
+- 如果账号开启了两步验证，还会继续要求输入 2FA 密码
+- 登录 session 会持久化到 `workspace/tg-session/account`
+
 如果你需要处理新消息，请等待 NotificationCenter 把通知交给你；不要写 `runtime.spawn("tg-listener", ...)`。
 
 ## 发送消息
