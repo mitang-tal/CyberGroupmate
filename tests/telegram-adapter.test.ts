@@ -241,4 +241,36 @@ describe("TelegramAdapter", () => {
         await adapter.stop();
         nc.dispose();
     });
+
+    it("should narrow telegram scene type defs in bot mode", async () => {
+        const adapter = new TelegramAdapter(
+            makeConfig({ mode: "bot" }),
+            makeNC(),
+            async () => "",
+            () => {},
+            async () => ({
+                async start() {
+                    return { id: 1, displayName: "BotUser", isBot: true };
+                },
+                onNewMessage: { add() {}, remove() {} },
+                async destroy() {},
+            }),
+        );
+
+        const base = `
+interface TelegramClient {
+  sendText(chatId: number | string, text: string): Promise<Message>;
+  // [USERBOT_ONLY_BEGIN]
+  getHistory(chatId: number | string, opts?: { limit?: number }): Promise<Message[]>;
+  iterDialogs(opts?: { limit?: number }): AsyncIterable<Dialog>;
+  // [USERBOT_ONLY_END]
+}
+`.trim();
+
+        const botDefs = adapter.getSceneTypeDefs("telegram", base)!;
+        assert.ok(botDefs.includes("当前 Telegram adapter 模式: bot"));
+        assert.ok(!botDefs.includes("getHistory"));
+        assert.ok(!botDefs.includes("iterDialogs"));
+        assert.ok(botDefs.includes("sendText"));
+    });
 });

@@ -125,13 +125,33 @@ function hydrateTelegramMessage(message: unknown): unknown {
     };
 }
 
-function createTelegramClientProxy() {
+function formatTelegramAck(prefix: string, payload: unknown): string {
+    if (!payload || typeof payload !== "object") return prefix;
+    const raw = payload as Record<string, unknown>;
+    const chat = raw.chat && typeof raw.chat === "object" ? raw.chat as Record<string, unknown> : undefined;
+    const chatId = chat?.id ?? raw.chatId;
+    const msgId = raw.id ?? raw.messageId;
+    const text = typeof raw.text === "string" ? raw.text : undefined;
+    const parts = [prefix];
+    if (chatId !== undefined) parts.push(`chat=${String(chatId)}`);
+    if (msgId !== undefined) parts.push(`msg=${String(msgId)}`);
+    if (text) parts.push(`text=${text}`);
+    return parts.join(" ");
+}
+
+function createTelegramClientProxy(emit: (line: string) => void) {
     return {
         getMe: async () => callHost("telegram.getMe", []),
-        sendText: async (chatId: number | string, text: string, opts?: { replyTo?: number }) =>
-            hydrateTelegramMessage(await callHost("telegram.sendText", [chatId, text, opts])),
-        sendMedia: async (chatId: number | string, media: unknown, opts?: { replyTo?: number; caption?: string }) =>
-            hydrateTelegramMessage(await callHost("telegram.sendMedia", [chatId, media, opts])),
+        sendText: async (chatId: number | string, text: string, opts?: { replyTo?: number }) => {
+            const sent = hydrateTelegramMessage(await callHost("telegram.sendText", [chatId, text, opts]));
+            emit(formatTelegramAck("[Telegram] sendText ok", sent));
+            return sent;
+        },
+        sendMedia: async (chatId: number | string, media: unknown, opts?: { replyTo?: number; caption?: string }) => {
+            const sent = hydrateTelegramMessage(await callHost("telegram.sendMedia", [chatId, media, opts]));
+            emit(formatTelegramAck("[Telegram] sendMedia ok", sent));
+            return sent;
+        },
         getChat: async (chatId: number | string) =>
             callHost("telegram.getChat", [chatId]),
         getUser: async (userId: number | string) =>
@@ -162,8 +182,10 @@ function createTelegramClientProxy() {
         },
         readHistory: async (chatId: number | string) =>
             callHost("telegram.readHistory", [chatId]),
-        sendTyping: async (chatId: number | string) =>
-            callHost("telegram.sendTyping", [chatId]),
+        sendTyping: async (chatId: number | string) => {
+            await callHost("telegram.sendTyping", [chatId]);
+            emit(`[Telegram] sendTyping ok chat=${String(chatId)}`);
+        },
     };
 }
 
@@ -279,7 +301,9 @@ async function executeCode(id: string, code: string): Promise<void> {
 
     try {
         if (!ctx.tg) {
-            ctx.tg = createTelegramClientProxy();
+            ctx.tg = createTelegramClientProxy((line) => {
+                outputLines.push(line);
+            });
         }
 
         // 构造 async wrapper，注入 ctx, runtime, memory, scene, docs, actions, skills

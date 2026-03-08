@@ -204,6 +204,20 @@ export class TelegramAdapter implements PlatformAdapter {
         return method.startsWith("telegram.");
     }
 
+    getSceneTypeDefs(scene: string, baseTypeDefs: string): string | undefined {
+        if (scene !== "telegram") return undefined;
+
+        const filtered = this.config.mode === "userbot"
+            ? baseTypeDefs.replace(/^\s*\/\/ \[USERBOT_ONLY_BEGIN\]\s*$/gm, "").replace(/^\s*\/\/ \[USERBOT_ONLY_END\]\s*$/gm, "")
+            : baseTypeDefs.replace(/^\s*\/\/ \[USERBOT_ONLY_BEGIN\]\s*$[\s\S]*?^\s*\/\/ \[USERBOT_ONLY_END\]\s*$/gm, "");
+
+        const modeNote = this.config.mode === "bot"
+            ? "// 当前 Telegram adapter 模式: bot\n// 注意: bot mode 下不应使用历史读取、对话遍历、读回执、成员枚举等受限 API。\n"
+            : "// 当前 Telegram adapter 模式: userbot\n// 可使用完整的 Telegram host proxy 能力面。\n";
+
+        return `${modeNote}\n${filtered}`.trim();
+    }
+
     async handleCall(method: string, args: unknown[]): Promise<unknown> {
         if (!this.client) {
             throw new Error("TelegramAdapter is not started");

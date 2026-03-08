@@ -164,7 +164,9 @@ describe("Sandbox", () => {
         `);
 
         assert.equal(result.error, false);
-        const parsed = JSON.parse(result.output);
+        const lines = result.output.split("\n");
+        assert.ok(lines.some(line => line.includes("[Telegram] sendText ok chat=123 msg=sent_1 text=hello")));
+        const parsed = JSON.parse(lines[lines.length - 1]);
         assert.equal(parsed.chat.id, "123");
         assert.equal(parsed.text, "hello");
         assert.equal(parsed.id, "sent_1");
@@ -196,7 +198,9 @@ describe("Sandbox", () => {
         `);
 
         assert.equal(result.error, false);
-        const parsed = JSON.parse(result.output);
+        const lines = result.output.split("\n");
+        assert.ok(lines.some(line => line.includes("[Telegram] sendText ok chat=100 msg=msg_1 text=ping")));
+        const parsed = JSON.parse(lines[lines.length - 1]);
         assert.equal(parsed.me.id, "42");
         assert.equal(parsed.sent.id, "msg_1");
         assert.equal(parsed.sent.chat.id, "100");

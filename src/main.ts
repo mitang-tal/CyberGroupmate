@@ -339,6 +339,7 @@ async function mainEventLoop(
     nc: NotificationCenter,
     sceneManager: SceneManager,
     memory: MemoryStoreV2,
+    telegramAdapter: TelegramAdapter,
     llmConfig: LLMConfig,
     cheapConfig: LLMConfig,
     systemPrompt: string,
@@ -547,7 +548,8 @@ async function mainEventLoop(
 
                 const agentState = loadAgentState();
                 const sceneDef = sceneManager.getScene(activeScene);
-                const typeDefs = sceneDef?.typeDefs ?? "";
+                const baseTypeDefs = sceneDef?.typeDefs ?? "";
+                const typeDefs = telegramAdapter.getSceneTypeDefs?.(activeScene, baseTypeDefs) ?? baseTypeDefs;
                 const sceneFocus = activeScene === task.scene && task.sceneFocus
                     ? `\n${task.sceneFocus}\n${task.latentMemory ?? ""}`
                     : "";
@@ -839,6 +841,7 @@ async function main(): Promise<void> {
         nc,
         sceneManager,
         memory,
+        telegramAdapter,
         llmConfig,
         cheapConfig,
         systemPrompt,

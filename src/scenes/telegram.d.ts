@@ -102,6 +102,7 @@ interface TelegramClient {
     getMe(): Promise<User>;
     getChat(chatId: number | string): Promise<Chat>;
     getUser(userId: number | string): Promise<User>;
+    // [USERBOT_ONLY_BEGIN]
     getChatMembers(chatId: number | string, opts?: { limit?: number }): Promise<Peer[]>;
     getHistory(chatId: number | string, opts?: { limit?: number }): Promise<Message[]>;
 
@@ -111,5 +112,6 @@ interface TelegramClient {
 
     // ─── 状态操作 ───
     readHistory(chatId: number | string): Promise<void>;
+    // [USERBOT_ONLY_END]
     sendTyping(chatId: number | string): Promise<void>;
 }

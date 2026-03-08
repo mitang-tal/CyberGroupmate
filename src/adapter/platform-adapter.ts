@@ -12,4 +12,5 @@ export interface PlatformAdapter {
     stop(): Promise<void>;
     canHandle(method: string): boolean;
     handleCall(method: string, args: unknown[]): Promise<unknown>;
+    getSceneTypeDefs?(scene: string, baseTypeDefs: string): string | undefined;
 }
