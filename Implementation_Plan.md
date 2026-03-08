@@ -1299,6 +1299,28 @@ src/
 1. 把 adapter、scene、bootstrap 三者彻底区分清楚
 2. 防止后续设计再次回到“bootstrap 托管 ingress”的旧路径
 
+### 18.3 Scene Type Definition 规则
+
+Scene 的类型定义也应遵守“边界清晰、按职责拆分”的原则：
+
+1. 每个 scene 自己的 `.d.ts` 只声明该 scene 专属能力
+2. 共享能力如 `scene`、`runtime`、`actions`、`skills`、默认 `ctx` 不应在各个 scene 文件里重复声明
+3. 这些共享能力应由框架在注册 scene 时按需组合注入
+4. adapter 可以进一步按 mode / capability 裁剪某个 scene 最终暴露给 Agent 的类型定义
+
+这意味着：
+
+- `telegram.d.ts` 只需要管理 Telegram 能力面
+- `memory.d.ts` 只需要管理 Memory 能力面
+- `home.d.ts` 只需要管理 Home 视角特有的说明或类型
+- “当前 scene 最终能看到什么”由框架和 adapter 共同决定，而不是由某个单独 `.d.ts` 文件私自决定
+
+这样可以避免三类长期问题：
+
+1. 多份 `.d.ts` 反复复制同一套全局接口，最终发生漂移
+2. bot/userbot、Telegram/Discord 等不同 capability surface 被错误地统一暴露
+3. 新增 scene 或 adapter 时必须手改大量重复定义
+
 ---
 
 ## 19. 结论

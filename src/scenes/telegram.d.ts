@@ -6,42 +6,6 @@
  * 平台连接与消息监听由宿主侧官方 adapter 管理。
  */
 
-declare const scene: {
-    enter(name: string): void;
-    current: string;
-    list(): void;
-    showFullTypes(): void;
-};
-
-declare const runtime: {
-    notify(event: { type: string;[key: string]: unknown }): void;
-    input(prompt: string): Promise<string>;
-    print(msg: string): void;
-    spawn(name: string, fn: (signal: AbortSignal) => Promise<void>): void;
-    kill(name: string): void;
-    ps(): string[];
-};
-
-declare const actions: {
-    getTopicContext(topicId: string): Promise<Record<string, unknown> | null>;
-    listActiveTopics(chatId?: string): Promise<Array<Record<string, unknown> | null>>;
-    recallForTopic(topicId: string, options?: Record<string, unknown>): Promise<unknown>;
-};
-
-declare const skills: {
-    memory: {
-        recallAndSummarize(query: string, options?: Record<string, unknown>): Promise<unknown>;
-        browseForAnswer(request: Record<string, unknown>): Promise<unknown>;
-    };
-    social: {
-        replyInTelegram(
-            chatId: number | string,
-            text: string,
-            opts?: { replyTo?: number }
-        ): Promise<Message>;
-    };
-};
-
 declare const ctx: {
     tg: TelegramClient;
     [key: string]: any;

@@ -8,44 +8,6 @@
  * memory: MemoryStore — 全局可用
  */
 
-// ─── 场景管理（所有场景共用） ───
-declare const scene: {
-    enter(name: string): void;
-    current: string;
-    list(): void;
-    showFullTypes(): void;
-};
-
-declare const runtime: {
-    notify(event: { type: string;[key: string]: unknown }): void;
-    spawn(name: string, fn: (signal: AbortSignal) => Promise<void>): void;
-    kill(name: string): void;
-    ps(): void;
-    cron(expr: string, name: string, fn: () => Promise<void>): void;
-};
-
-declare const actions: {
-    getTopicContext(topicId: string): Promise<Record<string, unknown> | null>;
-    listActiveTopics(chatId?: string): Promise<Array<Record<string, unknown> | null>>;
-    recallForTopic(topicId: string, options?: Record<string, unknown>): Promise<RecallResult | null>;
-};
-
-declare const skills: {
-    memory: {
-        recallAndSummarize(query: string, options?: Record<string, unknown>): Promise<RecallResult>;
-        browseForAnswer(request: HistoryBrowseRequest): Promise<HistoryBrowseResult>;
-    };
-    social: {
-        replyInTelegram(
-            chatId: number | string,
-            text: string,
-            opts?: { replyTo?: number }
-        ): Promise<unknown>;
-    };
-};
-
-declare const ctx: Record<string, any>;
-
 // ─── 事实分类 ───
 
 /** 核心事实的分类 */

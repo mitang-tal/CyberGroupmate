@@ -25,6 +25,17 @@ function readTypeDefs(filename: string): string {
     return readFileSync(join(__dirname, filename), "utf-8");
 }
 
+function readSharedTypeDefs(filename: string): string {
+    return readFileSync(join(__dirname, "shared", filename), "utf-8");
+}
+
+function composeTypeDefs(parts: string[]): string {
+    return parts
+        .map(part => part.trim())
+        .filter(Boolean)
+        .join("\n\n");
+}
+
 /**
  * 注册所有内置场景到 SceneManager
  *
@@ -41,7 +52,14 @@ export function registerBuiltinScenes(sm: SceneManager): void {
         name: "home",
         description:
             "通知中心。查看通知、决定下一步、切换场景。基础 runtime API 可用。",
-        typeDefs: readTypeDefs("home.d.ts"),
+        typeDefs: composeTypeDefs([
+            readSharedTypeDefs("scene.d.ts"),
+            readSharedTypeDefs("runtime.d.ts"),
+            readSharedTypeDefs("actions.d.ts"),
+            readSharedTypeDefs("skills.d.ts"),
+            readSharedTypeDefs("ctx.d.ts"),
+            readTypeDefs("home.d.ts"),
+        ]),
         contextSetup:
             "你现在在 Home 场景。这是你的起始点。\n" +
             "你可以通过 scene.list() 查看所有可用场景，\n" +
@@ -53,7 +71,13 @@ export function registerBuiltinScenes(sm: SceneManager): void {
         name: "telegram",
         description:
             "Telegram 操作。平台连接与消息接收由宿主侧官方 adapter 负责；你在此场景中通过 ctx.tg 进行读写与查询。",
-        typeDefs: readTypeDefs("telegram.d.ts"),
+        typeDefs: composeTypeDefs([
+            readSharedTypeDefs("scene.d.ts"),
+            readSharedTypeDefs("runtime.d.ts"),
+            readSharedTypeDefs("actions.d.ts"),
+            readSharedTypeDefs("skills.d.ts"),
+            readTypeDefs("telegram.d.ts"),
+        ]),
         contextSetup:
             "你现在在 Telegram 场景。ctx.tg 是 TelegramClient 实例。\n" +
             "Telegram 已经由系统完成连接与消息监听。\n" +
@@ -65,7 +89,14 @@ export function registerBuiltinScenes(sm: SceneManager): void {
         name: "memory",
         description:
             "记忆系统 V2。统一检索(recall)、消息档案(browseHistory)、反思(reflect)、以及兼容的搜索/画像管理。",
-        typeDefs: readTypeDefs("memory.d.ts"),
+        typeDefs: composeTypeDefs([
+            readSharedTypeDefs("scene.d.ts"),
+            readSharedTypeDefs("runtime.d.ts"),
+            readSharedTypeDefs("actions.d.ts"),
+            readSharedTypeDefs("skills.d.ts"),
+            readSharedTypeDefs("ctx.d.ts"),
+            readTypeDefs("memory.d.ts"),
+        ]),
         contextSetup:
             "你现在在 Memory 场景。memory 是 MemoryStore 实例（V2 stub）。\n" +
             "V2 新方法：recall()（语义检索）、browseHistory()（翻聊天记录）、reflect()（反思总结）。\n" +

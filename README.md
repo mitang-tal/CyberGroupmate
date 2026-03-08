@@ -12,6 +12,7 @@
 - Agent 不再在 bootstrap 里自己连接 Telegram、自己挂 listener
 - bootstrap 只负责理解系统、加载文档、做幂等初始化
 - 所有能力继续坚持 code-first：不用 tool calling，Agent 通过代码接口、`actions.*`、`skills.*` 行动
+- 每个 scene 的 `.d.ts` 现在只描述它自己的能力；共享能力定义由框架按 scene 组合注入
 - `ReplyPipeline` 现在会自动注入 `Scene Focus + Latent Memory`，让 Memory V2 以“潜意识上下文”的方式参与决策
 
 ## 当前状态
@@ -74,10 +75,25 @@ CodeAct Session
   - memory.*
   - skills.*
   - ctx.tg host proxy
+  - scene-specific type defs composed by framework
         │
         ▼
 FeedbackLoop
 ```
+
+## Scene TypeDefs
+
+`scene` 的类型定义现在是组合出来的，不是每个 `.d.ts` 各自复制一整套全局接口。
+
+- `src/scenes/shared/*.d.ts` 只定义共享能力块，比如 `scene`、`runtime`、`actions`、`skills`
+- `src/scenes/home.d.ts`、`src/scenes/telegram.d.ts`、`src/scenes/memory.d.ts` 只定义各自 scene 专属能力
+- 框架在注册 scene 时决定给该 scene 注入哪些定义
+
+这条规则的目的很简单：
+
+- 避免 `d.ts` 重复拷贝后长期漂移
+- 避免把某个平台或某个 mode 的能力错误暴露给所有 scene
+- 让 adapter/框架可以按实际 capability surface 裁剪 Agent 可见定义
 
 ## 环境要求
 
