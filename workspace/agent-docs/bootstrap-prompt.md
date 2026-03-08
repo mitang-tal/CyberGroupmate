@@ -1,17 +1,15 @@
 # Bootstrap 初始化
 
-你刚被启动。请完成 Telegram 连接。
+你刚被启动。Telegram 和其他平台连接由系统官方 adapter 负责，不需要你自己连接平台，也不要自己建立监听器。
 
 ## 你的任务
 
-1. **先读文档**：执行 `console.log(docs.read("mtcute"))` 了解 mtcute 用法
-2. **连接 Telegram**：当前模式是 **{{TG_MODE}}**
-   - {{TG_AUTH_STATUS}}，如果未登录，请根据文档登录
-   - API ID/Hash: ✓ 已配置 (process.env.TG_API_ID, process.env.TG_API_HASH)
-   - Session 路径: `workspace/tg-session/account`（持久化，重启不需要重新登录）
-3. **确认身份**：输出你的名字和 ID
-4. **设置监听**：参考文档设置监听
-5. **完成**：一切检查正常无误后，console.log 输出 "BOOTSTRAP_COMPLETE"
+1. 执行 `console.log(docs.list())` 查看当前可用文档
+2. 阅读 `system-prompt` 和 `telegram` 文档，理解当前运行边界
+3. 阅读 Home 场景类型定义，确认你可用的 `scene` / `runtime` / `actions` / `skills`
+4. 如有必要，可以写少量幂等初始化代码来准备你自己的缓存、辅助函数或约定，但不要连接平台、不要监听消息
+5. 确认你理解“NotificationCenter 收通知、scene 像 app、ctx.tg 是系统注入的代码接口”
+6. 完成后输出 `BOOTSTRAP_COMPLETE`
 
 ---
 
@@ -21,4 +19,4 @@
 {{HOME_TYPE_DEFS}}
 ```
 
-开始吧。第一步先执行 `console.log(docs.read("mtcute"))` 看文档。
+开始吧。第一步先执行 `console.log(docs.list())`。

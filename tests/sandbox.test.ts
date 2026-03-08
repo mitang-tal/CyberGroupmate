@@ -144,21 +144,62 @@ describe("Sandbox", () => {
 
     it("should expose code-based social skill helpers", async () => {
         const sb = await makeSandbox();
-        const result = await sb.execute(`
-          ctx.tg = {
-            async sendText(chatId, text, opts) {
-              return { chatId, text, opts };
+        sb.setHostCallHandler(async (method, args) => {
+            if (method === "telegram.sendText") {
+                return {
+                    id: "sent_1",
+                    chat: { id: String(args[0]), type: "group" },
+                    sender: null,
+                    text: String(args[1]),
+                    date: new Date().toISOString(),
+                    isMention: false,
+                };
             }
-          };
+            throw new Error(`unexpected method: ${method}`);
+        });
+
+        const result = await sb.execute(`
           const sent = await skills.social.replyInTelegram(123, "hello", { replyTo: 9 });
           console.log(JSON.stringify(sent));
         `);
 
         assert.equal(result.error, false);
         const parsed = JSON.parse(result.output);
-        assert.equal(parsed.chatId, 123);
+        assert.equal(parsed.chat.id, "123");
         assert.equal(parsed.text, "hello");
-        assert.equal(parsed.opts.replyTo, 9);
+        assert.equal(parsed.id, "sent_1");
+    });
+
+    it("should expose host-backed ctx.tg proxy without bootstrap wiring", async () => {
+        const sb = await makeSandbox();
+        sb.setHostCallHandler(async (method, args) => {
+            if (method === "telegram.getMe") {
+                return { id: "42", firstName: "Cyber", isBot: true };
+            }
+            if (method === "telegram.sendText") {
+                return {
+                    id: "msg_1",
+                    chat: { id: String(args[0]), type: "private" },
+                    sender: { id: "42", firstName: "Cyber", isBot: true },
+                    text: String(args[1]),
+                    date: "2026-03-08T00:00:00.000Z",
+                    isMention: false,
+                };
+            }
+            throw new Error(`unexpected method: ${method}`);
+        });
+
+        const result = await sb.execute(`
+          const me = await ctx.tg.getMe();
+          const sent = await ctx.tg.sendText("100", "ping");
+          console.log(JSON.stringify({ me, sent }));
+        `);
+
+        assert.equal(result.error, false);
+        const parsed = JSON.parse(result.output);
+        assert.equal(parsed.me.id, "42");
+        assert.equal(parsed.sent.id, "msg_1");
+        assert.equal(parsed.sent.chat.id, "100");
     });
 
     it("should stop cleanly", async () => {

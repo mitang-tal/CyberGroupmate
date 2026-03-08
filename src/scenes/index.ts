@@ -52,12 +52,12 @@ export function registerBuiltinScenes(sm: SceneManager): void {
     sm.register({
         name: "telegram",
         description:
-            "Telegram 操作。发送/读取消息、获取对话列表、搜索消息、设置消息监听。",
+            "Telegram 操作。平台连接与消息接收由宿主侧官方 adapter 负责；你在此场景中通过 ctx.tg 进行读写与查询。",
         typeDefs: readTypeDefs("telegram.d.ts"),
         contextSetup:
             "你现在在 Telegram 场景。ctx.tg 是 TelegramClient 实例。\n" +
-            "你可以读取和发送消息、获取对话列表、搜索消息历史。\n" +
-            "使用 runtime.spawn() 设置后台消息监听。",
+            "Telegram 已经由系统完成连接与消息监听。\n" +
+            "你可以读取和发送消息、获取对话列表、搜索消息历史，但不要自行建立平台监听。",
     });
 
     // ─── Memory 场景 ───

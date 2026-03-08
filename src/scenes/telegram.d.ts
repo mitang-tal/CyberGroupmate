@@ -1,9 +1,9 @@
 /**
  * telegram.d.ts — Telegram 场景类型定义
  *
- * 这是一份真实 mtcute TelegramClient 的常用接口子集。
+ * 这是系统注入的 Telegram host proxy 的接口子集。
  * 提供给 Agent 在 sandbox 执行时作为 TypeScript 强类型上下文参考。
- * Agent 调用 scene.showFullTypes() 看到的即是此文件。
+ * 平台连接与消息监听由宿主侧官方 adapter 管理。
  */
 
 declare const scene: {
@@ -44,7 +44,6 @@ declare const skills: {
 
 declare const ctx: {
     tg: TelegramClient;
-    self: User;
     [key: string]: any;
 };
 
@@ -93,18 +92,11 @@ interface Emitter<T> {
     clear(): void;
 }
 
-/**
- * Mtcute TelegramClient 接口子集。
- * 注意：这些方法都在原型链上，Object.keys 探测不到！
- */
+/** 系统注入的 TelegramClient 代理接口。 */
 interface TelegramClient {
     // ─── 发送与交互 ───
     sendText(chatId: number | string, text: string, opts?: { replyTo?: number }): Promise<Message>;
     sendMedia(chatId: number | string, media: any, opts?: { replyTo?: number, caption?: string }): Promise<Message>;
-    replyText(msg: Message | number, text: string, opts?: any): Promise<Message>;
-    editMessage(msgId: number, params: { text: string }): Promise<Message>;
-    deleteMessages(chatId: number | string, msgIds: number[]): Promise<void>;
-    forwardMessages(toChatId: number | string, msgs: Message[] | number[]): Promise<Message[]>;
 
     // ─── 信息获取 ───
     getMe(): Promise<User>;
@@ -120,12 +112,4 @@ interface TelegramClient {
     // ─── 状态操作 ───
     readHistory(chatId: number | string): Promise<void>;
     sendTyping(chatId: number | string): Promise<void>;
-    pinMessage(chatId: number | string, msgId: number): Promise<void>;
-    joinChat(chatId: number | string): Promise<void>;
-    leaveChat(chatId: number | string): Promise<void>;
-
-    // ─── 事件监听器 (Emitter) ───
-    readonly onNewMessage: Emitter<Message>;
-    readonly onEditMessage: Emitter<Message>;
-    readonly onDeleteMessage: Emitter<any>;
 }

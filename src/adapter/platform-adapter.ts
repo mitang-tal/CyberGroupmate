@@ -1,13 +1,15 @@
 /**
  * platform-adapter.ts — 平台接入抽象
  *
- * 定义平台 adapter 的统一接口。当前实现仍兼容 bootstrap listener，
- * 但新的 ingress 边界应逐步迁到这里。
+ * 定义平台 adapter 的统一接口。
+ * 平台连接、消息监听、消息标准化、以及面向 sandbox 的 host-call
+ * 都应通过官方 adapter 暴露，而不是由 bootstrap 代码自行创建监听器。
  */
 
 export interface PlatformAdapter {
     readonly platform: string;
     start(): Promise<void>;
     stop(): Promise<void>;
-    getSendContext(): Record<string, unknown>;
+    canHandle(method: string): boolean;
+    handleCall(method: string, args: unknown[]): Promise<unknown>;
 }

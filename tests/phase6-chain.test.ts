@@ -167,13 +167,6 @@ describe("Phase 6 chain", () => {
         }]);
 
         await sandbox.start();
-        await sandbox.execute(`
-            ctx.tg = {
-              async sendText(chatId, text, opts) {
-                return { id: "agent_msg_1", chatId, text, opts };
-              }
-            };
-        `);
 
         sandbox.setHostCallHandler(async (method, args) => {
             switch (method) {
@@ -188,6 +181,15 @@ describe("Phase 6 chain", () => {
                         chatId: target.chatId,
                     });
                 }
+                case "telegram.sendText":
+                    return {
+                        id: "agent_msg_1",
+                        chat: { id: String(args[0]), type: "group" },
+                        sender: { id: "agent", firstName: "Cyber", isBot: true },
+                        text: String(args[1]),
+                        date: new Date().toISOString(),
+                        isMention: false,
+                    };
                 default:
                     throw new Error(`unexpected host method: ${method}`);
             }

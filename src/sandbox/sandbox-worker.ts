@@ -113,6 +113,60 @@ const docs = {
     },
 };
 
+function hydrateTelegramMessage(message: unknown): unknown {
+    if (!message || typeof message !== "object") return message;
+    const raw = message as Record<string, unknown>;
+    return {
+        ...raw,
+        date: raw.date ? new Date(String(raw.date)) : new Date(),
+        replyToMessage: raw.replyToMessage && typeof raw.replyToMessage === "object"
+            ? { ...(raw.replyToMessage as Record<string, unknown>) }
+            : raw.replyToMessage,
+    };
+}
+
+function createTelegramClientProxy() {
+    return {
+        getMe: async () => callHost("telegram.getMe", []),
+        sendText: async (chatId: number | string, text: string, opts?: { replyTo?: number }) =>
+            hydrateTelegramMessage(await callHost("telegram.sendText", [chatId, text, opts])),
+        sendMedia: async (chatId: number | string, media: unknown, opts?: { replyTo?: number; caption?: string }) =>
+            hydrateTelegramMessage(await callHost("telegram.sendMedia", [chatId, media, opts])),
+        getChat: async (chatId: number | string) =>
+            callHost("telegram.getChat", [chatId]),
+        getUser: async (userId: number | string) =>
+            callHost("telegram.getUser", [userId]),
+        getChatMembers: async (chatId: number | string, opts?: { limit?: number }) =>
+            callHost("telegram.getChatMembers", [chatId, opts]),
+        getHistory: async (chatId: number | string, opts?: { limit?: number }) => {
+            const messages = await callHost("telegram.getHistory", [chatId, opts]);
+            return Array.isArray(messages) ? messages.map(hydrateTelegramMessage) : [];
+        },
+        iterHistory: async function* (chatId: number | string, opts?: { limit?: number }) {
+            const messages = await callHost("telegram.getHistory", [chatId, opts]);
+            if (!Array.isArray(messages)) return;
+            for (const message of messages) {
+                yield hydrateTelegramMessage(message);
+            }
+        },
+        iterDialogs: async function* (opts?: { limit?: number }) {
+            const dialogs = await callHost("telegram.getDialogs", [opts]);
+            if (!Array.isArray(dialogs)) return;
+            for (const dialog of dialogs) {
+                const raw = dialog as Record<string, unknown>;
+                yield {
+                    ...raw,
+                    lastMessage: raw.lastMessage ? hydrateTelegramMessage(raw.lastMessage) : undefined,
+                };
+            }
+        },
+        readHistory: async (chatId: number | string) =>
+            callHost("telegram.readHistory", [chatId]),
+        sendTyping: async (chatId: number | string) =>
+            callHost("telegram.sendTyping", [chatId]),
+    };
+}
+
 // ─── IPC 通信 ───
 
 function sendToHost(msg: OutgoingMessage): void {
@@ -224,6 +278,10 @@ async function executeCode(id: string, code: string): Promise<void> {
     console.info = captureLog;
 
     try {
+        if (!ctx.tg) {
+            ctx.tg = createTelegramClientProxy();
+        }
+
         // 构造 async wrapper，注入 ctx, runtime, memory, scene, docs, actions, skills
         const asyncFn = new Function(
             "ctx",

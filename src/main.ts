@@ -40,6 +40,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "./core/logger.js";
+import { TelegramAdapter } from "./adapter/telegram-adapter.js";
 
 const log = createLogger("main");
 
@@ -169,7 +170,11 @@ function serializeTopic(topic: ReturnType<TopicRegistry["get"]>): Record<string,
  * 保存成功执行的 bootstrap 代码
  */
 function saveBootstrapCode(codes: string[]): void {
-    writeFileSync(BOOTSTRAP_CODE_PATH, JSON.stringify(codes, null, 2), "utf-8");
+    writeFileSync(
+        BOOTSTRAP_CODE_PATH,
+        JSON.stringify({ version: 2, codes }, null, 2),
+        "utf-8",
+    );
 }
 
 /**
@@ -178,7 +183,16 @@ function saveBootstrapCode(codes: string[]): void {
 function loadBootstrapCode(): string[] | null {
     if (!existsSync(BOOTSTRAP_CODE_PATH)) return null;
     try {
-        return JSON.parse(readFileSync(BOOTSTRAP_CODE_PATH, "utf-8"));
+        const parsed = JSON.parse(readFileSync(BOOTSTRAP_CODE_PATH, "utf-8")) as
+            | { version?: number; codes?: string[] }
+            | string[];
+        if (Array.isArray(parsed)) {
+            return null;
+        }
+        if (parsed.version !== 2 || !Array.isArray(parsed.codes)) {
+            return null;
+        }
+        return parsed.codes;
     } catch {
         return null;
     }
@@ -200,17 +214,7 @@ function buildBootstrapPrompt(homeTypeDefs: string, appConfig: AppConfig): strin
         promptTemplate = `# Bootstrap 初始化\n\n请连接 Telegram。\n\n{{HOME_TYPE_DEFS}}`;
     }
 
-    const tgMode = appConfig.telegram.mode;
-    const hasPhone = !!appConfig.telegram.phone;
-    const hasBotToken = !!appConfig.telegram.botToken;
-
-    const tgAuthStatus = tgMode === "bot"
-        ? `Bot Token: ${hasBotToken ? "✓ 已配置 (process.env.TG_BOT_TOKEN)" : "✗ 未配置"}`
-        : `手机号: ${hasPhone ? "✓ 已配置 (process.env.TG_PHONE)" : "✗ 未配置"}`;
-
     return promptTemplate
-        .replace("{{TG_MODE}}", tgMode)
-        .replace("{{TG_AUTH_STATUS}}", tgAuthStatus)
         .replace("{{HOME_TYPE_DEFS}}", homeTypeDefs);
 }
 
@@ -653,6 +657,22 @@ async function main(): Promise<void> {
     const memory = new MemoryStoreV2(join(DATA_DIR, "memory.db"));
     const sceneManager = new SceneManager();
     registerBuiltinScenes(sceneManager);
+    const { createInterface: createRL } = await import("node:readline");
+    const hostRL = createRL({ input: process.stdin, output: process.stdout });
+
+    const promptUser = async (prompt: string): Promise<string> =>
+        new Promise((resolve) => {
+            hostRL.question(`🤖 ${prompt}`, (answer: string) => {
+                resolve(answer.trim());
+            });
+        });
+
+    const telegramAdapter = new TelegramAdapter(
+        appConfig.telegram,
+        nc,
+        promptUser,
+        (message) => console.log(`🤖 ${message}`),
+    );
 
     // ─── Phase 6: 初始化管线组件 ───
     const cheapConfig = resolveTierProfile("cheap", appConfig);
@@ -705,12 +725,20 @@ async function main(): Promise<void> {
 
     log.info("组件初始化完成（含 Phase 6 管线）");
 
+    log.info("启动 TelegramAdapter...");
+    await telegramAdapter.start();
+    log.info("TelegramAdapter 就绪");
+
     // ─── 连接 sandbox 事件 ───
     sandbox.on("notify", (event: Record<string, unknown>) => {
         nc.push(event as { type: string;[key: string]: unknown });
     });
 
     sandbox.setHostCallHandler(async (method, args) => {
+        if (telegramAdapter.canHandle(method)) {
+            return telegramAdapter.handleCall(method, args);
+        }
+
         switch (method) {
             case "memory.recall":
                 return memory.recall(args[0] as string, args[1] as any);
@@ -751,10 +779,6 @@ async function main(): Promise<void> {
     sandbox.on("print", (message: string) => {
         console.log(`🤖 ${message}`);
     });
-
-    // 创建 stdin readline 用于处理 Agent 的 runtime.input() 请求
-    const { createInterface: createRL } = await import("node:readline");
-    const hostRL = createRL({ input: process.stdin, output: process.stdout });
 
     // Agent 请求用户输入
     sandbox.on("input_request", ({ id, prompt }: { id: string; prompt: string }) => {

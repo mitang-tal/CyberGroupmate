@@ -80,7 +80,7 @@
 | 6.2 | Recording Pipeline | ✅ 完成 | 50 条 / 2 分钟缓冲；强信号加速 |
 | 6.6 | Dry-Run System | ✅ 完成 | 历史回放验证 |
 | 6.7 | Model Router | ✅ 完成 | 规则驱动模型与模式路由 |
-| 6B.0 | Ingress Boundary Refactor | 🚧 进行中 | `nc.message` 标准化 schema、`PlatformAdapter` 抽象、全链路 string ID 迁移已完成；官方 `TelegramAdapter` 与 bootstrap 降责仍待收尾 |
+| 6B.0 | Ingress Boundary Refactor | 🚧 进行中 | `nc.message` 标准化 schema、`PlatformAdapter` 抽象、全链路 string ID 迁移、官方 `TelegramAdapter`、bootstrap 降责已落地；仍需继续扩展更多 adapter / ingress 测试 |
 | 6.3 | Reply Pipeline Framework | ✅ 完成 | `ReplyPipeline` + `ReplyTask` 已接入主循环，覆盖 FAST_PATH / topic triage / engaged 三类任务 |
 | 6.4 | Code-First Action Surface | ✅ 完成 | sandbox 已注入 `actions.*`，host-call 已桥接 memory/topic/action 上下文 |
 | 6.5 | Agent-Skill Runtime | ✅ 完成 | sandbox 已注入代码型 `skills.memory` / `skills.social`，并由测试覆盖实际调用链 |
@@ -901,6 +901,12 @@ Agent 获得能力的方式应该始终是：
 1. 不运行 bootstrap 监听代码，框架也能稳定接收 Telegram 消息
 2. Agent 仍可正常调用发送 API 回复消息
 
+当前状态：
+
+1. 已完成：宿主侧 `TelegramAdapter` 已负责 mtcute 连接、登录、消息监听与 `nc.message` 标准化入队
+2. 已完成：sandbox 中的 `ctx.tg` 改为 host-backed proxy，通过 host-call 调用官方 adapter
+3. 已完成：测试已去掉“bootstrap 手动注入 ctx.tg / 手动挂监听”的旧假设
+
 #### Task 6B.0.4 — 全链路 ID 类型迁移
 
 内容：
@@ -933,6 +939,12 @@ Agent 获得能力的方式应该始终是：
 
 1. bootstrap 不做平台监听也能完成正常运行
 2. bootstrap 重放不再影响 canonical ingress
+
+当前状态：
+
+1. 已完成：bootstrap prompt 已改写为“理解系统、初始化自身”，不再负责 Telegram 连接或监听
+2. 已完成：`system-prompt` / `telegram` agent docs 已去除“自己连接 Telegram / runtime.spawn listener”主叙事
+3. 已完成：bootstrap 持久化格式已版本化，旧的 listener 型 replay 不再被当作有效主线状态加载
 
 ### 13.4 Phase 6B.1：Agent-Memory Bridge（6B 主体）
 

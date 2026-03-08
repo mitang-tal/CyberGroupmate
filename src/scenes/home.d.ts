@@ -41,7 +41,7 @@ declare const runtime: {
     /**
      * 推送事件到通知中心
      * @param event - 事件对象，必须包含 type 字段
-     * @example runtime.notify({ type: "telegram.message", text: "hello" })
+     * @example runtime.notify({ type: "system.note", text: "hello" })
      */
     notify(event: { type: string;[key: string]: unknown }): void;
 
@@ -126,8 +126,8 @@ declare const skills: {
  *
  * @example
  * // 代码块 1
- * ctx.client = new TelegramClient(...)
+ * ctx.someCache = { lastTopicId: "topic_123" }
  * // 代码块 2（之后某个时间）
- * await ctx.client.sendText(...)
+ * console.log(ctx.someCache.lastTopicId)
  */
 declare const ctx: Record<string, any>;
