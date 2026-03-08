@@ -599,6 +599,12 @@ async function mainEventLoop(
                             taskId: task.id,
                             taskSource: task.source,
                         });
+                    } else if (result.endReason === "interrupted") {
+                        log.info(`Session 中断 in scene ${activeScene}`, {
+                            turns: result.turns.length,
+                            taskId: task.id,
+                            taskSource: task.source,
+                        });
                     } else {
                         log.info(`Session 完成 in scene ${activeScene}`, {
                             turns: result.turns.length,

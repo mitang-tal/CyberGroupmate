@@ -244,6 +244,7 @@ export class ReplyPipeline {
             "以下消息需要立即处理。你仍然通过写 TypeScript 代码来行动，不使用 tool calling。",
             "优先直接使用当前已注入的类型定义、来源信息和潜意识上下文；只有当你需要高级能力或不确定 API 细节时，再去读 docs。",
             `如需发消息，请先调用 scene.enter("${messages[messages.length - 1]?.scene ?? "telegram"}", { chatId: "${messages[messages.length - 1]?.chatId ?? ""}" })；场景切换后本轮会立即结束，不要在同一代码块里继续执行发送逻辑。`,
+            "不要写未 await 的 async IIFE；优先直接顶层 await，或写成 await (async () => { ... })()。",
             "如需读取历史或记忆，请主动调用 memory.recall() / memory.browseHistory()；不要为了确认基础 API 而默认先读 docs。",
             "",
             "[Incoming Messages]",

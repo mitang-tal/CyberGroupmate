@@ -221,6 +221,20 @@ describe("Sandbox", () => {
         assert.ok(!result.output.includes("after"));
     });
 
+    it("should warn about bare async IIFE that is not awaited", async () => {
+        const sb = await makeSandbox();
+        const result = await sb.execute(`
+          (async () => {
+            console.log("inside");
+          })();
+          console.log("outside");
+        `);
+
+        assert.equal(result.error, false);
+        assert.ok(result.output.includes("[Warning] 检测到未 await 的 async IIFE"));
+        assert.ok(result.output.includes("outside"));
+    });
+
     it("should stop cleanly", async () => {
         const sb = new Sandbox();
         await sb.start();

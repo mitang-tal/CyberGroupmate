@@ -225,6 +225,13 @@ async function executeCode(id: string, code: string): Promise<void> {
     console.info = captureLog;
 
     try {
+        const hasBareAsyncIife =
+            /\(\s*async\s*\(\)\s*=>[\s\S]*?\)\s*\(\s*\)\s*;?/m.test(code) &&
+            !/await\s+\(\s*async\s*\(\)\s*=>[\s\S]*?\)\s*\(\s*\)\s*;?/m.test(code);
+        if (hasBareAsyncIife) {
+            outputLines.push("[Warning] 检测到未 await 的 async IIFE。异步发送可能在 observation 回写前悬空，导致模型误判为“没发出去”。优先直接顶层 await，或写成 await (async () => { ... })().");
+        }
+
         const { runtime, memory, scene, actions, skills } = installCapabilityRegistry({
             ctx,
             emitOutput: (line) => {

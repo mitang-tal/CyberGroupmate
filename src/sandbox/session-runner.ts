@@ -29,9 +29,6 @@ const MAX_TURNS = 15;
 /** 代码执行输出最大字符数 */
 const MAX_OUTPUT_CHARS = 4000;
 
-/** 每隔多少轮检查新通知 */
-const NOTIFICATION_CHECK_INTERVAL = 5;
-
 // ─── 类型 ───
 
 /** Session 中的一个交互轮次记录 */
@@ -59,7 +56,7 @@ export interface SessionResult {
     /** 完整的消息历史 */
     messages: ChatMessage[];
     /** 结束原因 */
-    endReason: "no_code" | "max_turns" | "error" | "scene_changed";
+    endReason: "no_code" | "max_turns" | "error" | "scene_changed" | "interrupted";
     /** 当 endReason == scene_changed 时的新场景 */
     nextScene?: string;
     /** 如果因为 error 结束，错误信息 */
@@ -99,6 +96,14 @@ export function parseResponse(response: string): {
     return { thinking, codeBlocks };
 }
 
+export function shouldInterruptForEvent(event: Record<string, unknown>): boolean {
+    const type = String(event.type ?? "");
+    if (type === "system.reply_task") return true;
+    if (type === "nc.message") return true;
+    if (type === "telegram.message") return true;
+    return !!event._urgent;
+}
+
 // ─── Session Runner ───
 
 /**
@@ -110,7 +115,7 @@ export function parseResponse(response: string): {
  * 3. 没有代码块 → session 结束
  * 4. 有代码块 → 在 sandbox 中依次执行，收集输出
  * 5. 输出作为 [Execution Output] 追加到消息历史
- * 6. 每隔 5 轮检查是否有新通知
+ * 6. 每轮检查是否有新通知；若有新的外部消息/回复任务，则中断当前 session 交还主循环
  * 7. 重复直到无代码块或达到最大轮次
  *
  * @param initialMessages - 初始消息（含 system prompt、context 等）
@@ -259,28 +264,6 @@ export async function runCodeActSession(
         // ─── 组装 observation ───
         let observation = outputParts.join("\n\n");
 
-        // 每隔 N 轮检查新通知
-        if (
-            (turnNum + 1) % NOTIFICATION_CHECK_INTERVAL === 0 &&
-            nc.pendingCount > 0
-        ) {
-            const newEvents = await nc.drain(0, 5);
-            if (newEvents.length > 0) {
-                const eventSummary = newEvents
-                    .map((e) => {
-                        const preview =
-                            JSON.stringify(e).slice(0, 300);
-                        return `- ${e.type}: ${preview}`;
-                    })
-                    .join("\n");
-                messages.push({
-                    role: "user",
-                    content: `[📬 新通知到达 (${newEvents.length} 条)]\n${eventSummary}`,
-                    scope: "global"
-                });
-            }
-        }
-
         // --- 根据最终的 sceneState 决定是否结束 Session 交给新 Scene ---
         const lastResult = turn.executionResults[turn.executionResults.length - 1];
         if (lastResult?.sceneState && lastResult.sceneState !== currentScene) {
@@ -304,6 +287,44 @@ export async function runCodeActSession(
         // 将 observation 作为 user 消息追加
         if (observation.trim()) {
             messages.push({ role: "user", content: observation, scope: `scene:${currentScene}` });
+        }
+
+        if (nc.pendingCount > 0) {
+            const newEvents = await nc.drain(0, 5);
+            if (newEvents.length > 0) {
+                const shouldInterrupt = newEvents.some(event =>
+                    shouldInterruptForEvent(event as Record<string, unknown>)
+                );
+
+                if (shouldInterrupt) {
+                    for (let i = newEvents.length - 1; i >= 0; i--) {
+                        nc.push(newEvents[i]);
+                    }
+                    messages.push({
+                        role: "user",
+                        content: `[系统] 发现新的外部消息或回复任务，当前 session 已中断并把控制权交还主循环。`,
+                        scope: "global",
+                    });
+                    return {
+                        sessionId,
+                        turns,
+                        messages,
+                        endReason: "interrupted",
+                    };
+                }
+
+                const eventSummary = newEvents
+                    .map((e) => {
+                        const preview = JSON.stringify(e).slice(0, 300);
+                        return `- ${e.type}: ${preview}`;
+                    })
+                    .join("\n");
+                messages.push({
+                    role: "user",
+                    content: `[📬 新通知到达 (${newEvents.length} 条)]\n${eventSummary}`,
+                    scope: "global"
+                });
+            }
         }
     }
 

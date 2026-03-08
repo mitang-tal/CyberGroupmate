@@ -224,6 +224,7 @@ npx tsx src/cli.ts drain
 - Agent 发送消息时，不需要自己创建 Telegram client
 - 发送通过宿主侧 `ctx.tg` host proxy 完成
 - 如果要跨 scene 行动，应先 `scene.enter("telegram", { chatId })`；切换后当前代码块会立即结束，由下一回合继续
+- 如果当前 session 运行期间又来了新的外部消息或 reply task，系统会中断当前 session，把控制权交还主循环
 - 发言后反馈会进入 `FeedbackLoop`
 - 首轮 prompt 里应能看到：
   - `Scene Focus`

@@ -6,7 +6,7 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parseResponse } from "../src/sandbox/session-runner.js";
+import { parseResponse, shouldInterruptForEvent } from "../src/sandbox/session-runner.js";
 
 describe("parseResponse", () => {
     it("should parse thinking only (no code blocks)", () => {
@@ -119,5 +119,13 @@ for (const msg of msgs) {
         assert.equal(codeBlocks.length, 1);
         assert.ok(codeBlocks[0].includes("scene.enter"));
         assert.ok(codeBlocks[0].includes("for (const msg"));
+    });
+
+    it("should identify events that should interrupt the current session", () => {
+        assert.equal(shouldInterruptForEvent({ type: "nc.message" }), true);
+        assert.equal(shouldInterruptForEvent({ type: "system.reply_task" }), true);
+        assert.equal(shouldInterruptForEvent({ type: "telegram.message" }), true);
+        assert.equal(shouldInterruptForEvent({ type: "system.note" }), false);
+        assert.equal(shouldInterruptForEvent({ type: "system.note", _urgent: true }), true);
     });
 });
