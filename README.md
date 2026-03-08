@@ -100,22 +100,25 @@ npm install
 cp config.example.yaml config.yaml
 ```
 
-然后至少准备这些值：
+然后至少在 `config.yaml` 里准备这些值：
 
-```bash
-export TG_MODE=bot
-export TG_API_ID=12345678
-export TG_API_HASH=abcdef1234567890
-export TG_BOT_TOKEN=123456:ABCDEF
+```yaml
+telegram:
+  mode: bot
+  api_id: "12345678"
+  api_hash: "abcdef1234567890"
+  bot_token: "123456:ABCDEF"
 
 # 或 userbot 模式
-# export TG_MODE=userbot
-# export TG_PHONE=+8613xxxxxxxxx
+# telegram:
+#   mode: userbot
+#   api_id: "12345678"
+#   api_hash: "abcdef1234567890"
+#   phone: "+8613xxxxxxxxx"
 ```
 
-LLM 也可以写进 `config.yaml`，或者用环境变量覆盖。当前配置读取优先级是：
-
-`env > config.yaml > defaults`
+LLM、Telegram、embedding 等业务配置现在都只从 `config.yaml` 读取。
+环境变量只建议用于调试开关，例如 `LOG_LEVEL`。
 
 检查配置：
 

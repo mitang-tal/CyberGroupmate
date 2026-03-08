@@ -203,15 +203,15 @@ export class TelegramAdapter implements PlatformAdapter {
 
     private validateConfig(): void {
         if (!this.config.apiId || !this.config.apiHash) {
-            throw new Error("Telegram API credentials are missing (TG_API_ID / TG_API_HASH)");
+            throw new Error("Telegram API credentials are missing in config.yaml (telegram.api_id / telegram.api_hash)");
         }
 
         if (this.config.mode === "bot" && !this.config.botToken) {
-            throw new Error("TG_BOT_TOKEN is required in bot mode");
+            throw new Error("telegram.bot_token is required in bot mode");
         }
 
         if (this.config.mode === "userbot" && !this.config.phone) {
-            throw new Error("TG_PHONE is required in userbot mode");
+            throw new Error("telegram.phone is required in userbot mode");
         }
     }
 

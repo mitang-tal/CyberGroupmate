@@ -1,6 +1,5 @@
 # CyberGroupmate 配置文件示例
 # 复制为 config.yaml 后修改使用
-# 所有配置项都可以通过环境变量覆盖
 
 # ─── LLM Profiles ───
 # 定义多个 LLM 配置 profile，每个 profile 有独立的 provider/key/model
@@ -10,7 +9,7 @@ llm_profiles:
   gemini-flash:
     provider: openai
     base_url: https://generativelanguage.googleapis.com/v1beta/openai/
-    api_key: ""           # 或通过 LLM_API_KEY 环境变量设置
+    api_key: ""
     model: gemini-3-flash-preview
     temperature: 0.7
     max_tokens: 8192
@@ -88,13 +87,13 @@ notification:
 telegram:
   # 连接模式: "bot" | "userbot"
   mode: bot
-  # Bot Token (bot 模式下使用，也可通过 TG_BOT_TOKEN 环境变量设置)
+  # Bot Token (bot 模式下使用)
   bot_token: ""
-  # API ID (userbot 模式下使用，也可通过 TG_API_ID 环境变量设置)
+  # API ID (bot / userbot 都需要)
   api_id: ""
-  # API Hash (userbot 模式下使用，也可通过 TG_API_HASH 环境变量设置)
+  # API Hash (bot / userbot 都需要)
   api_hash: ""
-  # 手机号 (userbot 模式下使用，也可通过 TG_PHONE 环境变量设置)
+  # 手机号 (userbot 模式下使用)
   phone: ""
 
 # ─── Reflection 设置 ───
@@ -176,13 +175,13 @@ embedding:
   # 提供者: openai (OpenAI 兼容 API) | local (本地 hash-based)
   provider: local
 
-  # API base URL（OpenAI 兼容，也可通过 EMBEDDING_BASE_URL 环境变量设置）
+  # API base URL（OpenAI 兼容）
   # base_url: https://api.openai.com/v1
 
-  # API key（也可通过 EMBEDDING_API_KEY 环境变量设置）
+  # API key
   # api_key: ""
 
-  # 模型名称（也可通过 EMBEDDING_MODEL 环境变量设置）
+  # 模型名称
   # model: text-embedding-3-small
 
   # 向量维度（local 默认 128，openai 默认 1536）
@@ -205,4 +204,3 @@ embedding:
   # model: bge-base-zh-v1.5
   # dimensions: 768
   # similarity_metric: dot_product
-

@@ -1,7 +1,7 @@
 /**
  * config.ts — 统一配置管理器
  *
- * 从 config.yaml 加载配置，支持环境变量覆盖。
+ * 从 config.yaml 加载配置。
  *
  * LLM 配置使用 Profile 体系：
  *   llm_profiles: 定义多个命名 LLM 配置
@@ -176,17 +176,6 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
         llmProfiles[name] = parseLLMProfile(raw);
     }
 
-    // 环境变量覆盖 → 注入到第一个 profile 或创建 "default"
-    const envOverride = buildEnvOverride();
-    if (envOverride) {
-        const firstName = Object.keys(llmProfiles)[0];
-        if (firstName) {
-            Object.assign(llmProfiles[firstName], envOverride);
-        } else {
-            llmProfiles["default"] = { ...DEFAULT_LLM, ...envOverride };
-        }
-    }
-
     if (Object.keys(llmProfiles).length === 0) {
         llmProfiles["default"] = { ...DEFAULT_LLM };
     }
@@ -248,11 +237,11 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
             description: str(filePersona.description) ?? "",
         },
         telegram: {
-            mode: (env("TG_MODE") as "bot" | "userbot") ?? (str(fileTG.mode) as "bot" | "userbot") ?? "bot",
-            botToken: env("TG_BOT_TOKEN") ?? str(fileTG.bot_token) ?? "",
-            apiId: env("TG_API_ID") ?? str(fileTG.api_id) ?? "",
-            apiHash: env("TG_API_HASH") ?? str(fileTG.api_hash) ?? "",
-            phone: env("TG_PHONE") ?? str(fileTG.phone) ?? "",
+            mode: (str(fileTG.mode) as "bot" | "userbot") ?? "bot",
+            botToken: str(fileTG.bot_token) ?? "",
+            apiId: str(fileTG.api_id) ?? "",
+            apiHash: str(fileTG.api_hash) ?? "",
+            phone: str(fileTG.phone) ?? "",
         },
         notification: {
             urgentWords: Array.isArray(fileNotification.urgent_words)
@@ -280,11 +269,6 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
         contextBudget: parsedContextBudget,
         embedding: parseEmbeddingConfig(fileConfig),
     };
-
-    injectEnv("TG_API_ID", config.telegram.apiId);
-    injectEnv("TG_API_HASH", config.telegram.apiHash);
-    injectEnv("TG_BOT_TOKEN", config.telegram.botToken);
-    injectEnv("TG_PHONE", config.telegram.phone);
 
     _cached = config;
     return config;
@@ -331,9 +315,9 @@ function parseEmbeddingConfig(fileConfig: Record<string, unknown>): EmbeddingCon
 
     const result: EmbeddingConfig = {
         provider: (str(raw.provider) as "openai" | "local") ?? DEFAULT_EMBEDDING.provider,
-        baseUrl: env("EMBEDDING_BASE_URL") ?? str(raw.base_url) ?? DEFAULT_EMBEDDING.baseUrl,
-        apiKey: env("EMBEDDING_API_KEY") ?? str(raw.api_key) ?? DEFAULT_EMBEDDING.apiKey,
-        model: env("EMBEDDING_MODEL") ?? str(raw.model) ?? DEFAULT_EMBEDDING.model,
+        baseUrl: str(raw.base_url) ?? DEFAULT_EMBEDDING.baseUrl,
+        apiKey: str(raw.api_key) ?? DEFAULT_EMBEDDING.apiKey,
+        model: str(raw.model) ?? DEFAULT_EMBEDDING.model,
         dimensions: raw.dimensions != null ? num(raw.dimensions, DEFAULT_EMBEDDING.dimensions) : DEFAULT_EMBEDDING.dimensions,
         similarityMetric: (str(raw.similarity_metric) as SimilarityMetric) ?? DEFAULT_EMBEDDING.similarityMetric,
     };
@@ -360,26 +344,6 @@ function parseLLMProfile(raw: Record<string, unknown>): LLMConfig {
     };
 }
 
-function buildEnvOverride(): Partial<LLMConfig> | null {
-    const parts: Partial<LLMConfig> = {};
-    let has = false;
-    const set = (k: keyof LLMConfig, v: string | number) => { (parts as any)[k] = v; has = true; };
-
-    const p = env("LLM_PROVIDER"); if (p) set("provider", p);
-    const u = env("LLM_BASE_URL"); if (u) set("baseUrl", u);
-    const k = env("LLM_API_KEY"); if (k) set("apiKey", k);
-    const m = env("LLM_MODEL"); if (m) set("model", m);
-    const t = env("LLM_TEMPERATURE"); if (t) set("temperature", Number(t));
-    const mt = env("LLM_MAX_TOKENS"); if (mt) set("maxTokens", Number(mt));
-
-    return has ? parts : null;
-}
-
-function env(key: string): string | undefined {
-    const val = process.env[key];
-    return val && val.trim() !== "" ? val : undefined;
-}
-
 function str(val: unknown): string | undefined {
     if (val === undefined || val === null || val === "") return undefined;
     return String(val);
@@ -389,10 +353,4 @@ function num(val: unknown, fallback: number): number {
     if (val === undefined || val === null) return fallback;
     const n = Number(val);
     return isNaN(n) ? fallback : n;
-}
-
-function injectEnv(key: string, value: string): void {
-    if (value && !process.env[key]) {
-        process.env[key] = value;
-    }
 }

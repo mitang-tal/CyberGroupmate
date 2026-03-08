@@ -477,10 +477,6 @@ const HELP = `
 环境变量:
   LOG_LEVEL=debug|info|warn|error   日志级别（默认: info）
   LOG_FORMAT=text|json              日志格式（默认: text）
-  LLM_API_KEY=...                   LLM API Key
-  TG_BOT_TOKEN=...                  Telegram Bot Token
-  TG_API_ID=...                     Telegram API ID
-  TG_API_HASH=...                   Telegram API Hash
 `;
 
 /**
@@ -506,7 +502,7 @@ async function cmdDryRun(args: string[]): Promise<void> {
     const chatIdArg = args.indexOf("--chat-id");
     const daysArg = args.indexOf("--days");
     const memoryDbArg = args.indexOf("--memory-db");
-    const chatId = chatIdArg >= 0 ? Number(args[chatIdArg + 1]) : 0;
+    const chatId = chatIdArg >= 0 ? String(args[chatIdArg + 1]) : "";
     const daysBack = daysArg >= 0 ? Number(args[daysArg + 1]) : 30;
     const reflect = args.includes("--reflect");
     const memoryDbPath = memoryDbArg >= 0 ? args[memoryDbArg + 1] : undefined;
