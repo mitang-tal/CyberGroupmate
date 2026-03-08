@@ -80,11 +80,11 @@
 | 6.2 | Recording Pipeline | ✅ 完成 | 50 条 / 2 分钟缓冲；强信号加速 |
 | 6.6 | Dry-Run System | ✅ 完成 | 历史回放验证 |
 | 6.7 | Model Router | ✅ 完成 | 规则驱动模型与模式路由 |
-| 6B.0 | Ingress Boundary Refactor | 🚧 进行中 | `nc.message` 标准化 schema 与 `PlatformAdapter` 抽象已落地，`FastRouter` 开始兼容统一消息层 |
-| 6.3 | Reply Pipeline Framework | 🚧 进行中 | `ReplyPipeline` 已落地，主循环开始消费 `ReplyTask`，正在补齐剩余路由与回写 |
-| 6.4 | Code-First Action Surface | 🚧 进行中 | sandbox 已注入 `actions` 命名空间，host-call 已桥接到 host memory/topic 上下文 |
-| 6.5 | Agent-Skill Runtime | 🚧 进行中 | sandbox 已注入最小 `skills.memory` / `skills.social` 代码技能表面，后续继续扩展 |
-| 6.6 | Feedback Loop | 🚧 进行中 | `system.agent_message_sent` → `FeedbackLoop` → `system.feedback_evaluated` 闭环已接通，正在继续细化评估策略 |
+| 6B.0 | Ingress Boundary Refactor | 🚧 进行中 | `nc.message` 标准化 schema、`PlatformAdapter` 抽象、全链路 string ID 迁移已完成；官方 `TelegramAdapter` 与 bootstrap 降责仍待收尾 |
+| 6.3 | Reply Pipeline Framework | ✅ 完成 | `ReplyPipeline` + `ReplyTask` 已接入主循环，覆盖 FAST_PATH / topic triage / engaged 三类任务 |
+| 6.4 | Code-First Action Surface | ✅ 完成 | sandbox 已注入 `actions.*`，host-call 已桥接 memory/topic/action 上下文 |
+| 6.5 | Agent-Skill Runtime | ✅ 完成 | sandbox 已注入代码型 `skills.memory` / `skills.social`，并由测试覆盖实际调用链 |
+| 6.6 | Feedback Loop | ✅ 完成 | `system.agent_message_sent` → `FeedbackLoop` → `system.feedback_evaluated` 闭环已接入主循环并有集成测试 |
 | 7.1 | Playbook System | 📝 规划中 | SOTA 行为知识下沉 |
 | 7.2 | Skill Auto-Generation | 📝 规划中 | 失败场景沉淀为可复用 skill |
 | 7.3 | CoT Template Distillation | 📝 规划中 | 典型推理模板下沉 |
@@ -915,6 +915,12 @@ Agent 获得能力的方式应该始终是：
 1. pipeline 不再要求 Telegram 风格 number id
 2. 至少对 Telegram 和模拟 Discord 数据都能跑通
 
+当前状态：
+
+1. 已完成：`pipeline/types.ts`、`TopicRegistry`、`FastRouter`、`RecordingPipeline`、`ReplyPipeline`、`Dry-Run`、`Memory V2` 的 canonical ID 全部迁移为 `string`
+2. 已完成：`message_log.message_id` / `reply_to_message_id` SQLite schema 改为 `TEXT`
+3. 已完成：相关测试数据、scene 类型定义、history browse 结果全部对齐为 string IDs
+
 #### Task 6B.0.5 — Bootstrap 降责
 
 内容：
@@ -947,6 +953,12 @@ Agent 获得能力的方式应该始终是：
 2. 不引入 tool use
 3. SOTA 模型仍保留完全自由写代码的能力
 
+当前状态：
+
+1. 已完成：`ReplyPipeline` 已能为 FAST_PATH、话题 triage、ENGAGED continuation 组装 `ReplyTask`
+2. 已完成：`main.ts` 主循环改为消费 `ReplyTask` 而不是直接消费原始事件批
+3. 已完成：`tests/phase6-chain.test.ts` 使用本地 fake OpenAI endpoint 跑通 `ReplyTask -> runCodeActSession -> sandbox` 主链
+
 #### Task 6.4 — Code-First Action Surface
 
 旧文档里的 “High-Level Action API” 在新架构下应重命名理解为：
@@ -970,6 +982,12 @@ actions.markTopicHandled(topicId)
 2. 可在 sandbox 中被代码直接调用
 3. 可组合、可调试、可测试
 4. 底层仍可退回原始 API，如 `ctx.tg.*`、`memory.*`
+
+当前状态：
+
+1. 已完成：sandbox worker 通过 host-call 桥接 `memory.recall()` / `memory.browseHistory()` / `memory.reflect()`
+2. 已完成：注入 `actions.getTopicContext()` / `actions.listActiveTopics()` / `actions.recallForTopic()`
+3. 已完成：home / memory / telegram scene `.d.ts` 已同步这些代码接口
 
 #### Task 6.5 — Agent-Skill Runtime
 
@@ -999,9 +1017,21 @@ skills.social.replyInGroup(...)
 2. skill 有类型定义和测试
 3. skill 调用结果与普通代码执行一样可观察、可报错、可调试
 
+当前状态：
+
+1. 已完成：sandbox 已注入 `skills.memory.recallAndSummarize()` / `skills.memory.browseForAnswer()`
+2. 已完成：sandbox 已注入 `skills.social.replyInTelegram()`，底层走 `ctx.tg.sendText()`
+3. 已完成：发送后会自动回写 `system.agent_message_sent`，供 Feedback Loop 消费
+
 #### Task 6.6 — Feedback Loop
 
 Feedback Loop 保持原计划，但它现在依赖的是已经接通的 Agent-Memory 闭环。
+
+当前状态：
+
+1. 已完成：主循环捕获 `system.agent_message_sent`
+2. 已完成：`FeedbackLoop` 会写入 interaction、更新 `group_models`，并推送 `system.feedback_evaluated`
+3. 已完成：有独立测试与 Phase 6 主链集成测试覆盖
 
 | Task | 内容 | 依赖 | 估时 |
 |------|------|------|------|
