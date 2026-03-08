@@ -12,6 +12,7 @@
 - Agent 不再在 bootstrap 里自己连接 Telegram、自己挂 listener
 - bootstrap 只负责理解系统、加载文档、做幂等初始化
 - 所有能力继续坚持 code-first：不用 tool calling，Agent 通过代码接口、`actions.*`、`skills.*` 行动
+- `ReplyPipeline` 现在会自动注入 `Scene Focus + Latent Memory`，让 Memory V2 以“潜意识上下文”的方式参与决策
 
 ## 当前状态
 
@@ -64,6 +65,7 @@ FastRouter
 ReplyPipeline
   - build ReplyTask
   - inject topic / recall / route context
+  - inject Scene Focus / Latent Memory
         │
         ▼
 CodeAct Session
@@ -173,6 +175,14 @@ LOG_LEVEL=debug npm start
 
 - 即使 Agent bootstrap 还没做任何平台连接代码，消息也会被记录进 [events.jsonl](/mnt/g/Projects/CyberGroupmate/workspace/events.jsonl)
 - 事件类型应该是 `nc.message`
+- 事件里应该明确包含来源身份，例如：
+  - `scene`
+  - `source.platform`
+  - `source.chatId`
+  - `source.userId`
+  - `source.messageId`
+  - `chatType`
+  - `isDirectMessage`
 - Agent 不需要 `runtime.spawn("tg-listener", ...)`
 
 可辅助执行：
@@ -198,6 +208,11 @@ npx tsx src/cli.ts drain
 - Agent 发送消息时，不需要自己创建 Telegram client
 - 发送通过宿主侧 `ctx.tg` host proxy 完成
 - 发言后反馈会进入 `FeedbackLoop`
+- 首轮 prompt 里应能看到：
+  - `Scene Focus`
+  - `Latent Memory`
+  - 紧凑消息摘要，例如：
+    - `[telegram/private] 莫思奇多 (u:682932098 c:682932098 m:1354) 3分钟前: 在吗在吗`
 
 ### C. 验证 Memory V2 在写入
 
@@ -228,6 +243,8 @@ npx tsx src/cli.ts memory status
 - `person_group_profiles`
 - `group_models`
 
+这些表中的内容现在不只供 Agent 主动 `memory.recall()`，还会在 ReplyPipeline 命中目标 chat 时被自动摘要注入上下文。
+
 ### D. 验证 bootstrap 已经降责
 
 看这些文件：
@@ -241,6 +258,24 @@ npx tsx src/cli.ts memory status
 - 不再要求 Agent “连接 Telegram”
 - 不再要求 Agent “自己设置监听”
 - 文档明确说明 `ctx.tg` 是系统注入的 host proxy
+
+### E. 验证 Scene Focus / Latent Memory 自动注入
+
+1. 用一个已有记忆的会话继续和 bot / userbot 对话
+2. 使用 `LOG_LEVEL=debug npm start`
+3. 观察首轮 session prompt
+
+预期：
+
+- 会出现 `[Scene Focus]`
+- 会出现 `[Latent Memory]`
+- 内容优先来自：
+  - `person_identities`
+  - `person_group_profiles`
+  - `group_models`
+  - 近 7 天相关 topics
+- scene 仍然只是 `telegram` / `memory` / `home`
+- 不会出现动态 scene 名如 `telegram/682932098`
 
 ## CLI
 
@@ -320,6 +355,8 @@ npx tsx --test \
   - 话题聚类、Triage、记忆落盘
 - [reply-pipeline.ts](/mnt/g/Projects/CyberGroupmate/src/pipeline/reply-pipeline.ts)
   - Agent-Memory bridge
+- [context-assembler.ts](/mnt/g/Projects/CyberGroupmate/src/pipeline/context-assembler.ts)
+  - 自动组装 `Scene Focus / Latent Memory`
 - [memory-v2.ts](/mnt/g/Projects/CyberGroupmate/src/memory-v2/memory-v2.ts)
   - SQLite 记忆存储
 - [sandbox-worker.ts](/mnt/g/Projects/CyberGroupmate/src/sandbox/sandbox-worker.ts)
@@ -340,6 +377,7 @@ npx tsx --test \
 1. 平台消息是否先进入官方 adapter
 2. `NotificationCenter` 是否成为统一入口
 3. Agent 是否只通过代码接口理解、检索、回复
-4. Reply / Memory / Feedback 闭环是否能真实跑通
+4. Memory 是否既能被主动 recall，也能以潜意识上下文自动注入
+5. Reply / Memory / Feedback 闭环是否能真实跑通
 
 当前 README 就是按这条验收线组织的。  

@@ -81,7 +81,7 @@
 | 6.6 | Dry-Run System | ✅ 完成 | 历史回放验证 |
 | 6.7 | Model Router | ✅ 完成 | 规则驱动模型与模式路由 |
 | 6B.0 | Ingress Boundary Refactor | 🚧 进行中 | `nc.message` 标准化 schema、`PlatformAdapter` 抽象、全链路 string ID 迁移、官方 `TelegramAdapter`、bootstrap 降责已落地；仍需继续扩展更多 adapter / ingress 测试 |
-| 6.3 | Reply Pipeline Framework | ✅ 完成 | `ReplyPipeline` + `ReplyTask` 已接入主循环，覆盖 FAST_PATH / topic triage / engaged 三类任务 |
+| 6.3 | Reply Pipeline Framework | ✅ 完成 | `ReplyPipeline` + `ReplyTask` 已接入主循环，覆盖 FAST_PATH / topic triage / engaged 三类任务；`ContextAssembler` 已把 `Scene Focus / Latent Memory` 自动注入首轮上下文 |
 | 6.4 | Code-First Action Surface | ✅ 完成 | sandbox 已注入 `actions.*`，host-call 已桥接 memory/topic/action 上下文 |
 | 6.5 | Agent-Skill Runtime | ✅ 完成 | sandbox 已注入代码型 `skills.memory` / `skills.social`，并由测试覆盖实际调用链 |
 | 6.6 | Feedback Loop | ✅ 完成 | `system.agent_message_sent` → `FeedbackLoop` → `system.feedback_evaluated` 闭环已接入主循环并有集成测试 |
@@ -230,7 +230,7 @@ Agent 仍然可以探索平台接入，但那属于**实验扩展能力**，不�
    - Engaged Topic Handler
    - Recording Pipeline 缓冲
 5. `Recording Pipeline` 批量提取话题、摘要、Triage、写入记忆
-6. `Reply Pipeline` 将话题级判断转换为可执行的 Agent 输入
+6. `Reply Pipeline` / `ContextAssembler` 将话题级判断和潜意识记忆转换为可执行的 Agent 输入
 7. Agent 在 sandbox 中通过 CodeAct 消费这些输入，调用代码接口与 skill 模块完成感知、检索、思考与行动
 8. `Feedback Loop` 追踪发言后的后效
 
@@ -390,8 +390,20 @@ interface NCMessageEventPayload {
   replyToMessageId?: string;
   threadId?: string;
   chatTitle?: string;
+  chatType?: string;
   isDirectMessage?: boolean;
   mentionsAgent?: boolean;
+
+  source?: {
+    scene: string;
+    platform: string;
+    chatId: string;
+    userId: string;
+    chatType?: string;
+    messageId?: string;
+    replyToMessageId?: string;
+    threadId?: string;
+  };
 
   // 富媒体和扩展字段
   attachments?: Array<{
@@ -412,6 +424,7 @@ interface NCMessageEventPayload {
 3. 平台专有信息只能进入 `platformData`
 4. 框架内部组件不得依赖平台原始对象
 5. **每条消息通知都必须能让 Agent 明确知道“这是哪个 scene 发来的”**
+6. **每条消息通知都必须显式携带来源身份，而不是要求后续模块再猜它属于哪个 chat / user / chatType**
 
 ### 6.4 其他事件类型
 
@@ -590,7 +603,7 @@ Memory V2 继续作为统一记忆系统，职责包括：
 2. scene 是一级索引维度
 3. `chat_id` / `user_id` / `message_id` 一律为 `TEXT`
 
-### 8.6 Reply Pipeline
+### 8.6 Reply Pipeline + ContextAssembler
 
 Reply Pipeline 仍然负责三种模式：
 
@@ -603,9 +616,40 @@ Reply Pipeline 仍然负责三种模式：
 它的真正职责是把 Memory / Pipeline 侧的结构化输出，桥接成 Agent 侧可执行的输入：
 
 1. 接收 topic、summary、triage、memory_context、scene 信息
-2. 决定这次交给 Agent 的自由度等级
-3. 以 prompt + typed API + 代码能力表面的形式，把任务交给 CodeAct
-4. 保证即使在 `Guided` / `Enforced` 模式下，也仍然是“生成并执行代码”，而不是切换到外部 tool use
+2. 通过 `ContextAssembler` 自动读取与当前目标 chat 相关的潜意识记忆
+3. 决定这次交给 Agent 的自由度等级
+4. 以 prompt + typed API + 代码能力表面的形式，把任务交给 CodeAct
+5. 保证即使在 `Guided` / `Enforced` 模式下，也仍然是“生成并执行代码”，而不是切换到外部 tool use
+
+`ContextAssembler` 是桥接层组件，不属于 adapter，也不属于 Agent。它负责把下列 Memory V2 信息自动注入：
+
+- `person_identities`
+- `person_group_profiles`
+- `group_models`
+- 近 7 天相关 `topics`
+- 当前 task 的 recent context / incoming messages
+
+其输出应至少分成两块：
+
+1. `Scene Focus`
+2. `Latent Memory`
+
+例如：
+
+```text
+[Scene Focus]
+scene=telegram chat=682932098 type=private target=莫思奇多
+recent:
+- [telegram/private] 莫思奇多: 在吗在吗
+
+[Latent Memory]
+identities=莫思奇多 (user:682932098, aliases:mozzie)
+profiles=tier=2; relation=熟人; style=简洁直接
+group=title=莫思奇多私聊; engagement=high; agentRole=技术搭子
+recentTopics=Phase 6 / TelegramAdapter
+```
+
+这里的“潜意识”不是把 `memory.md` 或原始数据库原样塞给 Agent，而是把框架已经整理好的、与当前 chat 强相关的摘要自动注入。
 
 ### 8.7 Feedback Loop
 
@@ -654,6 +698,20 @@ Feedback Loop 也只消费标准化事件与系统动作结果：
 - 增加一组动作能力
 
 不代表平台接入已经完成。
+
+同时，不应把 scene 膨胀成：
+
+- `telegram/-100123`
+- `telegram/-100456`
+- `telegram/682932098`
+
+正确做法是：
+
+- scene 仍然是 `telegram`
+- 目标 chat 通过 `Scene Focus` 表达
+- 当 Agent 进入 scene 时，框架继续自动注入该目标 chat 的最近上下文和潜意识记忆
+
+也就是说，真正需要按 chat 变化的不是 scene 名，而是 scene 的 focus / target context。
 
 ### 9.3 `ctx` 的角色
 
@@ -1162,6 +1220,7 @@ Feedback Loop 保持原计划，但它现在依赖的是已经接通的 Agent-Me
 2. 保留实验 adapter 能力
 3. 强调 CodeAct 主体地位不变：Reply Pipeline 只是给它更好的输入
 4. 强化代码形式的 Action API、Scene、Docs、Memory 能力
+5. 明确 Memory V2 不只是“主动 recall 的数据库”，还承担自动注入潜意识上下文的职责
 
 ### 16.4 风险：Discord 等未来平台被低估
 
