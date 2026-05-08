@@ -396,8 +396,10 @@ export interface GroupContextPackage {
             description?: string;
         }>;
     }>;
-    /** 人物背景（通常由 activeUserProfiles 序列化后交给 provider 渲染） */
+    /** 人物背景（通常由 activeUserProfiles 序列化后交给 provider 渲染；兼容旧任务） */
     personContext?: string;
+    /** Meta 派发时附带的普通任务上下文，例如 topic/avoid，不应当作人物背景渲染 */
+    dispatchContext?: string;
     /** 语气指导 */
     toneGuidance?: string;
     /** 回复方向 */

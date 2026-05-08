@@ -95,20 +95,33 @@ function parsePersonContext(text: string): ExecutorPersonContextData {
     try {
         const parsed = JSON.parse(trimmed);
         if (Array.isArray(parsed)) {
-            const profiles = parsed.filter(
+            const objectProfiles = parsed.filter(
                 (item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item)
             );
-            if (profiles.length === parsed.length) {
+            if (objectProfiles.length === parsed.length) {
+                const profiles = objectProfiles.filter(isRenderablePersonProfile);
                 return { mode: "profiles", profiles, rawText: trimmed };
             }
         } else if (parsed && typeof parsed === "object") {
-            return { mode: "profiles", profiles: [parsed as Record<string, unknown>], rawText: trimmed };
+            const profile = parsed as Record<string, unknown>;
+            if (isRenderablePersonProfile(profile)) {
+                return { mode: "profiles", profiles: [profile], rawText: trimmed };
+            }
+            return { mode: "profiles", profiles: [], rawText: trimmed };
         }
     } catch {
         // 非 JSON 背景文本仍保留原样渲染，并退化为整块比较。
     }
 
     return { mode: "raw", profiles: [], rawText: trimmed };
+}
+
+function isRenderablePersonProfile(profile: Record<string, unknown>): boolean {
+    return [
+        profile.userLabel,
+        profile.displayName,
+        profile.userId,
+    ].some(value => typeof value === "string" && value.trim().length > 0);
 }
 
 function getPersonContextKey(profile: Record<string, unknown>, index: number): string {
@@ -201,7 +214,11 @@ function renderPersonContextBody(data: ExecutorPersonContextData): string {
     if (data.mode !== "profiles") {
         return data.rawText;
     }
-    return data.profiles.map(renderPersonProfileMarkdown).join("\n\n");
+    return data.profiles
+        .filter(isRenderablePersonProfile)
+        .map(renderPersonProfileMarkdown)
+        .filter(text => text.trim().length > 0)
+        .join("\n\n");
 }
 
 function renderPersonContextGuidance(): string[] {
@@ -407,7 +424,15 @@ export const executorPersonContextProvider: SectionProvider<ExecutorPersonContex
         history: "delta-only",
     },
     resolve(ctx: ExecutorResolveContext) {
-        return ctx.personContext ? parsePersonContext(ctx.personContext) : null;
+        if (!ctx.personContext) return null;
+        const parsed = parsePersonContext(ctx.personContext);
+        if (parsed.mode === "profiles" && parsed.profiles.length === 0) {
+            return null;
+        }
+        if (parsed.mode === "raw" && !parsed.rawText.trim()) {
+            return null;
+        }
+        return parsed;
     },
     diff(current, committed): DiffResult<ExecutorPersonContextData> {
         if (!committed) {

@@ -7,6 +7,7 @@ import type { ActiveUserProfile, GroupContextPackage, CodeActReplyTask } from ".
 import type { MemoryStoreV2 } from "../../memory-v2/index.js";
 import type { GlobalState } from "../../main-agent/global-state.js";
 import type { SubagentManager } from "../../subagent/subagent-manager.js";
+import { getGroupModelKey } from "../../core/chat-id.js";
 
 export interface DispatchTrackingSpec {
     key?: string;
@@ -88,6 +89,7 @@ export function createDispatchApi(deps: DispatchApiDeps) {
                     reason: "Meta-CodeAct dispatch",
                 }],
                 contextSnapshot: buildDispatchContext(
+                    deps.memory,
                     chatId,
                     taskSpec,
                     groundingContext,
@@ -165,19 +167,26 @@ async function maybeRunGrounding(
 }
 
 function buildDispatchContext(
+    memory: MemoryStoreV2,
     chatId: string,
     taskSpec: DispatchTaskSpec,
     groundingContext?: string,
     activeUserProfiles?: ActiveUserProfile[],
 ): GroupContextPackage {
+    const groupModel = typeof memory.getGroupModel === "function"
+        ? memory.getGroupModel(getGroupModelKey(chatId))
+        : null;
     return {
         depth: 2,
         chatId,
         snapshotTimestamp: new Date().toISOString(),
         topicDigests: [],
         engagementScore: 0,
+        groupModel: groupModel ?? undefined,
+        chatTitle: groupModel?.chatTitle,
+        isDirectMessage: groupModel?.isDirectMessage,
         activeUserProfiles: activeUserProfiles && activeUserProfiles.length > 0 ? activeUserProfiles : undefined,
-        personContext: taskSpec.context ? JSON.stringify(taskSpec.context) : undefined,
+        dispatchContext: taskSpec.context ? JSON.stringify(taskSpec.context) : undefined,
         toneGuidance: taskSpec.toneGuidance,
         contentDirection: taskSpec.contentDirection,
         groundingContext,

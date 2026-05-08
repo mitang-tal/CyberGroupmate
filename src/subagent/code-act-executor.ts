@@ -12,6 +12,7 @@
  */
 
 import type {
+    ActiveUserProfile,
     CodeActReplyTask,
     SubagentCallback,
 } from "./types.js";
@@ -100,6 +101,34 @@ function formatDispatchContextForPrompt(rawContext: string): string {
         ].join("\n");
     } catch {
         return `## 派发附加上下文\n${trimmed}`;
+    }
+}
+
+function hasProfileIdentity(value: unknown): value is Record<string, unknown> {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const profile = value as Record<string, unknown>;
+    return [profile.userLabel, profile.displayName, profile.userId]
+        .some(field => typeof field === "string" && field.trim().length > 0);
+}
+
+function sanitizeActiveUserProfiles(profiles: unknown): ActiveUserProfile[] {
+    return Array.isArray(profiles)
+        ? profiles.filter((profile): profile is ActiveUserProfile => hasProfileIdentity(profile))
+        : [];
+}
+
+function looksLikePersonProfileContext(rawContext: string | undefined): boolean {
+    const trimmed = rawContext?.trim();
+    if (!trimmed) return false;
+
+    try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+            return parsed.some(hasProfileIdentity);
+        }
+        return hasProfileIdentity(parsed);
+    } catch {
+        return true;
     }
 }
 
@@ -540,16 +569,22 @@ export class CodeActExecutor {
                         : "",
                 ].filter(Boolean).join("\n\n")
                 : "";
-            const activeProfilesContext = ctx.activeUserProfiles?.length
-                ? JSON.stringify(ctx.activeUserProfiles)
+            const activeUserProfiles = sanitizeActiveUserProfiles(ctx.activeUserProfiles);
+            const activeProfilesContext = activeUserProfiles.length
+                ? JSON.stringify(activeUserProfiles)
                 : "";
-            const dispatchContextText = activeProfilesContext && ctx.personContext
-                ? formatDispatchContextForPrompt(ctx.personContext)
+            const legacyPersonContext = typeof ctx.personContext === "string" ? ctx.personContext : undefined;
+            const legacyIsPersonContext = looksLikePersonProfileContext(legacyPersonContext);
+            const dispatchContextRaw = typeof ctx.dispatchContext === "string"
+                ? ctx.dispatchContext
+                : (activeProfilesContext || !legacyIsPersonContext ? legacyPersonContext : undefined);
+            const dispatchContextText = dispatchContextRaw
+                ? formatDispatchContextForPrompt(dispatchContextRaw)
                 : "";
             const memoryContextText = [explicitMemoryContextText, dispatchContextText].filter(Boolean).join("\n\n");
 
             // personContext: Meta 侧构造 activeUserProfiles；这里交给 provider 做 delta 与 Markdown 渲染
-            const personContext = activeProfilesContext || ctx.personContext || "";
+            const personContext = activeProfilesContext || (legacyIsPersonContext ? legacyPersonContext : "");
 
             // 3. 消息富化：媒体处理 + 格式化（委托 message-enricher）
             const recentMessages = ctx.recentMessages ?? [];
@@ -1112,6 +1147,7 @@ export class CodeActExecutor {
                 executionCount: this.executionCount,
                 lastCompactedAt: this.lastCompactedAt,
                 lastAgentReplyAt: this.lastAgentReplyAt,
+                contextLedger: this.contextEngine.ledger.toSnapshot(),
                 savedAt: new Date().toISOString(),
             };
 
@@ -1162,6 +1198,7 @@ export class CodeActExecutor {
             this.executionCount = typeof state.executionCount === "number" ? state.executionCount : 0;
             this.lastCompactedAt = state.lastCompactedAt ?? null;
             this.lastAgentReplyAt = typeof state.lastAgentReplyAt === "number" ? state.lastAgentReplyAt : 0;
+            this.contextEngine.ledger.loadSnapshot(state.contextLedger);
 
             log.info("loadSession: 已恢复", {
                 chatId: this.chatId,

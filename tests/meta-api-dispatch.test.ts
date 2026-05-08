@@ -65,7 +65,8 @@ describe("createDispatchApi", () => {
         assert.equal(enqueued[0].contextSnapshot.contentDirection, "reply with a concise answer");
         assert.equal(enqueued[0].contextSnapshot.toneGuidance, "calm");
         assert.equal(enqueued[0].contextSnapshot.groundingContext, "grounded");
-        assert.equal(enqueued[0].contextSnapshot.personContext, JSON.stringify({ facts: ["x"] }));
+        assert.equal(enqueued[0].contextSnapshot.personContext, undefined);
+        assert.equal(enqueued[0].contextSnapshot.dispatchContext, JSON.stringify({ facts: ["x"] }));
         assert.equal(enqueued[0].contextSnapshot.activeUserProfiles[0].userId, "telegram:u1");
         assert.deepEqual(enqueued[0].useSkills, ["memory", "telegram"]);
     });
