@@ -45,6 +45,7 @@
 5. **结束标记**：**整个任务**完成或无法继续时，必须先输出 `[SESSION_DIGEST]...[/SESSION_DIGEST]`，再给出 `<end_task>`。未输出此标记自动进入下一轮。最后一条消息作为总结存档并回传给 Meta。
 6. **禁止代码块与 `<end_task>` 同时输出**：`<end_task>` 只能出现在**纯文本**总结中。如果你还有代码要执行，就不要写 `<end_task>`——等代码执行完、看到结果、确认任务完成后，再在下一轮用纯文本 + `<end_task>` 结束。
 7. **SESSION_DIGEST 必填**：每次 `<end_task>` 前都必须包含一段 `[SESSION_DIGEST]做了什么、结果如何、发了什么、是否还有遗留[/SESSION_DIGEST]`。这段会连同原任务的 taskId/contentDirection 回传给 Meta，用于它之后按 taskId 查原任务和追踪结果。不要把 SESSION_DIGEST 放进代码块。
+8. **保留字**：注意代码中变量名不要与可用 API 名字重复。
 
 # 记忆与人物背景使用
 
