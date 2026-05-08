@@ -13,6 +13,15 @@ interface MemoryModule {
         category: string;
         content: string;
         confidence: number;
+        sourceChatId?: string | null;
+        sourceChatTitle?: string | null;
+        sourceTopicId?: string | null;
+        sourceTopicLabel?: string | null;
+        sourceMessageIds?: string[];
+        sourceInteractionIds?: string[];
+        observedAt?: string | null;
+        visibility?: "private" | "contextual" | "public";
+        sensitivity?: "low" | "medium" | "high";
         updatedAt: string;
     }>>;
 
@@ -55,24 +64,64 @@ interface MemoryModule {
             username?: string;
             aliases: string[];
         } | null;
+        globalProfile: {
+            traits: string[];
+            interests: string[];
+            communicationStyle: string;
+            relationToAgent: string;
+            stablePatterns: string[];
+            agentPolicyHints: string[];
+            followupCandidates: string[];
+            sourceChatIds: string[];
+            confidence: number;
+        } | null;
         groupProfile: {
             dunbarTier: number;
             affinityScore: number;
             traits: string[];
+            interests: string[];
             communicationStyle: string;
             relationToAgent: string;
+            recentEpisodes: Array<{
+                date: string;
+                type: string;
+                summary: string;
+                topicLabel?: string;
+                evidence?: string[];
+                agentOutcome?: string;
+                confidence?: number;
+            }>;
+            mergedMemory: Array<{
+                periodStart: string;
+                periodEnd: string;
+                granularity: string;
+                relationshipTrend: string;
+                highlights: string[];
+                stablePatterns?: string[];
+                agentPolicyHints?: string[];
+                followupCandidates?: string[];
+            }>;
         } | null;
         recentFacts: Array<{
             factId: string;
             category: string;
             content: string;
+            sourceChatId?: string | null;
+            sourceChatTitle?: string | null;
+            sourceTopicLabel?: string | null;
+            observedAt?: string | null;
+            visibility?: "private" | "contextual" | "public";
+            sensitivity?: "low" | "medium" | "high";
         }>;
     }>;
 
     getRecentInteractions(chatId?: string, userId?: string, limit?: number): Promise<Array<{
         timestamp: string;
         chatId: string;
+        chatLabel?: string;
         userId: string;
+        displayName?: string;
+        userLabel?: string;
         type: string;
         summary: string;
         sentiment: string;

@@ -14,9 +14,8 @@
 import type {
     CodeActReplyTask,
     SubagentCallback,
-    GroupContextPackage,
 } from "./types.js";
-import type { MemoryStoreV2 } from "../memory-v2/index.js";
+import type { FactSearchResult, InteractionSearchResult, MemoryStoreV2 } from "../memory-v2/index.js";
 import { SandboxPool } from "../sandbox/sandbox-pool.js";
 import { NotificationCenter } from "../event/notification-center.js";
 import { runCodeActSession, SentMessageCollector, type SessionResult, type SentMessageRecord } from "../sandbox/session-runner.js";
@@ -34,7 +33,7 @@ import { enrichMessages, formatMessageLine, resolveReplyText } from "../core/mes
 import type { MediaDownloader } from "../core/media-downloader.js";
 import type { ChatMessage } from "../core/llm.js";
 import { createLogger } from "../core/logger.js";
-import { getRawId, ensureCompositeId, getPlatform } from "../core/chat-id.js";
+import { getRawId, ensureCompositeId, getPlatform, getGroupModelKey } from "../core/chat-id.js";
 import type { GlobalState } from "../main-agent/global-state.js";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -43,6 +42,66 @@ import { shouldCompact, compact as contextManagerCompact } from "../memory-v2/co
 import { formatTsForDisplay } from "../core/timezone.js";
 
 const log = createLogger("code-act-executor");
+
+type PromptFact = FactSearchResult & {
+    displayName?: string;
+    subjectLabel?: string;
+    sourceChatLabel?: string;
+};
+
+type PromptInteraction = InteractionSearchResult & {
+    displayName?: string;
+    userLabel?: string;
+    chatLabel?: string;
+};
+
+function formatUserLabel(memory: MemoryStoreV2 | undefined, userId: string, fallbackName?: string): string {
+    const identity = memory?.getPersonIdentity(userId);
+    const name = identity?.displayName?.trim() || fallbackName?.trim() || userId;
+    return `${name}(${userId})`;
+}
+
+function formatChatLabel(memory: MemoryStoreV2 | undefined, chatId: string, fallbackTitle?: string | null): string {
+    const model = memory?.getGroupModel(getGroupModelKey(chatId));
+    const title = model?.chatTitle?.trim() || fallbackTitle?.trim() || chatId;
+    return `${title}(${chatId})`;
+}
+
+function formatFactForPrompt(fact: PromptFact, memory: MemoryStoreV2 | undefined): string {
+    const subject = fact.subjectLabel ?? formatUserLabel(memory, fact.subject, fact.displayName);
+    const source = fact.sourceChatId
+        ? formatChatLabel(memory, fact.sourceChatId, fact.sourceChatTitle)
+        : fact.sourceChatLabel ?? fact.sourceChatTitle ?? undefined;
+    const sourceParts = [
+        source ? `来源: ${source}` : "",
+        fact.sourceTopicLabel ? `话题: ${fact.sourceTopicLabel}` : "",
+        fact.observedAt ? `观察时间: ${fact.observedAt}` : "",
+        fact.visibility ? `visibility=${fact.visibility}` : "",
+        fact.sensitivity ? `sensitivity=${fact.sensitivity}` : "",
+    ].filter(Boolean).join("；");
+    return `- [${subject} · ${fact.category}] ${fact.content}${sourceParts ? ` (${sourceParts})` : ""}`;
+}
+
+function formatInteractionForPrompt(item: PromptInteraction, memory: MemoryStoreV2 | undefined): string {
+    const user = item.userLabel ?? formatUserLabel(memory, item.userId, item.displayName);
+    const source = item.chatLabel ?? formatChatLabel(memory, item.chatId);
+    return `- [${item.timestamp}] ${user} @ ${source}: ${item.summary} (${item.sentiment}, type=${item.type}, significance=${item.significance})`;
+}
+
+function formatDispatchContextForPrompt(rawContext: string): string {
+    const trimmed = rawContext.trim();
+    if (!trimmed) return "";
+    try {
+        return [
+            "## 派发附加上下文",
+            "```json",
+            JSON.stringify(JSON.parse(trimmed), null, 2),
+            "```",
+        ].join("\n");
+    } catch {
+        return `## 派发附加上下文\n${trimmed}`;
+    }
+}
 
 // ─── API 概览缓存 ───
 const _apiBriefCache = new Map<string, string>();
@@ -468,62 +527,29 @@ export class CodeActExecutor {
             const topicSummary = ctx.topicSummary ?? "";
             const toneGuidance = ctx.toneGuidance ?? "";
             const memoryContext = task.memoryContext;
-            const memoryContextText = memoryContext
+            const explicitMemoryContextText = memoryContext
                 ? [
                     memoryContext.facts.length
-                        ? `## 相关事实\n${memoryContext.facts.map((fact) => `- [${fact.displayName ?? fact.subject} · ${fact.category}] ${fact.content}`).join("\n")}`
+                        ? `## 相关事实\n${memoryContext.facts.map((fact) => formatFactForPrompt(fact, this.memory ?? undefined)).join("\n")}`
                         : "",
                     memoryContext.topics.length
-                        ? `## 相关历史话题\n${memoryContext.topics.map((topic) => `- [${topic.startedAt}] ${topic.label} — ${topic.summary} (topicId: ${topic.topicId})`).join("\n")}`
+                        ? `## 相关历史话题\n${memoryContext.topics.map((topic) => `- [${topic.startedAt}] ${topic.label} — ${topic.summary} (topicId: ${topic.topicId}; 来源: ${formatChatLabel(this.memory ?? undefined, topic.chatId)})`).join("\n")}`
                         : "",
                     memoryContext.interactions.length
-                        ? `## 近期互动\n${memoryContext.interactions.map((item) => `- [${item.timestamp}] ${(item as any).displayName ?? item.userId}: ${item.summary} (${item.sentiment})`).join("\n")}`
+                        ? `## 近期互动\n${memoryContext.interactions.map((item) => formatInteractionForPrompt(item, this.memory ?? undefined)).join("\n")}`
                         : "",
                 ].filter(Boolean).join("\n\n")
                 : "";
+            const activeProfilesContext = ctx.activeUserProfiles?.length
+                ? JSON.stringify(ctx.activeUserProfiles)
+                : "";
+            const dispatchContextText = activeProfilesContext && ctx.personContext
+                ? formatDispatchContextForPrompt(ctx.personContext)
+                : "";
+            const memoryContextText = [explicitMemoryContextText, dispatchContextText].filter(Boolean).join("\n\n");
 
-            // personContext: dispatch-handler 留空，此处从 recentMessages 发言者查询 memory
-            let personContext = ctx.personContext ?? "";
-            if (!personContext && ctx.activeUserProfiles?.length) {
-                personContext = JSON.stringify(ctx.activeUserProfiles);
-            }
-            if (!personContext && this.memory && ctx.recentMessages && ctx.recentMessages.length > 0) {
-                try {
-                    const senderNames = ctx.recentMessages.map(m => m.sender);
-                    const uniqueSenders = [...new Set(senderNames)].slice(0, 10);
-                    // 通过 getProfilesForChat 获取群内画像，按 displayName 匹配发言者
-                    const allProfiles = this.memory.getProfilesForChat(this.chatId);
-                    const relevantProfiles: any[] = [];
-                    for (const name of uniqueSenders) {
-                        // 先找 identity（按 displayName 匹配）
-                        const profile = allProfiles.find((p: any) =>
-                            p.userId && this.memory!.getPersonIdentity(p.userId)?.displayName === name
-                        );
-                        if (profile) {
-                            const identity = this.memory.getPersonIdentity(profile.userId);
-                            const rawId = getRawId(profile.userId);
-                            const username = identity?.username ?? undefined;
-                            const mention = this.formatMentionFn?.(rawId, username);
-                            relevantProfiles.push({
-                                displayName: identity?.displayName ?? name,
-                                aliases: identity?.aliases ?? [],
-                                userId: rawId,
-                                ...(mention ? { mention } : {}),
-                                dunbarTier: profile.dunbarTier,
-                                traits: profile.traits,
-                                interests: profile.interests,
-                                communicationStyle: profile.communicationStyle,
-                                relationToAgent: profile.relationToAgent,
-                            });
-                        }
-                    }
-                    if (relevantProfiles.length > 0) {
-                        personContext = JSON.stringify(relevantProfiles);
-                    }
-                } catch (err) {
-                    log.debug("personContext 查询失败", { chatId: this.chatId, error: String(err) });
-                }
-            }
+            // personContext: Meta 侧构造 activeUserProfiles；这里交给 provider 做 delta 与 Markdown 渲染
+            const personContext = activeProfilesContext || ctx.personContext || "";
 
             // 3. 消息富化：媒体处理 + 格式化（委托 message-enricher）
             const recentMessages = ctx.recentMessages ?? [];

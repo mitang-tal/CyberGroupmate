@@ -674,7 +674,7 @@ describe("Executor Providers", () => {
         assert.ok(rendered.includes("Alice"));
     });
 
-    it("personContext provider 使用 delta-only history 且渲染为紧凑 JSON", () => {
+    it("personContext provider 使用 delta-only history 且渲染为 Markdown", () => {
         assert.equal(executorPersonContextProvider.schema.history, "delta-only");
         assert.equal(executorPersonContextProvider.schema.cache, "delta");
 
@@ -687,8 +687,9 @@ describe("Executor Providers", () => {
         const data = executorPersonContextProvider.resolve(ctx);
         assert.ok(data);
         const rendered = executorPersonContextProvider.render(data);
-        assert.ok(rendered.includes('[{"userId":"u1","displayName":"Alice","traits":["冷静","直接"]}]'));
-        assert.ok(!rendered.includes("\n  {"), "人物背景应改为紧凑 JSON");
+        assert.ok(rendered.includes("### Alice(u1)"));
+        assert.ok(rendered.includes("- 稳定特征: 冷静、直接"));
+        assert.ok(!rendered.includes('{"userId"'), "人物背景不应直接暴露 JSON");
     });
 
     it("topicSummary provider 使用 ephemeral history", () => {

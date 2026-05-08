@@ -20,12 +20,21 @@ import type { SnapshotMessage } from "../memory-v2/message-snapshot.js";
 export interface ActiveUserProfile {
     userId: string;
     displayName: string;
+    userLabel?: string;
+    currentChatLabel?: string;
     aliases: string[];
     dunbarTier?: 1 | 2 | 3 | 4;
     rapport?: number;
     traits?: string[];
+    interests?: string[];
     communicationStyle?: string;
     relationToAgent?: string;
+    globalRelationToAgent?: string;
+    currentRelationToAgent?: string;
+    relationshipMemory?: string[];
+    agentPolicyHints?: string[];
+    stablePatterns?: string[];
+    followupCandidates?: string[];
     messageCount: number;
     mention?: string;
     username?: string;
@@ -38,9 +47,9 @@ export interface MemoryHints {
 }
 
 export interface AdditionalMemoryContext {
-    facts: Array<FactSearchResult & { displayName?: string }>;
+    facts: Array<FactSearchResult & { displayName?: string; subjectLabel?: string; sourceChatLabel?: string }>;
     topics: TopicSearchResult[];
-    interactions: Array<InteractionSearchResult & { displayName?: string }>;
+    interactions: Array<InteractionSearchResult & { displayName?: string; userLabel?: string; chatLabel?: string }>;
 }
 
 // ─── Observer 产出 ───
@@ -120,6 +129,10 @@ export interface AttentionQueueEntry {
     engagementScore?: number;
     /** DIRECT_ADDRESS 的触发原因（DM / @mention / name-mention） */
     directAddressReason?: string;
+    /** DIRECT_ADDRESS 的触发消息 ID，用于精确定位主动叫住 agent 的人 */
+    directAddressMessageIds?: string[];
+    /** DIRECT_ADDRESS 的触发用户 ID，用于 active people 只框选 L0 提及者 */
+    directAddressUserIds?: string[];
     /** 紧急信号列表（如 @mention、关键词命中等） */
     urgentSignals?: string[];
     /** 快照时间戳 */
@@ -383,7 +396,7 @@ export interface GroupContextPackage {
             description?: string;
         }>;
     }>;
-    /** 人物背景 JSON */
+    /** 人物背景（通常由 activeUserProfiles 序列化后交给 provider 渲染） */
     personContext?: string;
     /** 语气指导 */
     toneGuidance?: string;

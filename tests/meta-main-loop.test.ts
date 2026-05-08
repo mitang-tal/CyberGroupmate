@@ -199,6 +199,19 @@ describe("MainAgentLoop meta session path", () => {
                 ].join("\n"),
             },
             {
+                content: [
+                    "根据注入的 dispatch 文档重新下发。",
+                    "```ts",
+                    "await dispatch.taskToGroup(\"telegram:g1\", {",
+                    "  contentDirection: \"reply from meta session\",",
+                    "  toneGuidance: \"calm\",",
+                    "  context: { source: \"meta-session\" },",
+                    "  useSkills: [\"memory\"],",
+                    "});",
+                    "```",
+                ].join("\n"),
+            },
+            {
                 content: "Done.\n[SESSION_DIGEST]dispatched task to telegram:g1[/SESSION_DIGEST]\n<end_turn>",
             },
         ];

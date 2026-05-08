@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
-import { ensureCompositeId, getPlatform } from "../core/chat-id.js";
+import { ensureCompositeId, getGroupModelKey, getPlatform } from "../core/chat-id.js";
 import {
     loadConfig,
     resolveComponentProfiles,
@@ -400,8 +400,22 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             return memory.getUserProfile(userId, targetChatId ?? chatId);
         }
         if (method === "memory.getRecentInteractions") {
-            const [targetChatId, userId, limit] = args as [string | undefined, string | undefined, number | undefined];
-            return memory.getRecentInteractions(targetChatId ?? chatId, userId, limit);
+            const [targetChatId, userId, limit] = args as [string | null | undefined, string | undefined, number | undefined];
+            const effectiveChatId = typeof targetChatId === "string" && targetChatId.trim().length > 0
+                ? targetChatId
+                : undefined;
+            return memory.getRecentInteractions(effectiveChatId, userId, limit).map((interaction) => {
+                const identity = memory.getPersonIdentity(interaction.userId);
+                const displayName = identity?.displayName ?? interaction.userId;
+                const groupModel = memory.getGroupModel(getGroupModelKey(interaction.chatId));
+                const chatTitle = groupModel?.chatTitle?.trim() || interaction.chatId;
+                return {
+                    ...interaction,
+                    displayName,
+                    userLabel: `${displayName}(${interaction.userId})`,
+                    chatLabel: `${chatTitle}(${interaction.chatId})`,
+                };
+            });
         }
         if (method === "memory.semanticSearch") {
             const [query, options] = args as [string, { scope?: "facts" | "topics" | "all"; limit?: number } | undefined];
