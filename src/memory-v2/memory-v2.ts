@@ -109,6 +109,20 @@ function buildFtsOrQuery(query: string): string {
     return terms.map(term => `"${term}"`).join(" OR ");
 }
 
+function identityAliasScore(identity: PersonIdentity, normalizedQuery: string): number {
+    const candidates = [
+        identity.userId,
+        identity.displayName,
+        identity.username ?? "",
+        ...identity.aliases,
+    ].map(value => value.trim().toLocaleLowerCase()).filter(Boolean);
+
+    if (candidates.some(value => value === normalizedQuery)) return 100;
+    if (candidates.some(value => value.startsWith(normalizedQuery))) return 80;
+    if (candidates.some(value => value.includes(normalizedQuery))) return 60;
+    return 0;
+}
+
 // ─── System Prompt 加载（统一使用 prompt-loader 支持 override）───
 
 let _recallDeepSummaryPrompt: string | null = null;
@@ -1200,19 +1214,34 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
     }
 
     searchByAlias(query: string, limit: number = 10): PersonIdentity[] {
+        const normalizedQuery = query.trim().toLocaleLowerCase();
+        if (!normalizedQuery) return [];
+        const candidateLimit = Math.min(Math.max(limit * 5, limit), 200);
         const rows = this.db.prepare(
-            `SELECT * FROM person_identities WHERE display_name LIKE '%' || ? || '%' OR aliases LIKE '%' || ? || '%' LIMIT ?`
-        ).all(query, query, limit) as Record<string, unknown>[];
-        return rows.map(row => ({
-            userId: row.user_id as string,
-            displayName: row.display_name as string,
-            username: (row.username as string) ?? undefined,
-            aliases: fromJSON(row.aliases as string, []),
-            totalMessageCount: row.total_message_count as number,
-            lastSeenAt: row.last_seen_at as string,
-            firstSeenAt: row.first_seen_at as string,
-            updatedAt: row.updated_at as string,
-        }));
+            `SELECT * FROM person_identities
+             WHERE user_id = ?
+                OR display_name LIKE '%' || ? || '%'
+                OR username LIKE '%' || ? || '%'
+                OR aliases LIKE '%' || ? || '%'
+             LIMIT ?`
+        ).all(query, query, query, query, candidateLimit) as Record<string, unknown>[];
+        return rows
+            .map(row => ({
+                userId: row.user_id as string,
+                displayName: row.display_name as string,
+                username: (row.username as string) ?? undefined,
+                aliases: fromJSON(row.aliases as string, []),
+                totalMessageCount: row.total_message_count as number,
+                lastSeenAt: row.last_seen_at as string,
+                firstSeenAt: row.first_seen_at as string,
+                updatedAt: row.updated_at as string,
+            }))
+            .sort((left, right) =>
+                identityAliasScore(right, normalizedQuery) - identityAliasScore(left, normalizedQuery)
+                || right.totalMessageCount - left.totalMessageCount
+                || right.lastSeenAt.localeCompare(left.lastSeenAt)
+            )
+            .slice(0, limit);
     }
 
     storeInteraction(episode: Omit<InteractionEpisode, "id">): string {

@@ -16,6 +16,7 @@ import { describeImage, ensureSupportedFormat } from "../core/vision-processor.j
 import { MemoryStoreV2 } from "../memory-v2/index.js";
 import { embed } from "../memory-v2/embedding.js";
 import { GlobalState } from "../main-agent/global-state.js";
+import { createMemoryApi } from "../meta-sandbox/meta-api/memory.js";
 import type { AttentionAccumulator } from "../accumulator/attention-accumulator.js";
 import type { PlatformAdapter } from "../adapter/platform-adapter.js";
 import { SandboxPool } from "./sandbox-pool.js";
@@ -416,6 +417,24 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
                     chatLabel: `${chatTitle}(${interaction.chatId})`,
                 };
             });
+        }
+        if (method === "memory.resolvePerson") {
+            const [query, options] = args as [string, { chatId?: string; limit?: number } | undefined];
+            const api = createMemoryApi(memory);
+            return api.resolvePerson(query, { ...options, chatId: options?.chatId ?? chatId });
+        }
+        if (method === "memory.getPersonDossier") {
+            const [queryOrUserId, options] = args as [string, {
+                chatId?: string;
+                limit?: number;
+                factsLimit?: number;
+                interactionsLimit?: number;
+                topicsLimit?: number;
+                messagesLimit?: number;
+                groupProfilesLimit?: number;
+            } | undefined];
+            const api = createMemoryApi(memory);
+            return api.getPersonDossier(queryOrUserId, { ...options, chatId: options?.chatId ?? chatId });
         }
         if (method === "memory.semanticSearch") {
             const [query, options] = args as [string, { scope?: "facts" | "topics" | "all"; limit?: number } | undefined];

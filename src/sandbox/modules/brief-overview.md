@@ -52,6 +52,8 @@ modules/memory.d.ts — 记忆检索模块类型定义
 - `searchMessages`: searchMessages(query, options?)
 - `getUserProfile`: getUserProfile(userId, chatId?)
 - `getRecentInteractions`: getRecentInteractions(chatId?, userId?, limit?)
+- `resolvePerson`: resolvePerson(query, options?)
+- `getPersonDossier`: getPersonDossier(queryOrUserId, options?)
 - `semanticSearch`: semanticSearch(query, options?)
 
 ## onebot

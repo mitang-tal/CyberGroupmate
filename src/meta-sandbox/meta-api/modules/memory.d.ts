@@ -5,14 +5,25 @@
  */
 
 type MetaFactCategory =
-    | "identity"
+    | "biographical"
     | "preference"
+    | "anecdote"
+    | "opinion"
+    | "plan"
     | "relationship"
-    | "event"
-    | "topic"
     | "skill"
-    | "boundary"
-    | "other";
+    | "general";
+
+type MemoryIdentityMatchType =
+    | "exact_user_id"
+    | "exact_display_name"
+    | "exact_alias"
+    | "exact_username"
+    | "partial_display_name"
+    | "partial_alias"
+    | "partial_username"
+    | "fact_subject"
+    | "topic_participant";
 
 interface MemorySearchEntitiesOptions {
     /** 限定群组。 */
@@ -33,11 +44,18 @@ interface MemoryIdentityMatch {
         aliases: string[];
         displayName: string;
         username?: string;
+        totalMessageCount?: number;
+        lastSeenAt?: string;
     };
     profile: {
         recentFacts?: unknown[];
         dunbarTier?: number;
     };
+    /** 命中原因类型；exact_* 通常比 topic_participant 更可信。 */
+    matchType: MemoryIdentityMatchType;
+    /** 相关性分数，越高越相关。 */
+    score: number;
+    reasons: string[];
 }
 
 interface MemorySearchEntitiesResult {
@@ -67,11 +85,77 @@ interface MemorySearchEntitiesResult {
     topicKeywords: string[];
 }
 
+interface MemoryResolvePersonResult {
+    matches: MemoryIdentityMatch[];
+}
+
+interface MemoryGetPersonDossierOptions {
+    /** 高亮当前群画像，但 dossier 仍会聚合跨群资料。 */
+    chatId?: string;
+    /** 要返回的候选身份数，默认 3，最大 10。 */
+    limit?: number;
+    factsLimit?: number;
+    interactionsLimit?: number;
+    topicsLimit?: number;
+    messagesLimit?: number;
+    groupProfilesLimit?: number;
+}
+
+interface MemoryGetPersonDossierResult {
+    dossiers: Array<{
+        match: MemoryIdentityMatch;
+        groupProfiles: Array<{
+            userId: string;
+            chatId: string;
+            chatTitle?: string;
+            isDirectMessage?: boolean;
+            dunbarTier: number;
+            affinityScore: number;
+            traits: string[];
+            interests: string[];
+            communicationStyle: string;
+            relationToAgent: string;
+            messageCount: number;
+            lastSeenAt: string;
+        }>;
+        facts: Array<{
+            id: string;
+            subject: string;
+            category: MetaFactCategory;
+            content: string;
+            confidence: number;
+            sourceChatId?: string | null;
+            sourceChatTitle?: string | null;
+            sourceTopicLabel?: string | null;
+            observedAt?: string | null;
+            visibility?: "private" | "contextual" | "public";
+            sensitivity?: "low" | "medium" | "high";
+            updatedAt: string;
+        }>;
+        recentInteractions: unknown[];
+        recentTopics: unknown[];
+        recentMessages: unknown[];
+    }>;
+}
+
 declare const memory: {
+    /**
+     * 把人名、别名、username 或 userId 解析成候选身份，并按相关性排序。
+     * 优先级大致为 exact userId / exact alias > partial alias > fact subject > topic participant。
+     */
+    resolvePerson(query: string, options?: MemorySearchEntitiesOptions): Promise<MemoryResolvePersonResult>;
+
+    /**
+     * 面向“评价某人 / 了解某人”的一站式人物资料包。
+     * 先解析身份，再聚合跨群画像、核心事实、近期互动、近期话题和消息样本。
+     */
+    getPersonDossier(queryOrUserId: string, options?: MemoryGetPersonDossierOptions): Promise<MemoryGetPersonDossierResult>;
+
     /**
      * 跨群检索实体、事实、话题和历史 session 摘要。
      *
-     * 不确定的最新事实先用此方法或 conversations.query() 查证，再做派发决策。
+     * 默认返回 10 条，最大 50 条；身份结果按相关性排序，exact alias 会排在普通 topic participant 前。
+     * 不确定的最新事实先用此方法、getPersonDossier() 或 conversations.query() 查证，再做派发决策。
      *
      * @param query 人名、别名、关键词或事实线索。
      * @param options 可选的群组、时间、分类和数量过滤。
