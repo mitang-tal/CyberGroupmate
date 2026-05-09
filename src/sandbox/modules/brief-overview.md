@@ -123,6 +123,9 @@ telegram.d.ts — Telegram 平台 API 这是系统注入的 Telegram host proxy 
 - `getChat`: 精确获取指定会话的基础信息
 - `getUser`: 精确获取指定用户的基础信息
 - `getDialogs`: 获取最近的对话列表（包含 peer、最后一条消息、未读数）
+- `findDialogs`: 按 ID/username 在已有对话里查找 peer，同时预热 mtcute 的 access hash 缓存。 私聊裸数字 ID 报 PEER_ID_INVALID/MtPeerNotFoundError 时，优先调用这个或 meetPeer。
+- `meetPeer`: 主动让当前 mtcute session "遇见" 一个 peer，缓存后续发送/读取所需的 access hash。 可用 username、手机号（kind: "phone"）或已有消息 ID 预热；成功后再调用 sendText/sendMedia 等。
+- `resolvePeer`: meetPeer 的别名。用于需要显式解析 peer 时使用。
 - `getFullUser`: 获取用户的完整资料（包含个人简介 bio 等）。
 - `getFullChat`: 获取群组/频道的完整资料（包含群描述 about、成员数等）。
 - `getChatMembers`: 分页拉取群组成员列表

@@ -115,6 +115,7 @@ interface TelegramClientLike {
     leaveChat?(chatId: unknown): Promise<unknown>;
     downloadAsBuffer?(location: unknown): Promise<Uint8Array>;
     getMessages?(chatId: unknown, messageIds: number[]): Promise<unknown[]>;
+    findDialogs?(peers: unknown): Promise<unknown[]>;
     _normalizeInputFile?(input: unknown, params: { fileName?: string; fileMime?: string; fileSize?: number }): Promise<unknown>;
     // ─── 扩展方法 ───
     getFullUser?(userId: unknown): Promise<unknown>;
@@ -130,6 +131,7 @@ interface TelegramClientLike {
     getMessageReactionsById?(chatId: unknown, messageIds: number[]): Promise<unknown[]>;
     closePoll?(params: unknown): Promise<unknown>;
     resolvePeer?(peer: unknown): Promise<unknown>;
+    resolvePhoneNumber?(phone: string, force?: boolean): Promise<unknown>;
     getInputEntity?(peer: unknown): Promise<unknown>;
     joinChannel?(peer: unknown): Promise<unknown>;
     leaveChannel?(peer: unknown): Promise<unknown>;
@@ -191,6 +193,15 @@ interface PlainDialog {
     peer: PlainUser | PlainChat;
     lastMessage?: PlainMessage;
     unreadCount: number;
+}
+
+interface MeetPeerOptions {
+    kind?: "id" | "username" | "phone";
+    /** Optional source chat + message IDs to fetch first, so mtcute can cache sender access hashes. */
+    chatId?: unknown;
+    messageIds?: number[];
+    dialogsLimit?: number;
+    force?: boolean;
 }
 
 type NormalizedIncomingMessage = {
@@ -265,6 +276,7 @@ export class TelegramAdapter implements PlatformAdapter {
 
         this.client = client;
         this.selfUser = this.normalizeUser(self);
+        this.rememberPeerObject(self);
 
         this.messageHandler = async (msg: any) => {
             const normalized = await this.normalizeIncomingMessage(msg);
@@ -530,8 +542,10 @@ export class TelegramAdapter implements PlatformAdapter {
                 const peer = await this.ensurePeerCached(args[0]);
                 return this.normalizeChat(await this.client.getChat(peer));
             }
-            case "telegram.getUser":
-                return this.normalizeUser(await this.client.getUser(this.normalizePeerArg(args[0])));
+            case "telegram.getUser": {
+                const peer = await this.ensurePeerCached(args[0]);
+                return this.normalizeUser(await this.client.getUser(peer));
+            }
             case "telegram.getChatMembers": {
                 const peer = await this.ensurePeerCached(args[0]);
                 const peers = await this.client.getChatMembers(peer, args[1]);
@@ -562,6 +576,14 @@ export class TelegramAdapter implements PlatformAdapter {
                 }
                 return dialogs;
             }
+            case "telegram.findDialogs": {
+                const limit = this.readLimit(args[1], 200);
+                const dialogs = await this.findDialogsForPeers(args[0], limit);
+                return dialogs.map((dialog: any) => this.normalizeDialog(dialog));
+            }
+            case "telegram.meetPeer":
+            case "telegram.resolvePeer":
+                return this.meetPeerForAgent(args[0], args[1]);
             case "telegram.readHistory": {
                 const peer = await this.ensurePeerCached(args[0]);
                 await this.client.readHistory(peer);
@@ -1306,13 +1328,14 @@ export class TelegramAdapter implements PlatformAdapter {
         return fallback;
     }
 
-    private normalizePeerArg(value: unknown): unknown {
+    private normalizePeerArg(value: unknown, kind?: MeetPeerOptions["kind"]): unknown {
         if (typeof value !== "string") return value;
         let trimmed = value.trim();
         // Strip composite key prefix: "telegram:-1001234567" → "-1001234567"
         if (trimmed.startsWith("telegram:")) {
             trimmed = trimmed.slice("telegram:".length);
         }
+        if (kind === "phone") return trimmed;
         if (/^-?\d+$/.test(trimmed)) {
             const asNumber = Number(trimmed);
             if (Number.isSafeInteger(asNumber)) return asNumber;
@@ -1338,10 +1361,8 @@ export class TelegramAdapter implements PlatformAdapter {
         return opts;
     }
 
-    /**
-     * 已解析的 peer 缓存（避免重复解析）
-     */
-    private resolvedPeers = new Map<number, unknown>();
+    /** 已解析的 peer 缓存（避免重复解析）。key 带类型前缀，避免手机号/数字 ID 混淆。 */
+    private resolvedPeers = new Map<string, unknown>();
 
     /**
      * 确保 peer 在 mtcute 内部缓存中已解析。
@@ -1350,70 +1371,264 @@ export class TelegramAdapter implements PlatformAdapter {
      * 而 sendText 可以直接用 numeric ID。当 InputPeer 未缓存时
      * 会报 "Cannot read properties of undefined (reading 'inputPeer')"。
      *
-     * 解决方案：先尝试 resolvePeer，失败则 getDialogs 预热缓存。
+     * 解决方案：先尝试 resolvePeer，失败则 findDialogs/iterDialogs 预热缓存。
      */
-    private async ensurePeerCached(rawPeer: unknown): Promise<unknown> {
-        const peer = this.normalizePeerArg(rawPeer);
-
-        // 非 numeric peer（username 等）直接返回，mtcute 可自行解析
-        if (typeof peer !== "number") return peer;
+    private async ensurePeerCached(
+        rawPeer: unknown,
+        options: { failOnUnresolved?: boolean; kind?: MeetPeerOptions["kind"]; dialogsLimit?: number; force?: boolean } = {},
+    ): Promise<unknown> {
+        const peer = this.normalizePeerArg(rawPeer, options.kind);
+        this.rememberPeerObject(rawPeer);
 
         // 检查本地缓存
-        if (this.resolvedPeers.has(peer)) {
-            return this.resolvedPeers.get(peer)!;
+        const cacheKey = this.peerCacheKey(peer, options.kind);
+        if (cacheKey && this.resolvedPeers.has(cacheKey)) {
+            return this.resolvedPeers.get(cacheKey)!;
+        }
+
+        const isPhone = this.isPhonePeer(peer, options.kind);
+        if (isPhone) {
+            try {
+                if (typeof this.client.resolvePhoneNumber === "function") {
+                    const resolved = await this.client.resolvePhoneNumber(String(peer), options.force === true);
+                    this.rememberResolvedPeer(peer, resolved, "phone");
+                    return resolved;
+                }
+            } catch (e) {
+                log.debug("ensurePeerCached: resolvePhoneNumber 失败", { peer: String(peer), error: String(e) });
+            }
         }
 
         // 尝试 resolvePeer（mtcute 内部方法，解析 peer 并缓存）
-        try {
-            if (typeof this.client.resolvePeer === "function") {
-                const resolved = await this.client.resolvePeer(peer);
-                this.resolvedPeers.set(peer, resolved);
-                return resolved;
+        if (!isPhone) {
+            try {
+                if (typeof this.client.resolvePeer === "function") {
+                    const resolved = await this.client.resolvePeer(peer);
+                    this.rememberResolvedPeer(peer, resolved, options.kind);
+                    return resolved;
+                }
+            } catch (e) {
+                log.debug("ensurePeerCached: resolvePeer 失败", { peer: String(peer), error: String(e) });
             }
-        } catch (e) {
-            log.debug("ensurePeerCached: resolvePeer 失败", { peer, error: String(e) });
         }
 
         // fallback: 尝试 getInputEntity（某些 mtcute 版本使用此方法）
         try {
             if (typeof this.client.getInputEntity === "function") {
                 const resolved = await this.client.getInputEntity(peer);
-                this.resolvedPeers.set(peer, resolved);
+                this.rememberResolvedPeer(peer, resolved, options.kind);
                 return resolved;
             }
         } catch (e) {
-            log.debug("ensurePeerCached: getInputEntity 失败", { peer, error: String(e) });
+            log.debug("ensurePeerCached: getInputEntity 失败", { peer: String(peer), error: String(e) });
         }
 
-        // fallback: 对负 ID（群组/频道），尝试遍历 dialogs 预热 mtcute 内部缓存
-        if (peer < 0) {
-            try {
-                log.info("ensurePeerCached: 尝试 getDialogs 预热缓存", { peer });
-                if (typeof this.client.iterDialogs === "function") {
-                    for await (const dialog of this.client.iterDialogs({ limit: 100 })) {
-                        // 遍历 dialogs 会让 mtcute 内部缓存所有遇到的 peer
-                        const dialogPeer = dialog?.chat ?? dialog?.peer;
-                        if (dialogPeer && (dialogPeer.id === peer || String(dialogPeer.id) === String(peer))) {
-                            log.info("ensurePeerCached: 在 dialogs 中找到目标 peer", { peer });
-                            break;
-                        }
-                    }
+        // fallback: 遍历 dialogs 预热 mtcute 内部缓存。私聊正 ID 同样需要 access hash。
+        try {
+            const dialogs = await this.findDialogsForPeers(peer, options.dialogsLimit ?? 200);
+            const first = dialogs[0] as any;
+            if (first) {
+                this.rememberDialog(first);
+                const dialogPeer = first?.peer ?? first?.chat;
+                const inputPeer = dialogPeer?.inputPeer ?? first?.inputPeer;
+                if (inputPeer) {
+                    this.rememberResolvedPeer(peer, inputPeer, options.kind);
+                    return inputPeer;
                 }
-
-                // dialogs 遍历后再试一次 resolvePeer
-                if (typeof this.client.resolvePeer === "function") {
-                    const resolved = await this.client.resolvePeer(peer);
-                    this.resolvedPeers.set(peer, resolved);
-                    return resolved;
-                }
-            } catch (e) {
-                log.warn("ensurePeerCached: getDialogs 预热失败", { peer, error: String(e) });
             }
+
+            // dialogs 遍历后再试一次 resolvePeer
+            if (!isPhone && typeof this.client.resolvePeer === "function") {
+                const resolved = await this.client.resolvePeer(peer);
+                this.rememberResolvedPeer(peer, resolved, options.kind);
+                return resolved;
+            }
+        } catch (e) {
+            const errText = String(e);
+            const logFn = errText.includes("not supported") ? log.debug.bind(log) : log.warn.bind(log);
+            logFn("ensurePeerCached: dialogs 预热失败", { peer: String(peer), error: errText });
         }
 
         // 所有解析方式均失败 — 返回原始 ID，让调用方自行处理错误
-        log.warn("ensurePeerCached: 所有解析方式均失败，返回原始 ID", { peer });
+        log.warn("ensurePeerCached: 所有解析方式均失败，返回原始 ID", { peer: String(peer) });
+        if (options.failOnUnresolved) {
+            throw new Error(this.peerResolutionGuidance(rawPeer));
+        }
         return peer;
+    }
+
+    private async meetPeerForAgent(rawPeer: unknown, rawOptions?: unknown): Promise<Record<string, unknown>> {
+        const opts = this.normalizeMeetPeerOptions(rawOptions);
+        if (rawPeer == null || String(rawPeer).trim() === "") {
+            throw new Error("telegram.meetPeer: peer 不能为空");
+        }
+
+        await this.warmPeerFromMessages(opts);
+        const resolved = await this.ensurePeerCached(rawPeer, {
+            failOnUnresolved: true,
+            kind: opts.kind,
+            dialogsLimit: opts.dialogsLimit,
+            force: opts.force,
+        });
+
+        return {
+            ok: true,
+            input: String(rawPeer),
+            source: this.describeResolvedPeer(resolved),
+        };
+    }
+
+    private normalizeMeetPeerOptions(rawOptions?: unknown): MeetPeerOptions {
+        if (!rawOptions || typeof rawOptions !== "object") return {};
+        const input = rawOptions as Record<string, unknown>;
+        const kind = input.kind === "id" || input.kind === "username" || input.kind === "phone"
+            ? input.kind
+            : undefined;
+        const messageIds = Array.isArray(input.messageIds)
+            ? input.messageIds.map(Number).filter(Number.isFinite)
+            : undefined;
+        const dialogsLimit = Number(input.dialogsLimit);
+        return {
+            kind,
+            chatId: input.chatId,
+            messageIds,
+            dialogsLimit: Number.isFinite(dialogsLimit) && dialogsLimit > 0 ? Math.floor(dialogsLimit) : undefined,
+            force: input.force === true,
+        };
+    }
+
+    private async warmPeerFromMessages(opts: MeetPeerOptions): Promise<void> {
+        if (!opts.chatId || !opts.messageIds?.length || typeof this.client.getMessages !== "function") return;
+        try {
+            const chatPeer = await this.ensurePeerCached(opts.chatId, { dialogsLimit: opts.dialogsLimit });
+            const messages = await this.client.getMessages(chatPeer, opts.messageIds);
+            for (const message of messages ?? []) {
+                if (message) this.normalizeMessage(message);
+            }
+        } catch (err) {
+            log.debug("meetPeer: getMessages 预热失败", {
+                chatId: String(opts.chatId),
+                messageIds: opts.messageIds,
+                error: String(err),
+            });
+        }
+    }
+
+    private async findDialogsForPeers(peersArg: unknown, limit: number): Promise<unknown[]> {
+        const peers = Array.isArray(peersArg) ? peersArg : [peersArg];
+        const normalizedPeers = peers.map((peer) => this.normalizePeerArg(peer));
+
+        if (typeof this.client.findDialogs === "function") {
+            const dialogs = await this.client.findDialogs(Array.isArray(peersArg) ? normalizedPeers : normalizedPeers[0]);
+            const arr = Array.isArray(dialogs) ? dialogs : [dialogs];
+            arr.forEach((dialog) => this.rememberDialog(dialog));
+            return arr;
+        }
+
+        if (typeof this.client.iterDialogs !== "function") {
+            throw new Error("findDialogs is not supported by the current Telegram client");
+        }
+
+        const found: unknown[] = [];
+        const remaining = new Set(normalizedPeers.map((_, idx) => idx));
+        for await (const dialog of this.client.iterDialogs({ limit })) {
+            this.rememberDialog(dialog);
+            for (const idx of [...remaining]) {
+                if (this.dialogMatchesPeer(dialog, normalizedPeers[idx])) {
+                    found[idx] = dialog;
+                    remaining.delete(idx);
+                }
+            }
+            if (remaining.size === 0) break;
+        }
+
+        if (remaining.size > 0) {
+            const missing = [...remaining].map((idx) => String(peers[idx])).join(", ");
+            throw new Error(`findDialogs: 未找到 peer: ${missing}`);
+        }
+
+        return found;
+    }
+
+    private dialogMatchesPeer(dialog: any, peer: unknown): boolean {
+        const dialogPeer = dialog?.peer ?? dialog?.chat;
+        if (!dialogPeer) return false;
+        const id = dialogPeer.id;
+        if (typeof peer === "number") {
+            return Number(id) === peer || String(id) === String(peer);
+        }
+        const text = String(peer ?? "").replace(/^@/, "").toLowerCase();
+        if (!text) return false;
+        if (String(id).toLowerCase() === text) return true;
+        const username = typeof dialogPeer.username === "string" ? dialogPeer.username.replace(/^@/, "").toLowerCase() : "";
+        return username === text;
+    }
+
+    private peerCacheKey(peer: unknown, kind?: MeetPeerOptions["kind"]): string | undefined {
+        if (typeof peer === "number") return `id:${peer}`;
+        if (typeof peer === "string") {
+            const text = peer.trim();
+            if (!text) return undefined;
+            if (kind === "phone" || text.startsWith("+")) return `phone:${text.replace(/[@+\s()]/g, "")}`;
+            return `text:${text.replace(/^@/, "").toLowerCase()}`;
+        }
+        return undefined;
+    }
+
+    private isPhonePeer(peer: unknown, kind?: MeetPeerOptions["kind"]): boolean {
+        return kind === "phone" || (typeof peer === "string" && peer.trim().startsWith("+"));
+    }
+
+    private rememberResolvedPeer(peerId: unknown, resolved: unknown, kind?: MeetPeerOptions["kind"]): void {
+        const key = this.peerCacheKey(this.normalizePeerArg(peerId, kind), kind);
+        if (key) this.resolvedPeers.set(key, resolved);
+    }
+
+    private rememberPeerObject(peer: any): void {
+        if (!peer || typeof peer !== "object") return;
+        const inputPeer = peer.inputPeer ?? peer.peer?.inputPeer;
+        if (!inputPeer) return;
+
+        const id = peer.id ?? peer.userId ?? peer.chatId ?? peer.channelId;
+        if (id !== undefined && id !== null) {
+            this.rememberResolvedPeer(id, inputPeer);
+        }
+        if (typeof peer.username === "string" && peer.username) {
+            this.rememberResolvedPeer(peer.username, inputPeer, "username");
+        }
+        if (typeof peer.phone === "string" && peer.phone) {
+            this.rememberResolvedPeer(peer.phone, inputPeer, "phone");
+        }
+    }
+
+    private rememberDialog(dialog: any): void {
+        if (!dialog || typeof dialog !== "object") return;
+        this.rememberPeerObject(dialog.peer ?? dialog.chat);
+        if (dialog.lastMessage) this.normalizeMessage(dialog.lastMessage);
+    }
+
+    private describeResolvedPeer(peer: unknown): Record<string, unknown> {
+        if (!peer || typeof peer !== "object") {
+            return { type: typeof peer, value: String(peer) };
+        }
+        const raw = peer as Record<string, unknown>;
+        const id = raw.userId ?? raw.chatId ?? raw.channelId ?? raw.id;
+        return {
+            type: String(raw._ ?? raw.type ?? "peer"),
+            id: id != null ? String(id) : undefined,
+        };
+    }
+
+    private peerResolutionGuidance(rawPeer: unknown): string {
+        return [
+            `telegram peer 未解析: ${String(rawPeer)}`,
+            "原因通常是当前 mtcute session 还没有遇见这个私聊/用户，只有裸 ID，没有 Telegram access hash。",
+            "可操作修复：",
+            "- 如果有 username 或手机号，改用 username，或先调用 telegram.meetPeer('@username') / telegram.meetPeer('+8613...', { kind: 'phone' })。",
+            "- 如果这是已有对话，先调用 telegram.findDialogs(userIdOrUsername) 或 telegram.getDialogs({ limit: 200 }) 让 session 遇见它，再重试发送。",
+            "- 如果手上有该用户发来的消息 ID，先调用 telegram.meetPeer(userId, { chatId, messageIds: [messageId] }) 或 telegram.getMessages(chatId, [messageId]) 预热缓存。",
+            "- 不要反复用同一个裸数字 userId 重试；如果仍失败，需要用户先发起私聊/提供 username/phone，或从 dialogs/messages/members 中遇见该 peer。",
+        ].join("\n");
     }
 
     private async downloadMediaBuffer(
@@ -1597,6 +1812,7 @@ export class TelegramAdapter implements PlatformAdapter {
     }
 
     private normalizeDialog(dialog: any): PlainDialog {
+        this.rememberPeerObject(dialog?.peer ?? dialog?.chat);
         return {
             peer: this.normalizePeer(dialog?.peer),
             lastMessage: dialog?.lastMessage ? this.normalizeMessage(dialog.lastMessage) : undefined,
@@ -1605,6 +1821,8 @@ export class TelegramAdapter implements PlatformAdapter {
     }
 
     private normalizeMessage(message: any): PlainMessage {
+        this.rememberPeerObject(message?.chat);
+        this.rememberPeerObject(message?.sender);
         let forwardFrom: string | undefined;
         let forwardFromUrl: string | undefined;
         if (message?.forward) {

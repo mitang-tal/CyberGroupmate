@@ -71,6 +71,23 @@ declare const telegram: {
     /** 获取最近的对话列表（包含 peer、最后一条消息、未读数） */
     getDialogs(opts?: { limit?: number }): Promise<Array<{ peer: { id: number; displayName?: string; title?: string; username?: string; }; lastMessage?: { id: number; text: string; date: Date; chat: { id: number; title?: string; username?: string; type: "private" | "group" | "supergroup" | "channel"; }; sender: { id: number; displayName?: string; title?: string; username?: string; }; isMention: boolean; replyToMessage?: { id: number } | null; media?: unknown; mediaInfo?: { type: "photo" | "sticker" | "video" | "document" | "animation" | "audio" | "other"; rawType?: string; fileId?: string; uniqueFileId?: string; emoji?: string; mimeType?: string; fileName?: string; width?: number; height?: number; fileSize?: number; filePath?: string; downloadStatus?: "downloaded" | "cached" | "too_large" | "failed"; downloadError?: string; }; }; unreadCount: number; }>>;
     /**
+     * 按 ID/username 在已有对话里查找 peer，同时预热 mtcute 的 access hash 缓存。
+     * 私聊裸数字 ID 报 PEER_ID_INVALID/MtPeerNotFoundError 时，优先调用这个或 meetPeer。
+     * @example const [dialog] = await telegram.findDialogs(682932098);
+     * @example const [dialog] = await telegram.findDialogs('@username');
+     */
+    findDialogs(peers: number | string | Array<number | string>, opts?: { limit?: number }): Promise<Array<{ peer: { id: number; displayName?: string; title?: string; username?: string; }; lastMessage?: { id: number; text: string; date: Date; chat: { id: number; title?: string; username?: string; type: "private" | "group" | "supergroup" | "channel"; }; sender: { id: number; displayName?: string; title?: string; username?: string; }; isMention: boolean; replyToMessage?: { id: number } | null; media?: unknown; mediaInfo?: { type: "photo" | "sticker" | "video" | "document" | "animation" | "audio" | "other"; rawType?: string; fileId?: string; uniqueFileId?: string; emoji?: string; mimeType?: string; fileName?: string; width?: number; height?: number; fileSize?: number; filePath?: string; downloadStatus?: "downloaded" | "cached" | "too_large" | "failed"; downloadError?: string; }; }; unreadCount: number; }>>;
+    /**
+     * 主动让当前 mtcute session "遇见" 一个 peer，缓存后续发送/读取所需的 access hash。
+     * 可用 username、手机号（kind: "phone"）或已有消息 ID 预热；成功后再调用 sendText/sendMedia 等。
+     * @example await telegram.meetPeer('@username');
+     * @example await telegram.meetPeer('+8613800000000', { kind: 'phone' });
+     * @example await telegram.meetPeer(682932098, { chatId, messageIds: [12345] });
+     */
+    meetPeer(peer: number | string, opts?: { kind?: "id" | "username" | "phone"; chatId?: number | string; messageIds?: number[]; dialogsLimit?: number; force?: boolean }): Promise<{ ok: true; input: string; source: { type: string; id?: string; value?: string; } }>;
+    /** meetPeer 的别名。用于需要显式解析 peer 时使用。 */
+    resolvePeer(peer: number | string, opts?: { kind?: "id" | "username" | "phone"; chatId?: number | string; messageIds?: number[]; dialogsLimit?: number; force?: boolean }): Promise<{ ok: true; input: string; source: { type: string; id?: string; value?: string; } }>;
+    /**
      * 获取用户的完整资料（包含个人简介 bio 等）。
      * @example const full = await telegram.getFullUser(userId); console.log(full.bio);
      */

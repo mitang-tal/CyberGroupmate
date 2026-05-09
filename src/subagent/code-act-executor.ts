@@ -670,9 +670,11 @@ export class CodeActExecutor {
 
         const sentCollector = new SentMessageCollector();
         const sandbox = await this.sandboxPool!.acquire(this.chatId);
+        const deduplicateSentMessages = currentConfig.subagent?.deduplicateSentMessages !== false;
 
         // 设置平台标识，供 capability-registry 和 scene.current 使用
         await sandbox.execute(`__setPlatform(${JSON.stringify(platform)})`, 5000);
+        await sandbox.execute(`__setDuplicateMessageBlocking(${JSON.stringify(deduplicateSentMessages)})`, 5000);
         // 注册 notify 监听器收集已发消息
         const rawChatId = getRawId(this.chatId);
         const notifyListener = (event: Record<string, unknown>) => {
