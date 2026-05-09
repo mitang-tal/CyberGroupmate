@@ -19,6 +19,7 @@ import { GlobalState } from "../main-agent/global-state.js";
 import { createMemoryApi } from "../meta-sandbox/meta-api/memory.js";
 import type { AttentionAccumulator } from "../accumulator/attention-accumulator.js";
 import type { PlatformAdapter } from "../adapter/platform-adapter.js";
+import { getTelegramMtcuteWriteTarget, TELEGRAM_MTCUTE_WRITE_METHODS } from "../core/telegram-mtcute-passthrough.js";
 import { SandboxPool } from "./sandbox-pool.js";
 import { type Sandbox } from "./sandbox.js";
 
@@ -74,6 +75,20 @@ function isBoundChatWriteRestrictionEnabled(): boolean {
     return loadConfig("config.yaml", true).subagent?.restrictAdapterWritesToBoundChat === true;
 }
 
+function getRestrictedWriteTarget(method: string, args: unknown[], adapter: PlatformAdapter): unknown {
+    if (adapter.getWriteMethods().includes(method)) return args[0];
+    if (method === "telegram.mtcute") {
+        const mtcuteMethod = String(args[0] ?? "");
+        if (!TELEGRAM_MTCUTE_WRITE_METHODS.has(mtcuteMethod)) return undefined;
+        return getTelegramMtcuteWriteTarget(mtcuteMethod, args.slice(1));
+    }
+    return undefined;
+}
+
+function isSelfTarget(target: unknown): boolean {
+    return typeof target === "string" && /^(me|self)$/i.test(target.trim());
+}
+
 export function createSandboxHostCallHandler(chatId: string, deps: CreateSandboxHostCallHandlerDeps) {
     const {
         appConfig,
@@ -117,15 +132,17 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
     return async (method: string, args: unknown[]) => {
         const adapter = adapters.find((item) => item.canHandle(method));
         if (adapter) {
-            const writeMethods = adapter.getWriteMethods();
-            if (isBoundChatWriteRestrictionEnabled() && writeMethods.includes(method)) {
-                const rawTarget = String(args[0] ?? "");
-                const targetChatId = ensureCompositeId(getPlatform(chatId), rawTarget);
-                if (targetChatId !== chatId) {
-                    throw new Error(
-                        `[Sandbox 安全限制] ${method} 被拦截：当前 sandbox 绑定 chat=${chatId}，` +
-                        `不允许向 chat=${targetChatId} 发送消息。`
-                    );
+            if (isBoundChatWriteRestrictionEnabled()) {
+                const restrictedTarget = getRestrictedWriteTarget(method, args, adapter);
+                if (restrictedTarget != null && !isSelfTarget(restrictedTarget)) {
+                    const rawTarget = String(restrictedTarget);
+                    const targetChatId = ensureCompositeId(getPlatform(chatId), rawTarget);
+                    if (targetChatId !== chatId) {
+                        throw new Error(
+                            `[Sandbox 安全限制] ${method} 被拦截：当前 sandbox 绑定 chat=${chatId}，` +
+                            `不允许向 chat=${targetChatId} 发送消息。`
+                        );
+                    }
                 }
             }
             return adapter.handleCall(method, args);

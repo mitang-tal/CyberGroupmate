@@ -11,6 +11,8 @@
 import type { CapabilityRegistryEnv } from "../../capability-registry.js";
 import { resolve as pathResolve } from "node:path";
 import { existsSync } from "node:fs";
+import { loadBuiltinGuideContent } from "../../builtin-guides.js";
+import { isAllowedTelegramMtcutePassthroughMethod } from "../../../core/telegram-mtcute-passthrough.js";
 
 // ─── 工具函数 ───
 
@@ -166,7 +168,40 @@ export function createTelegramClientProxy(
         }
     }
 
-    return {
+    function useTelegramGuide(methodName: string): string {
+        const content = loadBuiltinGuideContent("telegram", methodName);
+        if (!content) throw new Error(`Telegram guide not found: ${methodName}`);
+        const wrapped = `\n═══ [TelegramGuide: ${methodName}] ═══\n${content}\n═══ [/TelegramGuide: ${methodName}] ═══\n`;
+        env.emitOutput(wrapped);
+        return wrapped;
+    }
+
+    function resolveStoryMedia(media: unknown): unknown {
+        if (typeof media === "string") {
+            return resolveLocalFile(media);
+        }
+        if (media && typeof media === "object") {
+            const record = media as Record<string, unknown>;
+            return {
+                ...record,
+                file: resolveLocalFile(record.file),
+            };
+        }
+        return media;
+    }
+
+    const methods = {
+        useInlineBot: async () => useTelegramGuide("useInlineBot"),
+        useStories: async () => useTelegramGuide("useStories"),
+        usePolls: async () => useTelegramGuide("usePolls"),
+        usePeerResolution: async () => useTelegramGuide("usePeerResolution"),
+        useMessageSearch: async () => useTelegramGuide("useMessageSearch"),
+        useAccountProfile: async () => useTelegramGuide("useAccountProfile"),
+        useAdvancedMessages: async () => useTelegramGuide("useAdvancedMessages"),
+        useChatAdministration: async () => useTelegramGuide("useChatAdministration"),
+        useInvites: async () => useTelegramGuide("useInvites"),
+        useForumTopics: async () => useTelegramGuide("useForumTopics"),
+
         getMe: async () => callTelegramHost("telegram.getMe", []),
         sendText: async (chatId: number | string, text: string, opts?: { replyTo?: number }) => {
             // ── 重复消息拦截 ──
@@ -343,6 +378,24 @@ export function createTelegramClientProxy(
         resolvePeer: async (peer: number | string, opts?: { kind?: "id" | "username" | "phone"; chatId?: number | string; messageIds?: number[]; dialogsLimit?: number; force?: boolean }) =>
             callTelegramHost("telegram.resolvePeer", [peer, opts]),
 
+        // ─── Guide-only: inline bot consumer flow ───
+
+        queryInlineBot: async (bot: number | string, query: string, opts?: { peer?: number | string; offset?: string }) =>
+            callTelegramHost("telegram.queryInlineBot", [bot, query, opts]),
+        sendInlineBotResult: async (chatId: number | string, queryId: number | string, resultId: string, opts?: { replyTo?: number; silent?: boolean; hideVia?: boolean; clearDraft?: boolean }) => {
+            const sent = await callTelegramHost("telegram.sendInlineBotResult", [chatId, queryId, resultId, opts]);
+            env.emitOutput(`[Telegram] sendInlineBotResult ok chat=${String(chatId)} result=${resultId}`);
+            env.notifyHost({
+                type: "system.agent_message_sent",
+                scene: "telegram",
+                chatId: String(chatId),
+                text: `[inline-bot-result:${resultId}]`,
+                replyToMessageId: opts?.replyTo,
+                timestamp: new Date().toISOString(),
+            });
+            return sent;
+        },
+
         // ─── 扩展: 主动拉取 ───
 
         getFullUser: async (userId: number | string) =>
@@ -455,6 +508,23 @@ export function createTelegramClientProxy(
             await callTelegramHost("telegram.unpinMessage", [chatId, messageId]);
             env.emitOutput(`[Telegram] unpinMessage ok chat=${String(chatId)} msg=${messageId}`);
         },
+
     };
+
+    return new Proxy(methods, {
+        get(target, prop, receiver) {
+            if (typeof prop !== "string") return Reflect.get(target, prop, receiver);
+            if (prop in target) return Reflect.get(target, prop, receiver);
+            if (!isAllowedTelegramMtcutePassthroughMethod(prop)) return undefined;
+            if (prop.startsWith("iter")) {
+                return async function* (...args: unknown[]) {
+                    const result = await callTelegramHost("telegram.mtcute", [prop, ...args]);
+                    if (!Array.isArray(result)) return;
+                    for (const item of result) yield item;
+                };
+            }
+            return async (...args: unknown[]) => callTelegramHost("telegram.mtcute", [prop, ...args]);
+        },
+    });
 }
 
