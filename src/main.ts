@@ -1057,6 +1057,7 @@ async function main(): Promise<void> {
                 mediaDownloader: sharedMediaDownloader,
                 imageCatalog,
                 adapters,
+                metaSandbox,
                 onConfigSaved: async (config) => {
                     tokenStats.setProfiles(config.llmProfiles ?? {});
                     if (config.rateLimiting) {
