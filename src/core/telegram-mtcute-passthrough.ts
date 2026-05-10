@@ -28,8 +28,6 @@ export const TELEGRAM_MTCUTE_GUIDE_METHODS = {
         "commentText",
         "commentMedia",
         "commentMediaGroup",
-        "forwardMessages",
-        "forwardMessagesById",
         "sendCopy",
         "sendCopyGroup",
         "quoteWithText",
@@ -167,8 +165,6 @@ export const TELEGRAM_MTCUTE_WRITE_METHODS = new Set([
     "commentMedia",
     "commentMediaGroup",
     "commentText",
-    "forwardMessages",
-    "forwardMessagesById",
     "sendCopy",
     "sendCopyGroup",
     "quoteWithMedia",
@@ -251,8 +247,6 @@ function getObjectTarget(value: unknown, keys: string[]): unknown {
 
 export function getTelegramMtcuteWriteTarget(methodName: string, args: unknown[]): unknown {
     switch (methodName) {
-        case "forwardMessagesById":
-        case "forwardMessages":
         case "sendCopy":
         case "sendCopyGroup":
             return getObjectTarget(args[0], ["toChatId"]);

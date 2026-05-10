@@ -460,6 +460,31 @@ export function createTelegramClientProxy(
             });
             return sent;
         },
+        forwardMessage: async (
+            toChatId: number | string,
+            fromChatId: number | string,
+            messageIds: number | number[],
+            opts?: Record<string, unknown>,
+        ) => {
+            const sent = await callTelegramHost("telegram.forwardMessage", [toChatId, fromChatId, messageIds, opts]);
+            const hydrated = Array.isArray(sent) ? sent.map(hydrateTelegramMessage) : hydrateTelegramMessage(sent);
+            const ids = Array.isArray(messageIds) ? messageIds : [messageIds];
+            const sentMessageId = !Array.isArray(hydrated) && hydrated && typeof hydrated === "object" && "id" in hydrated
+                ? (hydrated as { id?: unknown }).id
+                : undefined;
+            env.emitOutput(Array.isArray(hydrated)
+                ? `[Telegram] forwardMessage ok chat=${String(toChatId)} count=${hydrated.length}`
+                : formatTelegramAck("[Telegram] forwardMessage ok", hydrated));
+            env.notifyHost({
+                type: "system.agent_message_sent",
+                scene: "telegram",
+                chatId: String(toChatId),
+                messageId: sentMessageId,
+                text: `[forward:${String(fromChatId)}:${ids.join(",")}]`,
+                timestamp: new Date().toISOString(),
+            });
+            return hydrated;
+        },
         sendPoll: async (chatId: number | string, question: string, options: string[], opts?: Record<string, unknown>) => {
             // ── 重复消息拦截（基于 question）──
             const pollText = `[poll:${question}]`;

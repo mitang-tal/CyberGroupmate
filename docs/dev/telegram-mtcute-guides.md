@@ -15,7 +15,7 @@ telegram.useAccountProfile();
 telegram.useChatAdministration();
 ```
 
-`downloadMedia()` 这类单步语义函数仍然常驻暴露，不需要 guide。
+`downloadMedia()`、`forwardMessage()` 这类单步语义函数仍然常驻暴露，不需要 guide。
 
 ## 暴露边界
 
@@ -24,7 +24,7 @@ Telegram guide 的目标不是把 mtcute 全量映射出来，而是让 Agent �
 默认保留：
 
 - 个人资料：bio、姓名、用户名、头像、生日、emoji status、close friends。
-- 消息流程：回复、评论、引用、转发、复制、定时消息、网页预览、reaction 用户查询。
+- 消息流程：回复、评论、引用、复制、定时消息、网页预览、reaction 用户查询。单步转发使用常驻 `telegram.forwardMessage()`。
 - 群/频道管理：建群建频道、资料、权限、成员限制、管理员、事件日志。
 - 邀请链接、论坛话题、Stories、投票/Todo、inline bot。
 
@@ -60,6 +60,7 @@ Telegram guide 的目标不是把 mtcute 全量映射出来，而是让 Agent �
   - `useXxx()` activator 和 generic mtcute passthrough proxy。
 - `src/adapter/telegram-adapter.ts`
   - `telegram.mtcute` host call 会按 allowlist 把方法和参数转发给当前 mtcute client。
+  - 像 `telegram.forwardMessage()` 这种一行就能完成用户意图的封装保留为顶层 host call。
 
 ## 更新 guide 说明
 
@@ -114,6 +115,8 @@ npm run gen:telegram-mtcute-guides
 ```
 
 如果脚本报 `method not present on the local TelegramClient type`，说明当前安装的 mtcute 版本还没有这个方法。不要只凭在线 reference 把它暴露给 Agent。
+
+如果某个能力已经是一条清晰的单步语义，例如「转发这条消息」而不是一整套流程，优先做成顶层方法：在 `telegram.d.ts` 写 brief 和类型，在 `telegram/index.ts` 里转发 host call，在 `TelegramAdapter.getWriteMethods()`/`handleCall()` 里实现，并运行 `npm run gen:module-docs`。这类方法不应该同时留在 mtcute guide allowlist 里。
 
 ## 新增 guide 分类
 

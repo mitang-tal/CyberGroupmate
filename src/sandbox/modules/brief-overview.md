@@ -116,7 +116,7 @@ telegram.d.ts — Telegram 平台 API 这是系统注入的 Telegram host proxy 
 - `usePeerResolution`: 加载 peer 解析指南。用于处理 PEER_ID_INVALID、access hash 缺失、裸数字 user id 无法发送等问题；调用本方法只披露排障流程。
 - `useMessageSearch`: 加载历史消息检索指南。用于主动爬楼、搜索视野外上下文或流式遍历历史；调用本方法只披露检索 API 和使用流程。
 - `useAccountProfile`: 加载账号资料指南。用于修改 bio、姓名、用户名、头像、生日、emoji status、close friends 等个人资料；调用本方法只披露指南，不直接修改账号。
-- `useAdvancedMessages`: 加载高级消息指南。用于转发、复制、评论、引用、定时消息、网页预览、reaction 用户和消息关联查询等成组能力；调用本方法只披露指南。
+- `useAdvancedMessages`: 加载高级消息指南。用于复制、评论、引用、定时消息、网页预览、reaction 用户和消息关联查询等成组能力；调用本方法只披露指南。
 - `useChatAdministration`: 加载群组/频道管理指南。用于建群建频道、成员权限、管理员、标题描述头像、慢速模式和内容保护等管理操作；调用本方法只披露指南。
 - `useInvites`: 加载邀请链接与入群请求指南。用于创建/编辑/撤销邀请链接、查看邀请成员、处理 join request 或预览邀请链接；调用本方法只披露指南。
 - `useForumTopics`: 加载论坛话题指南。用于确认群是否开启 Forum、列出话题或定位 topic id；调用本方法只披露相关 API。
@@ -125,6 +125,7 @@ telegram.d.ts — Telegram 平台 API 这是系统注入的 Telegram host proxy 
 - `sendFile`: 发送磁盘文件到聊天。支持绝对路径或基于 cwd 的相对路径。host 侧读取文件并上传。始终作为文件/文档发送。
 - `sendSticker`: 发送贴纸。通过 uniqueFileId 引用本地已缓存的贴纸文件。
 - `sendMediaGroup`: 发送媒体相册（多张图片/视频合并为一组）。 第一个媒体项的 caption 将作为整组的文案。
+- `forwardMessage`: 转发一条或多条已有消息到目标聊天，用于复读、搬运或保留原消息来源。 支持隐藏原作者/原 caption；目标聊天放第一个参数，便于遵守绑定聊天写限制。
 - `sendReaction`: 对消息发送表情表态。传 null 以撤销表态。
 - `editMessage`: 编辑已发送的消息文本。
 - `deleteMessages`: 删除一条或多条消息。

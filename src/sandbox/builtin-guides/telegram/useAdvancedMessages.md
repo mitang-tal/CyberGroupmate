@@ -64,35 +64,6 @@ a simple reply will be sent.
 ```ts
 telegram.commentMediaGroup(message: Message, ...params: ParametersSkip2<typeof sendMediaGroup>): ReturnType<typeof sendMediaGroup>;
 ```
-### telegram.forwardMessages
-Forward one or more Messages to another chat.
-
-> **Note**: all messages must be from the same chat.
-**Available**: ✅ both users and bots
-```ts
-telegram.forwardMessages(params: ForwardMessageOptions & {
-        messages: Message[];
-    }): Promise<Message[]>;
-```
-### telegram.forwardMessagesById
-Forward one or more messages by their IDs.
-You can forward no more than 100 messages at once.
-
-**Available**: 👤 users only
-
-@param toChatId  Destination chat ID, username, phone, `"me"` or `"self"`
-@param fromChatId  Source chat ID, username, phone, `"me"` or `"self"`
-@param messages  Message IDs
-@param params  Additional sending parameters
-@returns  Newly sent, forwarded messages in the destination chat.
-```ts
-telegram.forwardMessagesById(params: ForwardMessageOptions & {
-        /** Source chat ID, username, phone, `"me"` or `"self"` */
-        fromChatId: InputPeerLike;
-        /** Message IDs to forward */
-        messages: number[];
-    }): Promise<Message[]>;
-```
 ### telegram.sendCopy
 Copy a message (i.e. send the same message, but do not forward it).
 
@@ -327,85 +298,6 @@ telegram.getWebPagePreview(text: InputText): Promise<WebPageMedia | null>;
 ## Referenced mtcute input types
 
 这些声明由生成脚本从本地 mtcute `.d.ts` 摘录，用来解释上面签名里出现的输入类型。遇到更深的嵌套类型时，按 Source 路径继续查本地 mtcute 声明。
-
-### ForwardMessageOptions
-
-Source: `node_modules/@mtcute/core/highlevel/methods/messages/forward-messages.d.ts`
-
-```ts
-export interface ForwardMessageOptions {
-    /** Destination chat ID, username, phone, `"me"` or `"self"` */
-    toChatId: InputPeerLike;
-    /** When forwarding to forums, ID of the thread to forward to */
-    toThreadId?: number;
-    /**
-     * When forwarding to a monoforum you are an admin of,
-     * you **must** pass an ID of a peer you are sending the message to.
-     */
-    toMonoforumPeer?: InputPeerLike;
-    /**
-     * Whether to forward silently (also applies to caption message).
-     */
-    silent?: boolean;
-    /**
-     * If set, the forwarding will be scheduled to this date
-     * (also applies to caption message).
-     * When passing a number, a UNIX time in ms is expected.
-     *
-     * You can also pass `0x7FFFFFFE`, this will send the message
-     * once the peer is online
-     */
-    schedule?: Date | number;
-    /**
-     * Whether to clear draft after sending this message (only used for caption)
-     *
-     * @default  `false`
-     */
-    clearDraft?: boolean;
-    /**
-     * Whether to forward without author
-     */
-    noAuthor?: boolean;
-    /**
-     * Whether to forward without caption (implies {@link noAuthor})
-     */
-    noCaption?: boolean;
-    /**
-     * Whether to disallow further forwards of this message.
-     *
-     * Only for bots, works even if the target chat does not
-     * have content protection.
-     */
-    forbidForwards?: boolean;
-    /**
-     * Peer to use when sending the message.
-     */
-    sendAs?: InputPeerLike;
-    /**
-     * If passed, instead of sending the message, it will be saved into the
-     * given quick reply shortcut (either its ID or its shortcut string).
-     */
-    quickReply?: number | string;
-    /**
-     * Whether to dispatch the forwarded messages
-     * to the client's update handler.
-     */
-    shouldDispatch?: true;
-    /**
-     * Bots only: if set, allows sending up to 1000 messages per second,
-     * ignoring broadcasting limits for a fee of 0.1 Telegram Stars per message.
-     * The Stars will be withdrawn from the bot's balance.
-     */
-    allowPaidFloodskip?: boolean;
-    /**
-     * Whether to allow payment for messages.
-     * If set, the value represents the maximum number of stars to be paid
-     */
-    allowPaidMessages?: tl.Long;
-    /** Video timestamp to use for the forwarded video */
-    videoTimestamp?: number;
-}
-```
 
 ### GetReactionUsersOffset
 

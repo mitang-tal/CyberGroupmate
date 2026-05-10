@@ -433,8 +433,8 @@
       },
       {
         "name": "useAdvancedMessages",
-        "brief": "加载高级消息指南。用于转发、复制、评论、引用、定时消息、网页预览、reaction 用户和消息关联查询等成组能力；调用本方法只披露指南。",
-        "fullDoc": "```typescript\nuseAdvancedMessages(): Promise<string>\n```\n\n\n加载高级消息指南。用于转发、复制、评论、引用、定时消息、网页预览、reaction 用户和消息关联查询等成组能力；调用本方法只披露指南。"
+        "brief": "加载高级消息指南。用于复制、评论、引用、定时消息、网页预览、reaction 用户和消息关联查询等成组能力；调用本方法只披露指南。",
+        "fullDoc": "```typescript\nuseAdvancedMessages(): Promise<string>\n```\n\n\n加载高级消息指南。用于复制、评论、引用、定时消息、网页预览、reaction 用户和消息关联查询等成组能力；调用本方法只披露指南。"
       },
       {
         "name": "useChatAdministration",
@@ -475,6 +475,11 @@
         "name": "sendMediaGroup",
         "brief": "发送媒体相册（多张图片/视频合并为一组）。 第一个媒体项的 caption 将作为整组的文案。",
         "fullDoc": "```typescript\nsendMediaGroup(chatId: number | string, medias: Array<{ type: 'photo' | 'video' | 'document' | 'audio'; file: string; caption?: string; fileName?: string }>, opts?: { replyTo?: number; silent?: boolean; }): Promise<Array<{ id: number; text: string; date: Date; chat: { id: number; title?: string; username?: string; type: \"private\" | \"group\" | \"supergroup\" | \"channel\"; }; sender: { id: number; displayName?: string; title?: string; username?: string; }; isMention: boolean; replyToMessage?: { id: number } | null; media?: unknown; mediaInfo?: { type: \"photo\" | \"sticker\" | \"video\" | \"document\" | \"animation\" | \"audio\" | \"other\"; rawType?: string; fileId?: string; uniqueFileId?: string; emoji?: string; mimeType?: string; fileName?: string; width?: number; height?: number; fileSize?: number; filePath?: string; downloadStatus?: \"downloaded\" | \"cached\" | \"too_large\" | \"failed\"; downloadError?: string; }; }>>\n```\n\n\n发送媒体相册（多张图片/视频合并为一组）。\n第一个媒体项的 caption 将作为整组的文案。\n\n**示例：**\n```typescript\n// sendMediaGroup(chatId, [\n  { type: 'photo', file: 'https://example.com/1.jpg', caption: '相册标题' },\n  { type: 'photo', file: 'https://example.com/2.jpg' },\n])\n```"
+      },
+      {
+        "name": "forwardMessage",
+        "brief": "转发一条或多条已有消息到目标聊天，用于复读、搬运或保留原消息来源。 支持隐藏原作者/原 caption；目标聊天放第一个参数，便于遵守绑定聊天写限制。",
+        "fullDoc": "```typescript\nforwardMessage(toChatId: number | string, fromChatId: number | string, messageIds: number | number[], opts?: { silent?: boolean; schedule?: Date | number | string; clearDraft?: boolean; noAuthor?: boolean; noCaption?: boolean; forbidForwards?: boolean; toThreadId?: number; sendAs?: number | string; videoTimestamp?: number; }): Promise<TelegramMessage | TelegramMessage[]>\n```\n\n\n转发一条或多条已有消息到目标聊天，用于复读、搬运或保留原消息来源。\n支持隐藏原作者/原 caption；目标聊天放第一个参数，便于遵守绑定聊天写限制。\n\n**参数：**\n- `toChatId`: 目标聊天 ID、username、\"me\" 或 \"self\"\n- `fromChatId`: 原消息所在聊天 ID、username、\"me\" 或 \"self\"\n- `messageIds`: 要转发的消息 ID；数组最多 100 条\n\n**示例：**\n```typescript\n// const sent = await telegram.forwardMessage(chatId, chatId, msg.id);\n```\n\n```typescript\n// await telegram.forwardMessage(targetChatId, sourceChatId, [101, 102], { silent: true, noAuthor: true });\n```"
       },
       {
         "name": "sendReaction",
@@ -566,7 +571,8 @@
         "brief": "触发短暂的 `Typing` 正在输入反馈状态",
         "fullDoc": "```typescript\nsendTyping(chatId: number | string): Promise<void>\n```\n\n\n触发短暂的 `Typing` 正在输入反馈状态"
       }
-    ]
+    ],
+    "typeDefs": "type TelegramMessage = {\n    id: number;\n    text: string;\n    date: Date;\n    chat: { id: number; title?: string; username?: string; type: \"private\" | \"group\" | \"supergroup\" | \"channel\"; };\n    sender: { id: number; displayName?: string; title?: string; username?: string; } | null;\n    isMention: boolean;\n    replyToMessage?: { id: number } | null;\n    media?: unknown;\n    mediaInfo?: {\n        type: \"photo\" | \"sticker\" | \"video\" | \"document\" | \"animation\" | \"audio\" | \"other\";\n        rawType?: string;\n        fileId?: string;\n        uniqueFileId?: string;\n        emoji?: string;\n        mimeType?: string;\n        fileName?: string;\n        width?: number;\n        height?: number;\n        fileSize?: number;\n        filePath?: string;\n        downloadStatus?: \"downloaded\" | \"cached\" | \"too_large\" | \"failed\";\n        downloadError?: string;\n    };\n    forwardFrom?: string;\n    forwardFromUrl?: string;\n};"
   },
   {
     "name": "vision",

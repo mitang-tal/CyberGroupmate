@@ -6,6 +6,34 @@
  * 平台连接与消息监听由宿主侧官方 adapter 管理。
  */
 
+type TelegramMessage = {
+    id: number;
+    text: string;
+    date: Date;
+    chat: { id: number; title?: string; username?: string; type: "private" | "group" | "supergroup" | "channel"; };
+    sender: { id: number; displayName?: string; title?: string; username?: string; } | null;
+    isMention: boolean;
+    replyToMessage?: { id: number } | null;
+    media?: unknown;
+    mediaInfo?: {
+        type: "photo" | "sticker" | "video" | "document" | "animation" | "audio" | "other";
+        rawType?: string;
+        fileId?: string;
+        uniqueFileId?: string;
+        emoji?: string;
+        mimeType?: string;
+        fileName?: string;
+        width?: number;
+        height?: number;
+        fileSize?: number;
+        filePath?: string;
+        downloadStatus?: "downloaded" | "cached" | "too_large" | "failed";
+        downloadError?: string;
+    };
+    forwardFrom?: string;
+    forwardFromUrl?: string;
+};
+
 declare const telegram: {
     // ─── 按需能力指南 ───
     /** 加载 inline bot 使用指南。用于像 Telegram 客户端输入 `@bot query` 一样查询 inline bot 并发送某个结果；调用本方法只披露指南，不会执行实际发送。 */
@@ -20,7 +48,7 @@ declare const telegram: {
     useMessageSearch(): Promise<string>;
     /** 加载账号资料指南。用于修改 bio、姓名、用户名、头像、生日、emoji status、close friends 等个人资料；调用本方法只披露指南，不直接修改账号。 */
     useAccountProfile(): Promise<string>;
-    /** 加载高级消息指南。用于转发、复制、评论、引用、定时消息、网页预览、reaction 用户和消息关联查询等成组能力；调用本方法只披露指南。 */
+    /** 加载高级消息指南。用于复制、评论、引用、定时消息、网页预览、reaction 用户和消息关联查询等成组能力；调用本方法只披露指南。 */
     useAdvancedMessages(): Promise<string>;
     /** 加载群组/频道管理指南。用于建群建频道、成员权限、管理员、标题描述头像、慢速模式和内容保护等管理操作；调用本方法只披露指南。 */
     useChatAdministration(): Promise<string>;
@@ -53,6 +81,16 @@ declare const telegram: {
      * ])
      */
     sendMediaGroup(chatId: number | string, medias: Array<{ type: 'photo' | 'video' | 'document' | 'audio'; file: string; caption?: string; fileName?: string }>, opts?: { replyTo?: number; silent?: boolean; }): Promise<Array<{ id: number; text: string; date: Date; chat: { id: number; title?: string; username?: string; type: "private" | "group" | "supergroup" | "channel"; }; sender: { id: number; displayName?: string; title?: string; username?: string; }; isMention: boolean; replyToMessage?: { id: number } | null; media?: unknown; mediaInfo?: { type: "photo" | "sticker" | "video" | "document" | "animation" | "audio" | "other"; rawType?: string; fileId?: string; uniqueFileId?: string; emoji?: string; mimeType?: string; fileName?: string; width?: number; height?: number; fileSize?: number; filePath?: string; downloadStatus?: "downloaded" | "cached" | "too_large" | "failed"; downloadError?: string; }; }>>;
+    /**
+     * 转发一条或多条已有消息到目标聊天，用于复读、搬运或保留原消息来源。
+     * 支持隐藏原作者/原 caption；目标聊天放第一个参数，便于遵守绑定聊天写限制。
+     * @param toChatId 目标聊天 ID、username、"me" 或 "self"
+     * @param fromChatId 原消息所在聊天 ID、username、"me" 或 "self"
+     * @param messageIds 要转发的消息 ID；数组最多 100 条
+     * @example const sent = await telegram.forwardMessage(chatId, chatId, msg.id);
+     * @example await telegram.forwardMessage(targetChatId, sourceChatId, [101, 102], { silent: true, noAuthor: true });
+     */
+    forwardMessage(toChatId: number | string, fromChatId: number | string, messageIds: number | number[], opts?: { silent?: boolean; schedule?: Date | number | string; clearDraft?: boolean; noAuthor?: boolean; noCaption?: boolean; forbidForwards?: boolean; toThreadId?: number; sendAs?: number | string; videoTimestamp?: number; }): Promise<TelegramMessage | TelegramMessage[]>;
     /**
      * 对消息发送表情表态。传 null 以撤销表态。
      * @example sendReaction(chatId, msgId, '👍')

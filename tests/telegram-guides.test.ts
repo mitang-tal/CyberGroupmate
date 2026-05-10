@@ -37,6 +37,8 @@ describe("Telegram builtin guides", () => {
         assert.ok(brief.includes("usePolls"));
         assert.ok(brief.includes("useAccountProfile"));
         assert.ok(brief.includes("useChatAdministration"));
+        assert.ok(brief.includes("forwardMessage"));
+        assert.equal(brief.includes("用于转发、复制、评论"), false);
         assert.ok(brief.includes("用于创建投票/测验、读取投票结果等成组流程"));
         assert.ok(brief.includes("downloadMedia"));
         assert.equal(brief.includes("useContacts"), false);
@@ -95,6 +97,7 @@ describe("Telegram builtin guides", () => {
         assert.equal(advanced.includes("telegram.sendPaidReaction"), false);
         assert.equal(advanced.includes("telegram.searchGlobal"), false);
         assert.equal(advanced.includes("telegram.editInlineMessage"), false);
+        assert.equal(advanced.includes("telegram.forwardMessages"), false);
     });
 
     it("prints guide content when useInlineBot is executed directly", async () => {
@@ -171,6 +174,96 @@ describe("Telegram builtin guides", () => {
 
         await adapter.stop();
         nc.dispose();
+    });
+
+    it("supports top-level forwardMessage host calls", async () => {
+        const nc = makeNC();
+        const calls: Array<Record<string, unknown>> = [];
+        const fakeClient = {
+            async start() {
+                return { id: 99, displayName: "Userbot", isBot: false };
+            },
+            onNewMessage: { add() {}, remove() {} },
+            async resolvePeer(peer: unknown) {
+                return `input:${String(peer)}`;
+            },
+            async forwardMessagesById(params: Record<string, unknown>) {
+                calls.push(params);
+                const ids = params.messages as number[];
+                return ids.map((id) => ({
+                    id: id + 1000,
+                    text: "",
+                    date: new Date("2026-01-02T03:04:05Z"),
+                    chat: { id: -200, title: "dest", type: "supergroup" },
+                    sender: { id: 99, firstName: "Userbot", isBot: false },
+                }));
+            },
+            async destroy() {},
+        };
+
+        const adapter = new TelegramAdapter(makeConfig(), nc, async () => "", () => {}, async () => fakeClient);
+        await adapter.start();
+
+        const result = await adapter.handleCall("telegram.forwardMessage", ["-200", "-100", "123", {
+            silent: true,
+            noAuthor: true,
+            toThreadId: "7",
+        }]) as any;
+
+        assert.deepEqual(calls, [{
+            toChatId: "input:-200",
+            fromChatId: "input:-100",
+            messages: [123],
+            silent: true,
+            noAuthor: true,
+            toThreadId: 7,
+        }]);
+        assert.equal(result.id, "1123");
+        assert.equal(result.chat.id, "-200");
+
+        await adapter.stop();
+        nc.dispose();
+    });
+
+    it("exposes forwardMessage as a first-class sandbox proxy method", async () => {
+        const outputs: string[] = [];
+        const notifications: Array<Record<string, unknown>> = [];
+        const hostCalls: Array<{ method: string; args: unknown[] }> = [];
+        const env: CapabilityRegistryEnv = {
+            ctx: {},
+            emitOutput: (line) => outputs.push(line),
+            notifyHost: (event) => notifications.push(event as Record<string, unknown>),
+            requestInput: async () => "",
+            printToHost: (message) => outputs.push(message),
+            spawnTask: () => {},
+            killTask: () => {},
+            listTasks: () => [],
+            callHost: async (method, args) => {
+                hostCalls.push({ method, args });
+                return {
+                    id: "77",
+                    text: "",
+                    date: "2026-01-02T03:04:05.000Z",
+                    chat: { id: String(args[0]), type: "supergroup" },
+                    sender: { id: "99", isBot: false },
+                    isMention: false,
+                };
+            },
+        };
+
+        const telegram = createTelegramClientProxy(env, new Map()) as {
+            forwardMessage(toChatId: string, fromChatId: string, messageId: number, opts?: Record<string, unknown>): Promise<any>;
+        };
+        const sent = await telegram.forwardMessage("-200", "-100", 123, { silent: true });
+
+        assert.deepEqual(hostCalls, [{
+            method: "telegram.forwardMessage",
+            args: ["-200", "-100", 123, { silent: true }],
+        }]);
+        assert.ok(sent.date instanceof Date);
+        assert.ok(outputs.some(line => line.includes("forwardMessage ok")));
+        assert.equal(notifications[0].type, "system.agent_message_sent");
+        assert.equal(notifications[0].text, "[forward:-100:123]");
     });
 
     it("supports guide-only story calls and local media paths", async () => {
@@ -253,6 +346,10 @@ describe("Telegram builtin guides", () => {
         );
         await assert.rejects(
             () => adapter.handleCall("telegram.mtcute", ["translateText", "hello", "zh"]),
+            /not exposed through built-in guides/,
+        );
+        await assert.rejects(
+            () => adapter.handleCall("telegram.mtcute", ["forwardMessagesById", { toChatId: "-100", fromChatId: "-100", messages: [1] }]),
             /not exposed through built-in guides/,
         );
         await assert.rejects(

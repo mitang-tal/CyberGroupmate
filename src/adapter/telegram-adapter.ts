@@ -125,6 +125,7 @@ interface TelegramClientLike {
     getForumTopics?(chatId: unknown, params?: unknown): Promise<unknown>;
     searchMessages?(params: unknown): Promise<unknown>;
     sendMediaGroup?(chatId: unknown, medias: unknown[], opts?: unknown): Promise<unknown[]>;
+    forwardMessagesById?(params: unknown): Promise<unknown[]>;
     sendReaction?(params: unknown): Promise<unknown>;
     editMessage?(params: unknown): Promise<unknown>;
     deleteMessagesById?(chatId: unknown, ids: number[], params?: unknown): Promise<void>;
@@ -409,6 +410,7 @@ export class TelegramAdapter implements PlatformAdapter {
             "telegram.sendSticker",
             "telegram.sendTyping",
             "telegram.sendMediaGroup",
+            "telegram.forwardMessage",
             "telegram.sendPoll",
             "telegram.sendInlineBotResult",
             "telegram.sendReaction",
@@ -445,7 +447,7 @@ export class TelegramAdapter implements PlatformAdapter {
         }
 
         // ─── /mute 写操作拦截 ───
-        const MUTE_BLOCKED_METHODS = ["telegram.sendText", "telegram.sendMedia", "telegram.sendFile", "telegram.sendSticker", "telegram.sendTyping", "telegram.sendInlineBotResult"];
+        const MUTE_BLOCKED_METHODS = ["telegram.sendText", "telegram.sendMedia", "telegram.sendFile", "telegram.sendSticker", "telegram.sendTyping", "telegram.sendInlineBotResult", "telegram.forwardMessage"];
         if (MUTE_BLOCKED_METHODS.includes(method)) {
             // args[0] 可能是 raw ID（来自 sandbox）或 composite key，统一为 composite key 再查 mute 状态
             const chatId = ensureCompositeId("telegram", String(args[0] ?? ""));
@@ -830,6 +832,26 @@ export class TelegramAdapter implements PlatformAdapter {
                 await this.applyHumanizedDelay(String(args[0] ?? ""), 0);
                 const sentMsgs = await this.client.sendMediaGroup(peer, medias, sendOpts);
                 return sentMsgs.map((m: any) => this.normalizeMessage(m));
+            }
+            case "telegram.forwardMessage": {
+                if (typeof this.client.forwardMessagesById !== "function") {
+                    throw new Error("forwardMessage is not supported by the current Telegram client");
+                }
+                const toChatId = await this.ensurePeerCached(args[0]);
+                const fromChatId = await this.ensurePeerCached(args[1]);
+                const messageIds = this.normalizeMessageIds(args[2]);
+                const forwardOpts = await this.normalizeForwardMessageOpts(args[3]);
+                await this.applyHumanizedDelay(String(args[0] ?? ""), 0);
+                const sentMsgs = await this.client.forwardMessagesById({
+                    ...forwardOpts,
+                    toChatId,
+                    fromChatId,
+                    messages: messageIds,
+                });
+                const normalized = Array.isArray(sentMsgs)
+                    ? sentMsgs.map((m: any) => this.normalizeMessage(m))
+                    : [];
+                return Array.isArray(args[2]) ? normalized : normalized[0] ?? null;
             }
             case "telegram.sendPoll": {
                 // sendPoll 通过 sendMedia + InputMedia.poll 实现
@@ -1693,6 +1715,42 @@ export class TelegramAdapter implements PlatformAdapter {
             }
         }
         return opts;
+    }
+
+    private normalizeMessageIds(value: unknown): number[] {
+        const rawIds = Array.isArray(value) ? value : [value];
+        const ids = rawIds.map((raw) => Number(raw));
+        if (ids.length === 0 || ids.some((id) => !Number.isSafeInteger(id) || id <= 0)) {
+            throw new Error("forwardMessage: messageIds must be a positive message id or id array");
+        }
+        if (ids.length > 100) {
+            throw new Error("forwardMessage: Telegram only allows forwarding up to 100 messages at once");
+        }
+        return ids;
+    }
+
+    private async normalizeForwardMessageOpts(opts: unknown): Promise<Record<string, unknown> | undefined> {
+        if (!opts || typeof opts !== "object") return undefined;
+        const out: Record<string, unknown> = { ...(opts as Record<string, unknown>) };
+
+        for (const key of ["toThreadId", "videoTimestamp"]) {
+            if (typeof out[key] === "string") {
+                const num = Number(out[key]);
+                if (!Number.isNaN(num) && Number.isFinite(num)) out[key] = num;
+            }
+        }
+        if (typeof out.schedule === "string") {
+            const timestamp = Date.parse(out.schedule);
+            if (!Number.isNaN(timestamp)) out.schedule = new Date(timestamp);
+        }
+        if (out.sendAs != null) {
+            out.sendAs = await this.ensurePeerCached(out.sendAs);
+        }
+        if (out.toMonoforumPeer != null) {
+            out.toMonoforumPeer = await this.ensurePeerCached(out.toMonoforumPeer);
+        }
+
+        return out;
     }
 
     /** 已解析的 peer 缓存（避免重复解析）。key 带类型前缀，避免手机号/数字 ID 混淆。 */

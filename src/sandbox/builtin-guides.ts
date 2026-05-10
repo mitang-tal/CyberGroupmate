@@ -70,7 +70,7 @@ const BUILTIN_GUIDES: BuiltinGuideSpec[] = [
         methodName: "useAdvancedMessages",
         file: "telegram/useAdvancedMessages.md",
         description: "Telegram 平台 API",
-        brief: "加载高级消息指南。用于转发、复制、评论、引用、定时消息、网页预览、reaction 用户和消息关联查询等成组能力；本方法只披露指南。",
+        brief: "加载高级消息指南。用于复制、评论、引用、定时消息、网页预览、reaction 用户和消息关联查询等成组能力；本方法只披露指南。",
     },
     {
         moduleName: "telegram",
