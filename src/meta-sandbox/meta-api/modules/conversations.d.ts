@@ -62,7 +62,117 @@ interface ConversationsQueryResult {
     resolvedUsers: ResolvedConversationUser[];
 }
 
+interface ConversationsMessagesOptions {
+    /** 返回条数，默认 50，最大 99。 */
+    limit?: number;
+    /** 上一页返回的游标；继续往更早消息滚动时原样传回。 */
+    cursor?: string;
+    /** ISO 时间上限；cursor 未传时生效。 */
+    before?: string;
+    /** ISO 时间下限。 */
+    after?: string;
+}
+
+interface ConversationsMessagesResult {
+    chatId: string;
+    chatTitle: string;
+    /** 形如 "[群名(compositeId)]"，打印时可直接使用。 */
+    chatLabel: string;
+    messages: ConversationMessageResult[];
+    nextCursor?: string;
+}
+
+interface ConversationsInboxOptions {
+    /** 返回条数，默认 20，最大 100。 */
+    limit?: number;
+    /** 上一页返回的游标；不需要理解其内容，原样传回即可。 */
+    cursor?: string;
+    /** 未读聊天置顶，默认 true。 */
+    unreadFirst?: boolean;
+    /** 限定聊天 ID。 */
+    chatIds?: string[];
+    /** 是否包含没有消息的已知聊天，默认 false。 */
+    includeEmpty?: boolean;
+}
+
+interface ConversationInboxMessage {
+    messageId: string;
+    chatId: string;
+    userId: string;
+    displayName: string;
+    content: string;
+    timestamp: string;
+}
+
+interface ConversationInboxItem {
+    chatId: string;
+    /** composite chatId 的平台前缀，例如 "telegram" / "discord" / "onebot"。 */
+    platform?: string;
+    chatTitle: string;
+    /** 形如 "[群名(compositeId)]"，打印时可直接使用。 */
+    chatLabel: string;
+    isDirectMessage?: boolean;
+    latestMessage?: ConversationInboxMessage;
+    /** latestMessage 晚于 lastAttendedAt，或从未 attend 但已有消息。 */
+    unread: boolean;
+    /** 最近未读消息数；最多精确到最近 100 条。 */
+    unreadCount: number;
+    lastAttendedAt: string | null;
+    lastActiveAt?: string;
+    queueSize: number;
+    isProcessing: boolean;
+    stickinessLevel: string;
+}
+
+interface ConversationsInboxResult {
+    items: ConversationInboxItem[];
+    total: number;
+    unreadTotal: number;
+    nextCursor?: string;
+}
+
 declare const conversations: {
+    /**
+     * 打开 Meta 视角的消息列表。
+     *
+     * 默认把未读聊天放在最前面；未读的含义是该聊天最新消息晚于 lastAttendedAt，
+     * 或者这个聊天从未被 attend 但已经有消息。nextCursor 可用于继续往前滚动。
+     *
+     * @param options 可选分页、过滤和排序选项。
+     * @returns 聊天列表、最新消息预览和未读状态。
+     * @example
+     * let page = await conversations.inbox({ limit: 20 });
+     * for (const item of page.items) {
+     *   const badge = item.unread ? `unread:${item.unreadCount}` : "read";
+     *   console.log(`${badge} ${item.chatLabel} ${item.latestMessage?.displayName}: ${item.latestMessage?.content}`);
+     * }
+     * if (page.nextCursor) {
+     *   page = await conversations.inbox({ cursor: page.nextCursor, limit: 20 });
+     * }
+     */
+    inbox(options?: ConversationsInboxOptions): Promise<ConversationsInboxResult>;
+
+    /**
+     * 读取单个聊天的消息时间线。
+     *
+     * 默认返回最新消息页；如果返回 nextCursor，把它传给下一次调用即可继续往更早消息滚动。
+     * 这是“点进 inbox 某个聊天看历史”的入口，不承担跨群关键词搜索。
+     *
+     * @param chatId 目标 composite chatId。
+     * @param options 可选分页和时间过滤。
+     * @returns 聊天标题、消息页和下一页游标。
+     * @example
+     * let page = await conversations.messages("telegram:-1001234567890", { limit: 50 });
+     * console.log(page.messages.map(m => `${m.displayName}: ${m.content}`));
+     * if (page.nextCursor) {
+     *   page = await conversations.messages("telegram:-1001234567890", {
+     *     cursor: page.nextCursor,
+     *     limit: 50
+     *   });
+     * }
+     */
+    messages(chatId: string, options?: ConversationsMessagesOptions): Promise<ConversationsMessagesResult>;
+
     /**
      * 跨群检索消息与话题。
      *

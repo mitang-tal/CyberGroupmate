@@ -95,6 +95,8 @@ describe("buildMetaApiContext", () => {
         });
 
         assert.equal(typeof context.conversations.query, "function");
+        assert.equal(typeof context.conversations.inbox, "function");
+        assert.equal(typeof context.conversations.messages, "function");
         assert.equal(typeof context.memory.searchEntities, "function");
         assert.equal(typeof context.memory.resolvePerson, "function");
         assert.equal(typeof context.memory.getPersonDossier, "function");
