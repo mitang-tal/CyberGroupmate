@@ -66,7 +66,7 @@ onebot.d.ts — QQ / OneBot 平台 API 系统注入的 OneBot host proxy 接口�
 - `sendFace`: 发送 QQ 系统表情（CQ face）。
 - `sendTyping`: OneBot 无 typing 指示，此方法为 no-op。
 - `deleteMessages`: 撤回消息。
-- `downloadMedia`: 下载媒体到本地 workspace/Downloads/。
+- `downloadMedia`: 下载 QQ 媒体到 CyberGroupmate 本机 workspace/Downloads/。 mediaRef 可以是图片/媒体 file、URL、base64/data URL，也可以直接传 OneBot 消息 ID； 传消息 ID 时会通过 NapCat get_msg 解析消息里的图片/媒体段。
 
 ## runtime
 shared/runtime.d.ts — 系统级能力

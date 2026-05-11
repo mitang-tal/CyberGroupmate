@@ -238,8 +238,8 @@
       },
       {
         "name": "downloadMedia",
-        "brief": "下载媒体到本地 workspace/Downloads/。",
-        "fullDoc": "```typescript\ndownloadMedia(mediaRef: string): Promise<string>\n```\n\n\n下载媒体到本地 workspace/Downloads/。\n\n**示例：**\n```typescript\nconst localPath = await onebot.downloadMedia(mediaRef);\n```"
+        "brief": "下载 QQ 媒体到 CyberGroupmate 本机 workspace/Downloads/。 mediaRef 可以是图片/媒体 file、URL、base64/data URL，也可以直接传 OneBot 消息 ID； 传消息 ID 时会通过 NapCat get_msg 解析消息里的图片/媒体段。",
+        "fullDoc": "```typescript\ndownloadMedia(mediaRef: string | number): Promise<string>\n```\n\n\n下载 QQ 媒体到 CyberGroupmate 本机 workspace/Downloads/。\nmediaRef 可以是图片/媒体 file、URL、base64/data URL，也可以直接传 OneBot 消息 ID；\n传消息 ID 时会通过 NapCat get_msg 解析消息里的图片/媒体段。\n\n**示例：**\n```typescript\nconst localPath = await onebot.downloadMedia(794582600);\n```"
       }
     ],
     "typeDefs": "interface OneBotMessageAck {\n    message_id?: unknown;\n    id?: unknown;\n    chatId?: string | number;\n    group_id?: string | number;\n    user_id?: string | number;\n}\n\ninterface OneBotMediaPayload {\n    type?: string;\n    file?: string;\n    url?: string;\n    caption?: string;\n    fileName?: string;\n}"
