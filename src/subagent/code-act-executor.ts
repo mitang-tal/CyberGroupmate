@@ -16,7 +16,7 @@ import type {
     CodeActReplyTask,
     SubagentCallback,
 } from "./types.js";
-import type { FactSearchResult, InteractionSearchResult, MemoryStoreV2 } from "../memory-v2/index.js";
+import type { FactSearchResult, InteractionSearchResult, MemoryStoreV2, RecentMessageEntry } from "../memory-v2/index.js";
 import { SandboxPool } from "../sandbox/sandbox-pool.js";
 import { NotificationCenter } from "../event/notification-center.js";
 import { runCodeActSession, SentMessageCollector, type SessionResult, type SentMessageRecord } from "../sandbox/session-runner.js";
@@ -40,7 +40,6 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { shouldCompact, compact as contextManagerCompact } from "../memory-v2/context-manager.js";
-import { formatTsForDisplay } from "../core/timezone.js";
 
 const log = createLogger("code-act-executor");
 
@@ -278,6 +277,35 @@ export interface SessionExecutionRecord {
     sentMessages: SentMessageRecord[];
     /** assistant 的思考摘要（去掉代码块后的文本） */
     thinkingSummary: string;
+}
+
+const SESSION_MESSAGE_ID_RE = /\[msgId:([^\]\r\n]+)\]/g;
+
+function extractSeenMessageIds(messages: SessionMessage[]): string[] {
+    const ids: string[] = [];
+    for (const msg of messages) {
+        for (const match of msg.content.matchAll(SESSION_MESSAGE_ID_RE)) {
+            const id = match[1]?.trim();
+            if (id && id !== "?") ids.push(id);
+        }
+    }
+    return ids;
+}
+
+function formatExecutionRecordForCompact(rec: SessionExecutionRecord): string | null {
+    const sentPart = rec.sentMessages.length > 0
+        ? `\n  已发消息: ${rec.sentMessages.map(m => `"${m.text.length > 80 ? m.text.slice(0, 80) + '...' : m.text}"`).join(" / ")}`
+        : "";
+    const thinkingPart = rec.thinkingSummary
+        ? `\n  思路: ${rec.thinkingSummary.slice(0, 200)}`
+        : "";
+
+    if (!sentPart && !thinkingPart && rec.endReason === "end_turn") {
+        return null;
+    }
+
+    const resultPart = rec.endReason === "end_turn" ? "" : `，结果: ${rec.endReason}`;
+    return `- ${rec.timestamp}${resultPart}${sentPart}${thinkingPart}`;
 }
 
 /**
@@ -1219,6 +1247,83 @@ export class CodeActExecutor {
         }
     }
 
+    private rebuildCompactedInteractionHistory(compactedMessages: SessionMessage[]): string | null {
+        if (!this.memory || compactedMessages.length === 0) return null;
+
+        const seenMessageIds = extractSeenMessageIds(compactedMessages);
+        if (seenMessageIds.length === 0) return null;
+
+        const firstMessageId = seenMessageIds[0];
+        const lastMessageId = seenMessageIds[seenMessageIds.length - 1];
+        let messages = this.memory.getMessagesBetweenIds(this.chatId, firstMessageId, lastMessageId);
+        let source = `memory range ${firstMessageId}..${lastMessageId}`;
+
+        if (messages.length === 0) {
+            // 边界消息缺失时退化为按已见 id 批量读取；这不能补回 agent 插话，
+            // 但至少比完全丢失被 compact 的原文更好。
+            const uniqueIds = [...new Set(seenMessageIds)];
+            messages = this.memory.getMessagesByIds(this.chatId, uniqueIds);
+            source = `memory ids ${uniqueIds.length}`;
+        }
+
+        if (messages.length === 0) return null;
+
+        const formatted = this.formatMemoryMessagesForHistory(messages);
+        if (!formatted) return null;
+
+        log.info("compactSession: 已从 memory 重建交互历史", {
+            chatId: this.chatId,
+            firstMessageId,
+            lastMessageId,
+            messages: messages.length,
+            source,
+        });
+
+        return [
+            "== 被压缩的交互历史（从 memory 重建） ==",
+            `范围: msgId:${firstMessageId} → msgId:${lastMessageId}；共 ${messages.length} 条`,
+            formatted,
+        ].join("\n");
+    }
+
+    private formatMemoryMessagesForHistory(messages: RecentMessageEntry[]): string {
+        const msgIdToName = new Map<string, string>();
+        for (const msg of messages) {
+            msgIdToName.set(msg.messageId, msg.displayName || `(uid:${msg.userId})`);
+        }
+
+        return messages.map(msg => {
+            let replyTo: string | undefined;
+            let replyToText: string | undefined;
+            if (msg.replyToMessageId) {
+                replyTo = msgIdToName.get(msg.replyToMessageId);
+                if (!replyTo && this.memory) {
+                    const replied = this.memory.getMessageById(this.chatId, msg.replyToMessageId);
+                    if (replied) {
+                        replyTo = replied.displayName || `(uid:${replied.userId})`;
+                        replyToText = replied.text || undefined;
+                    }
+                }
+                replyTo ??= `msg#${msg.replyToMessageId}`;
+            }
+
+            return formatMessageLine({
+                id: msg.messageId,
+                sender: msg.displayName || `(uid:${msg.userId})`,
+                text: msg.text,
+                timestamp: msg.timestamp,
+                replyTo,
+                replyToMsgId: msg.replyToMessageId,
+                replyToText,
+                mediaType: msg.mediaType,
+                mediaInfo: msg.mediaInfo,
+            }, {
+                includeMediaTags: true,
+                stickerDescriptionLookup: this.memory ?? undefined,
+            });
+        }).join("\n");
+    }
+
     /**
      * Fix 3: 两层智能 Compact
      *
@@ -1232,30 +1337,27 @@ export class CodeActExecutor {
     private async compactSession(): Promise<void> {
         const keep = Math.max(4, Math.floor(this.config.maxSessionMessages * 0.4));
         if (this.session.length <= keep) return;
+        const compactedMessages = this.session.slice(0, -keep);
+        const recentMessages = this.session.slice(-keep);
 
         // ═══ Layer 1: 结构化快速 compact ═══
         // 从 executionRecords 构建摘要
         const recordSummaries: string[] = [];
         for (const rec of this.executionRecords) {
-            const sentPart = rec.sentMessages.length > 0
-                ? `\n  已发消息: ${rec.sentMessages.map(m => `"${m.text.length > 80 ? m.text.slice(0, 80) + '...' : m.text}"`).join(" / ")}`
-                : "";
-            const thinkingPart = rec.thinkingSummary
-                ? `\n  思路: ${rec.thinkingSummary.slice(0, 200)}`
-                : "";
-            recordSummaries.push(
-                `- Task ${rec.taskId} (${rec.timestamp}): ${rec.endReason}, ${rec.turns} turns${sentPart}${thinkingPart}`
-            );
+            const summary = formatExecutionRecordForCompact(rec);
+            if (summary) recordSummaries.push(summary);
         }
 
         // 从 session 中提取所有 [📤 已发送消息确认] 段落（fallback，兜底 executionRecords 之外的）
         const sentConfirmations: string[] = [];
-        for (const msg of this.session) {
+        for (const msg of compactedMessages) {
             if (msg.role === "user" && msg.content.includes("[📤 已发送消息确认]")) {
                 const lines = msg.content.split("\n").filter(l => l.startsWith("- 发送到"));
                 sentConfirmations.push(...lines);
             }
         }
+
+        const rebuiltInteractionHistory = this.rebuildCompactedInteractionHistory(compactedMessages);
 
         // 构建 compact 摘要
         let compactContent = `[SESSION_HISTORY_COMPACT]\n== 之前执行了 ${this.executionCount} 次任务 ==`;
@@ -1266,6 +1368,9 @@ export class CodeActExecutor {
             // 如果没有 executionRecords（旧数据），用 session 中提取的兜底
             compactContent += `\n\n== 历史已发消息 ==\n${sentConfirmations.join("\n")}`;
         }
+        if (rebuiltInteractionHistory) {
+            compactContent += `\n\n${rebuiltInteractionHistory}`;
+        }
 
         const compactMsg: SessionMessage = {
             role: "user",
@@ -1274,7 +1379,7 @@ export class CodeActExecutor {
         };
 
         // 保留最近 keep 条消息 + compact 摘要
-        this.session = [compactMsg, ...this.session.slice(-keep)];
+        this.session = [compactMsg, ...recentMessages];
         // 清理已被 compact 的 executionRecords（保留最近 3 条）
         if (this.executionRecords.length > 3) {
             this.executionRecords = this.executionRecords.slice(-3);

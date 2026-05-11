@@ -212,6 +212,12 @@ describe("storeMessageBatch", () => {
         const row = db.prepare("SELECT reply_to_message_id FROM message_log WHERE message_id = '3' AND chat_id = ?").get("-100");
         assert.equal(row.reply_to_message_id, "2");
     });
+
+    it("getMessagesBetweenIds returns the full chronological window", () => {
+        mem.storeMessageBatch(baseMsgs);
+        const rows = mem.getMessagesBetweenIds("-100", "1", "3");
+        assert.deepEqual(rows.map(row => row.messageId), ["1", "2", "3"]);
+    });
 });
 
 // ─── 5. storeFact ───

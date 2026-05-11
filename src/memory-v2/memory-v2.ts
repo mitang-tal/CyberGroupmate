@@ -2524,6 +2524,53 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         return result;
     }
 
+    /** 按起止 messageId 重建一段时间连续的消息窗口（包含 agent 自己落盘的消息）。 */
+    getMessagesBetweenIds(chatId: string, startMessageId: string, endMessageId: string): RecentMessageEntry[] {
+        const start = this.getMessageById(chatId, startMessageId);
+        const end = this.getMessageById(chatId, endMessageId);
+        if (!start || !end) {
+            log.debug("getMessagesBetweenIds: boundary not found", {
+                chatId,
+                startMessageId,
+                endMessageId,
+                hasStart: !!start,
+                hasEnd: !!end,
+            });
+            return [];
+        }
+
+        const from = start.timestamp <= end.timestamp ? start.timestamp : end.timestamp;
+        const to = start.timestamp <= end.timestamp ? end.timestamp : start.timestamp;
+        const rows = this.db.prepare(
+            `SELECT message_id, chat_id, user_id, display_name, text, reply_to_message_id, timestamp, media_type, media_info
+             FROM message_log
+             WHERE chat_id = ?
+               AND timestamp >= ?
+               AND timestamp <= ?
+             ORDER BY timestamp ASC, rowid ASC`
+        ).all(chatId, from, to) as Record<string, unknown>[];
+
+        const result = rows.map((row): RecentMessageEntry => ({
+            messageId: row.message_id as string,
+            chatId: row.chat_id as string,
+            userId: row.user_id as string,
+            displayName: (row.display_name as string) ?? "",
+            text: (row.text as string) ?? "",
+            replyToMessageId: (row.reply_to_message_id as string) ?? undefined,
+            timestamp: row.timestamp as string,
+            mediaType: (row.media_type as string) ?? undefined,
+            mediaInfo: (row.media_info as string) ?? undefined,
+        }));
+
+        log.debug("getMessagesBetweenIds", {
+            chatId,
+            startMessageId,
+            endMessageId,
+            count: result.length,
+        });
+        return result;
+    }
+
     // ── Sticker 描述缓存 ──
 
     getStickerDescription(uniqueFileId: string): { description: string; emoji?: string; emojis?: string[] } | null {
