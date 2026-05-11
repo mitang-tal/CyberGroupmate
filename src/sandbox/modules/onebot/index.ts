@@ -11,6 +11,7 @@ import type { CapabilityRegistryEnv } from "../../capability-registry.js";
 import { resolve as pathResolve } from "node:path";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { loadBuiltinGuideContent } from "../../builtin-guides.js";
 
 // ─── 工具函数 ───
 
@@ -111,7 +112,29 @@ export function createOneBotClientProxy(
         recordSent(chatId, text);
     }
 
+    function useOneBotGuide(methodName: string): string {
+        const content = loadBuiltinGuideContent("onebot", methodName);
+        if (!content) throw new Error(`OneBot guide not found: ${methodName}`);
+        const wrapped = `\n═══ [OneBotGuide: ${methodName}] ═══\n${content}\n═══ [/OneBotGuide: ${methodName}] ═══\n`;
+        env.emitOutput(wrapped);
+        return wrapped;
+    }
+
     return {
+        useMessages: async () => useOneBotGuide("useMessages"),
+        useGroupAdministration: async () => useOneBotGuide("useGroupAdministration"),
+        useFiles: async () => useOneBotGuide("useFiles"),
+        useUsersAndProfile: async () => useOneBotGuide("useUsersAndProfile"),
+        useSystemUtilities: async () => useOneBotGuide("useSystemUtilities"),
+
+        getMessage: async (messageId: string | number) => {
+            const id = String(messageId ?? "").trim();
+            if (!id) throw new Error("onebot.getMessage: messageId is required");
+            const result = await env.callHost("onebot.getMessage", [id]);
+            env.emitOutput(`[QQ] getMessage ok msg=${id}`);
+            return result;
+        },
+
         sendText: async (chatId: string, text: string, opts?: { replyTo?: string | number }) => {
             if (shouldBlockDuplicate(String(chatId), text)) {
                 const warning = `[⚠ 运行时警告: 重复消息已拦截] 目标 chat=${String(chatId)} 的消息 "${text.length > 80 ? text.slice(0, 80) + '...' : text}" 与本次 session 中已发送的消息内容完全一致，已自动拦截。`;
@@ -289,6 +312,13 @@ export function createOneBotClientProxy(
             const localPath = saveDownloadedMedia(ref, buffer);
             env.emitOutput(`[QQ] downloadMedia ok file=${localPath}`);
             return localPath;
+        },
+        callApi: async (action: string, params?: Record<string, unknown>) => {
+            const normalizedAction = String(action ?? "").trim().replace(/^\/+/, "");
+            if (!normalizedAction) throw new Error("onebot.callApi: action is required");
+            const result = await env.callHost("onebot.callApi", [normalizedAction, params ?? {}]);
+            env.emitOutput(`[QQ] callApi ok action=${normalizedAction}`);
+            return result;
         },
     };
 }

@@ -21,7 +21,37 @@ interface OneBotMediaPayload {
     fileName?: string;
 }
 
+interface OneBotRawMessage {
+    message_id?: string | number;
+    real_id?: string | number;
+    time?: number;
+    message_type?: "private" | "group" | string;
+    sender?: Record<string, unknown>;
+    message?: unknown;
+    raw_message?: string;
+    [key: string]: unknown;
+}
+
 declare const onebot: {
+    // ─── 按需能力指南 ───
+    /** 加载 OneBot/NapCat 消息指南。用于消息检索、历史消息、已读、转发、合并转发和消息表情点赞等成组能力；调用本方法只披露指南。 */
+    useMessages(): Promise<string>;
+    /** 加载 OneBot/NapCat 群管理指南。用于群资料、成员列表、禁言、踢人、管理员、公告、精华消息和群待办等成组能力；调用本方法只披露指南。 */
+    useGroupAdministration(): Promise<string>;
+    /** 加载 OneBot/NapCat 文件指南。用于图片/语音/文件解析、群文件系统、文件 URL 和跨机器媒体处理注意事项；调用本方法只披露指南。 */
+    useFiles(): Promise<string>;
+    /** 加载 OneBot/NapCat 用户与资料指南。用于好友列表、陌生人资料、最近会话、点赞、好友请求和账号资料等成组能力；调用本方法只披露指南。 */
+    useUsersAndProfile(): Promise<string>;
+    /** 加载 OneBot/NapCat 工具指南。用于版本/状态探测、发送能力检查、OCR、URL 安全检查、频道资料和 AI 语音等低频能力；调用本方法只披露指南。 */
+    useSystemUtilities(): Promise<string>;
+
+    /**
+     * 根据 OneBot 消息 ID 获取消息详情。
+     * @example
+     * const msg = await onebot.getMessage(794582600);
+     */
+    getMessage(messageId: string | number): Promise<OneBotRawMessage>;
+
     /**
      * 发送文本消息。
      * @example

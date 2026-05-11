@@ -12,6 +12,12 @@ import type { MediaDownloader } from "../core/media-downloader.js";
 import { ensureSupportedFormat } from "../core/vision-processor.js";
 import { composeChatId, ensureCompositeId, parseChatId } from "../core/chat-id.js";
 import { createLogger } from "../core/logger.js";
+import {
+    getOneBotNapCatGuideGroupForAction,
+    getOneBotNapCatWriteTarget,
+    isAllowedOneBotNapCatAction,
+    normalizeOneBotNapCatAction,
+} from "../core/onebot-napcat-passthrough.js";
 import { WebSocket } from "ws";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
@@ -332,6 +338,21 @@ export class OneBotAdapter implements PlatformAdapter {
         }
 
         switch (method) {
+            case "onebot.getMessage":
+            case "qq.getMessage": {
+                const messageId = String(args[0] ?? "").trim();
+                if (!messageId) throw new Error("onebot.getMessage: messageId is required");
+                return this.getMessage(messageId);
+            }
+            case "onebot.callApi":
+            case "qq.callApi": {
+                const action = String(args[0] ?? "").trim();
+                const rawParams = args[1];
+                const params = rawParams && typeof rawParams === "object" && !Array.isArray(rawParams)
+                    ? rawParams as Record<string, unknown>
+                    : {};
+                return this.callNapCatGuideAction(action, params);
+            }
             case "onebot.sendText":
             case "qq.sendText": {
                 const chatId = ensureCompositeId("onebot", String(args[0] ?? ""));
@@ -400,6 +421,44 @@ export class OneBotAdapter implements PlatformAdapter {
         }
     }
 
+    private async getMessage(messageId: string): Promise<unknown> {
+        const id = /^-?\d+$/.test(messageId) ? Number(messageId) : messageId;
+        const result = await this.callAction("get_msg", { message_id: id }) as Record<string, unknown>;
+        return result?.data ?? result;
+    }
+
+    private async callNapCatGuideAction(action: string, params: Record<string, unknown>): Promise<unknown> {
+        const normalizedAction = normalizeOneBotNapCatAction(action);
+        if (!normalizedAction) throw new Error("onebot.callApi: action is required");
+        if (!isAllowedOneBotNapCatAction(normalizedAction)) {
+            throw new Error(`onebot.callApi: NapCat action '${normalizedAction}' is not exposed through built-in guides`);
+        }
+
+        const targetChatId = getOneBotNapCatWriteTarget(normalizedAction, params);
+        if (targetChatId && this.isChatMuted(targetChatId)) {
+            throw new Error(`[禁言中] 你在该聊天已被 /mute，OneBot/NapCat 写操作 ${normalizedAction} 已被抑制。`);
+        }
+
+        const preparedParams = this.prepareNapCatGuideParams(normalizedAction, params);
+        const group = getOneBotNapCatGuideGroupForAction(normalizedAction);
+        log.debug("OneBot NapCat passthrough", { action: normalizedAction, guide: group });
+        return this.callAction(normalizedAction, preparedParams);
+    }
+
+    private prepareNapCatGuideParams(action: string, params: Record<string, unknown>): Record<string, unknown> {
+        const prepared = { ...params };
+        const localFileParamActions = new Set(["get_image", "get_record", "ocr_image", "set_qq_avatar"]);
+        if (!localFileParamActions.has(action)) return prepared;
+
+        for (const key of ["file", "image"]) {
+            const value = prepared[key];
+            if (typeof value !== "string") continue;
+            const dataUrl = this.toDataUrlIfLocalFile(value);
+            if (dataUrl) prepared[key] = dataUrl;
+        }
+        return prepared;
+    }
+
     async downloadMedia(_rawMessage: unknown, mediaRef: string): Promise<Buffer> {
         const ref = mediaRef.trim();
         if (!ref) throw new Error("downloadMedia: mediaRef is required");
@@ -432,9 +491,7 @@ export class OneBotAdapter implements PlatformAdapter {
     }
 
     private async downloadMediaFromMessage(messageId: string): Promise<Buffer> {
-        const id = /^-?\d+$/.test(messageId) ? Number(messageId) : messageId;
-        const result = await this.callAction("get_msg", { message_id: id }) as Record<string, unknown>;
-        const data = (result?.data ?? result) as Record<string, unknown> | undefined;
+        const data = await this.getMessage(messageId) as Record<string, unknown> | undefined;
         const message = data?.message ?? data?.raw_message ?? "";
         const segments = this.normalizeMessageSegments(message);
         const mediaInfo = this.extractMediaInfo(segments);

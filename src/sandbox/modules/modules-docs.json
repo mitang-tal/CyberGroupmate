@@ -202,6 +202,36 @@
     "description": "onebot.d.ts — QQ / OneBot 平台 API 系统注入的 OneBot host proxy 接口。 也会以 `qq` 别名暴露给 sandbox。",
     "methods": [
       {
+        "name": "useMessages",
+        "brief": "加载 OneBot/NapCat 消息指南。用于消息检索、历史消息、已读、转发、合并转发和消息表情点赞等成组能力；调用本方法只披露指南。",
+        "fullDoc": "```typescript\nuseMessages(): Promise<string>\n```\n\n\n加载 OneBot/NapCat 消息指南。用于消息检索、历史消息、已读、转发、合并转发和消息表情点赞等成组能力；调用本方法只披露指南。"
+      },
+      {
+        "name": "useGroupAdministration",
+        "brief": "加载 OneBot/NapCat 群管理指南。用于群资料、成员列表、禁言、踢人、管理员、公告、精华消息和群待办等成组能力；调用本方法只披露指南。",
+        "fullDoc": "```typescript\nuseGroupAdministration(): Promise<string>\n```\n\n\n加载 OneBot/NapCat 群管理指南。用于群资料、成员列表、禁言、踢人、管理员、公告、精华消息和群待办等成组能力；调用本方法只披露指南。"
+      },
+      {
+        "name": "useFiles",
+        "brief": "加载 OneBot/NapCat 文件指南。用于图片/语音/文件解析、群文件系统、文件 URL 和跨机器媒体处理注意事项；调用本方法只披露指南。",
+        "fullDoc": "```typescript\nuseFiles(): Promise<string>\n```\n\n\n加载 OneBot/NapCat 文件指南。用于图片/语音/文件解析、群文件系统、文件 URL 和跨机器媒体处理注意事项；调用本方法只披露指南。"
+      },
+      {
+        "name": "useUsersAndProfile",
+        "brief": "加载 OneBot/NapCat 用户与资料指南。用于好友列表、陌生人资料、最近会话、点赞、好友请求和账号资料等成组能力；调用本方法只披露指南。",
+        "fullDoc": "```typescript\nuseUsersAndProfile(): Promise<string>\n```\n\n\n加载 OneBot/NapCat 用户与资料指南。用于好友列表、陌生人资料、最近会话、点赞、好友请求和账号资料等成组能力；调用本方法只披露指南。"
+      },
+      {
+        "name": "useSystemUtilities",
+        "brief": "加载 OneBot/NapCat 工具指南。用于版本/状态探测、发送能力检查、OCR、URL 安全检查、频道资料和 AI 语音等低频能力；调用本方法只披露指南。",
+        "fullDoc": "```typescript\nuseSystemUtilities(): Promise<string>\n```\n\n\n加载 OneBot/NapCat 工具指南。用于版本/状态探测、发送能力检查、OCR、URL 安全检查、频道资料和 AI 语音等低频能力；调用本方法只披露指南。"
+      },
+      {
+        "name": "getMessage",
+        "brief": "根据 OneBot 消息 ID 获取消息详情。",
+        "fullDoc": "```typescript\ngetMessage(messageId: string | number): Promise<OneBotRawMessage>\n```\n\n\n根据 OneBot 消息 ID 获取消息详情。\n\n**示例：**\n```typescript\nconst msg = await onebot.getMessage(794582600);\n```"
+      },
+      {
         "name": "sendText",
         "brief": "发送文本消息。",
         "fullDoc": "```typescript\nsendText(chatId: string | number, text: string, opts?: { replyTo?: string | number }): Promise<OneBotMessageAck | null>\n```\n\n\n发送文本消息。\n\n**示例：**\n```typescript\nawait onebot.sendText(chatId, \"你好\");\n```"
@@ -242,7 +272,7 @@
         "fullDoc": "```typescript\ndownloadMedia(mediaRef: string | number): Promise<string>\n```\n\n\n下载 QQ 媒体到 CyberGroupmate 本机 workspace/Downloads/。\nmediaRef 可以是图片/媒体 file、URL、base64/data URL，也可以直接传 OneBot 消息 ID；\n传消息 ID 时会通过 NapCat get_msg 解析消息里的图片/媒体段。\n\n**示例：**\n```typescript\nconst localPath = await onebot.downloadMedia(794582600);\n```"
       }
     ],
-    "typeDefs": "interface OneBotMessageAck {\n    message_id?: unknown;\n    id?: unknown;\n    chatId?: string | number;\n    group_id?: string | number;\n    user_id?: string | number;\n}\n\ninterface OneBotMediaPayload {\n    type?: string;\n    file?: string;\n    url?: string;\n    caption?: string;\n    fileName?: string;\n}"
+    "typeDefs": "interface OneBotMessageAck {\n    message_id?: unknown;\n    id?: unknown;\n    chatId?: string | number;\n    group_id?: string | number;\n    user_id?: string | number;\n}\n\ninterface OneBotMediaPayload {\n    type?: string;\n    file?: string;\n    url?: string;\n    caption?: string;\n    fileName?: string;\n}\n\ninterface OneBotRawMessage {\n    message_id?: string | number;\n    real_id?: string | number;\n    time?: number;\n    message_type?: \"private\" | \"group\" | string;\n    sender?: Record<string, unknown>;\n    message?: unknown;\n    raw_message?: string;\n    [key: string]: unknown;\n}"
   },
   {
     "name": "runtime",

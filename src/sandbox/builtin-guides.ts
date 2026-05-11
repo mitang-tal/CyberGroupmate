@@ -24,6 +24,41 @@ const __dirname = dirname(__filename);
 
 const BUILTIN_GUIDES: BuiltinGuideSpec[] = [
     {
+        moduleName: "onebot",
+        methodName: "useMessages",
+        file: "onebot/useMessages.md",
+        description: "QQ / OneBot 平台 API",
+        brief: "加载 OneBot/NapCat 消息指南。用于消息检索、历史消息、已读、转发、合并转发和消息表情点赞等成组能力；本方法只披露指南。",
+    },
+    {
+        moduleName: "onebot",
+        methodName: "useGroupAdministration",
+        file: "onebot/useGroupAdministration.md",
+        description: "QQ / OneBot 平台 API",
+        brief: "加载 OneBot/NapCat 群管理指南。用于群资料、成员列表、禁言、踢人、管理员、公告、精华消息和群待办等成组能力；本方法只披露指南。",
+    },
+    {
+        moduleName: "onebot",
+        methodName: "useFiles",
+        file: "onebot/useFiles.md",
+        description: "QQ / OneBot 平台 API",
+        brief: "加载 OneBot/NapCat 文件指南。用于图片/语音/文件解析、群文件系统、文件 URL 和跨机器媒体处理注意事项；本方法只披露指南。",
+    },
+    {
+        moduleName: "onebot",
+        methodName: "useUsersAndProfile",
+        file: "onebot/useUsersAndProfile.md",
+        description: "QQ / OneBot 平台 API",
+        brief: "加载 OneBot/NapCat 用户与资料指南。用于好友列表、陌生人资料、最近会话、点赞、好友请求和账号资料等成组能力；本方法只披露指南。",
+    },
+    {
+        moduleName: "onebot",
+        methodName: "useSystemUtilities",
+        file: "onebot/useSystemUtilities.md",
+        description: "QQ / OneBot 平台 API",
+        brief: "加载 OneBot/NapCat 工具指南。用于版本/状态探测、发送能力检查、OCR、URL 安全检查、频道资料和 AI 语音等低频能力；本方法只披露指南。",
+    },
+    {
         moduleName: "telegram",
         methodName: "useInlineBot",
         file: "telegram/useInlineBot.md",
