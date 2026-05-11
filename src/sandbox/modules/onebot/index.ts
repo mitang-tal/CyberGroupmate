@@ -26,7 +26,11 @@ export function formatOneBotAck(prefix: string, payload: unknown): string {
 
 // ─── OneBot 客户端代理 ───
 
-export function createOneBotClientProxy(env: CapabilityRegistryEnv, sentHistory: Map<string, Set<string>>) {
+export function createOneBotClientProxy(
+    env: CapabilityRegistryEnv,
+    sentHistory: Map<string, Set<string>>,
+    deduplicateSentMessages = true,
+) {
     /**
      * 将可能的工作区相对路径解析为绝对路径。
      */
@@ -38,24 +42,36 @@ export function createOneBotClientProxy(env: CapabilityRegistryEnv, sentHistory:
         return file;
     }
 
-    /**
-     * 检查消息是否是重复发送。
-     */
+    /** 检查消息是否是已成功发送过的重复消息。 */
     function isDuplicate(chatId: string, text: string): boolean {
         const key = String(chatId);
         const existing = sentHistory.get(key);
-        if (existing && existing.has(text)) return true;
+        return existing?.has(text) ?? false;
+    }
+
+    /** 仅在平台发送成功后记录，避免失败/拦截调用污染去重历史。 */
+    function recordSent(chatId: string, text: string): void {
+        const key = String(chatId);
+        const existing = sentHistory.get(key);
         if (!existing) {
             sentHistory.set(key, new Set([text]));
         } else {
             existing.add(text);
         }
-        return false;
+    }
+
+    function shouldBlockDuplicate(chatId: string, text: string): boolean {
+        return deduplicateSentMessages && isDuplicate(chatId, text);
+    }
+
+    function recordSentIfDedupEnabled(chatId: string, text: string): void {
+        if (!deduplicateSentMessages) return;
+        recordSent(chatId, text);
     }
 
     return {
         sendText: async (chatId: string, text: string, opts?: { replyTo?: string | number }) => {
-            if (isDuplicate(String(chatId), text)) {
+            if (shouldBlockDuplicate(String(chatId), text)) {
                 const warning = `[⚠ 运行时警告: 重复消息已拦截] 目标 chat=${String(chatId)} 的消息 "${text.length > 80 ? text.slice(0, 80) + '...' : text}" 与本次 session 中已发送的消息内容完全一致，已自动拦截。`;
                 env.emitOutput(warning);
                 env.notifyHost({
@@ -68,6 +84,7 @@ export function createOneBotClientProxy(env: CapabilityRegistryEnv, sentHistory:
                 return null;
             }
             const sent = await env.callHost("onebot.sendText", [chatId, text, opts]);
+            recordSentIfDedupEnabled(String(chatId), text);
             env.emitOutput(formatOneBotAck("[QQ] sendText ok", sent));
             env.notifyHost({
                 type: "system.agent_message_sent",
@@ -89,7 +106,7 @@ export function createOneBotClientProxy(env: CapabilityRegistryEnv, sentHistory:
                 else if (typeof m.type === "string") mediaIdentifier = `[media:type=${m.type}]`;
             }
             const mediaText = opts?.caption ? `${opts.caption}|${mediaIdentifier}` : mediaIdentifier;
-            if (isDuplicate(String(chatId), mediaText)) {
+            if (shouldBlockDuplicate(String(chatId), mediaText)) {
                 const preview = mediaText.length > 80 ? mediaText.slice(0, 80) + '...' : mediaText;
                 const warning = `[⚠ 运行时警告: 重复消息已拦截] 目标 chat=${String(chatId)} 的媒体消息 "${preview}" 与本次 session 中已发送的内容一致，已自动拦截。`;
                 env.emitOutput(warning);
@@ -112,6 +129,7 @@ export function createOneBotClientProxy(env: CapabilityRegistryEnv, sentHistory:
             }
 
             const sent = await env.callHost("onebot.sendMedia", [chatId, processedMedia, opts]);
+            recordSentIfDedupEnabled(String(chatId), mediaText);
             env.emitOutput(formatOneBotAck("[QQ] sendMedia ok", sent));
             env.notifyHost({
                 type: "system.agent_message_sent",
@@ -125,7 +143,7 @@ export function createOneBotClientProxy(env: CapabilityRegistryEnv, sentHistory:
         },
         sendFile: async (chatId: string, filePath: string, opts?: { replyTo?: string | number; caption?: string; fileName?: string }) => {
             const fileText = opts?.caption ?? `[file:${filePath}]`;
-            if (isDuplicate(String(chatId), fileText)) {
+            if (shouldBlockDuplicate(String(chatId), fileText)) {
                 const warning = `[⚠ 运行时警告: 重复消息已拦截] 目标 chat=${String(chatId)} 的文件消息已重复，已自动拦截。`;
                 env.emitOutput(warning);
                 env.notifyHost({
@@ -140,6 +158,7 @@ export function createOneBotClientProxy(env: CapabilityRegistryEnv, sentHistory:
 
             const absFilePath = typeof filePath === "string" ? String(resolveLocalFile(filePath)) : filePath;
             const sent = await env.callHost("onebot.sendFile", [chatId, absFilePath, opts]);
+            recordSentIfDedupEnabled(String(chatId), fileText);
             env.emitOutput(formatOneBotAck("[QQ] sendFile ok", sent));
             env.notifyHost({
                 type: "system.agent_message_sent",
@@ -157,7 +176,7 @@ export function createOneBotClientProxy(env: CapabilityRegistryEnv, sentHistory:
                     ? `[sticker:${sticker}]`
                     : `[sticker:${(sticker as Record<string, unknown>).uniqueFileId ?? (sticker as Record<string, unknown>).file ?? "unknown"}]`
             );
-            if (isDuplicate(String(chatId), stickerText)) {
+            if (shouldBlockDuplicate(String(chatId), stickerText)) {
                 const warning = `[⚠ 运行时警告: 重复消息已拦截] 目标 chat=${String(chatId)} 的表情包消息已重复，已自动拦截。`;
                 env.emitOutput(warning);
                 env.notifyHost({
@@ -173,6 +192,7 @@ export function createOneBotClientProxy(env: CapabilityRegistryEnv, sentHistory:
                 ? sticker
                 : { ...sticker, file: resolveLocalFile((sticker as Record<string, unknown>).file) };
             const sent = await env.callHost("onebot.sendSticker", [chatId, processedSticker, opts]);
+            recordSentIfDedupEnabled(String(chatId), stickerText);
             env.emitOutput(formatOneBotAck("[QQ] sendSticker ok", sent));
             env.notifyHost({
                 type: "system.agent_message_sent",
@@ -186,7 +206,7 @@ export function createOneBotClientProxy(env: CapabilityRegistryEnv, sentHistory:
         },
         sendFace: async (chatId: string, faceId: string | number, opts?: { replyTo?: string | number; text?: string }) => {
             const text = `[face:${String(faceId)}]${opts?.text ? ` ${opts.text}` : ""}`;
-            if (isDuplicate(String(chatId), text)) {
+            if (shouldBlockDuplicate(String(chatId), text)) {
                 const warning = `[⚠ 运行时警告: 重复消息已拦截] 目标 chat=${String(chatId)} 的 QQ 表情消息已重复，已自动拦截。`;
                 env.emitOutput(warning);
                 env.notifyHost({
@@ -199,6 +219,7 @@ export function createOneBotClientProxy(env: CapabilityRegistryEnv, sentHistory:
                 return null;
             }
             const sent = await env.callHost("onebot.sendFace", [chatId, String(faceId), opts]);
+            recordSentIfDedupEnabled(String(chatId), text);
             env.emitOutput(formatOneBotAck("[QQ] sendFace ok", sent));
             env.notifyHost({
                 type: "system.agent_message_sent",

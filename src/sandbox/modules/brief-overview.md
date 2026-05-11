@@ -52,6 +52,8 @@ modules/memory.d.ts — 记忆检索模块类型定义
 - `searchMessages`: searchMessages(query, options?)
 - `getUserProfile`: getUserProfile(userId, chatId?)
 - `getRecentInteractions`: getRecentInteractions(chatId?, userId?, limit?)
+- `resolvePerson`: resolvePerson(query, options?)
+- `getPersonDossier`: getPersonDossier(queryOrUserId, options?)
 - `semanticSearch`: semanticSearch(query, options?)
 
 ## onebot
@@ -108,12 +110,22 @@ shared/skills.d.ts — Skills 高层能力 + 管理接口
 ## telegram
 telegram.d.ts — Telegram 平台 API 这是系统注入的 Telegram host proxy 的接口子集。 提供给 Agent 在 sandbox 执行时作为 TypeScript 强类型上下文参考。 平台连接与消息监听由宿主侧官方 adapter 管理。
 
+- `useInlineBot`: 加载 inline bot 使用指南。用于像 Telegram 客户端输入 `@bot query` 一样查询 inline bot 并发送某个结果；调用本方法只披露指南，不会执行实际发送。
+- `useStories`: 加载 Stories 使用指南。用于读取、发布、编辑、删除、置顶 Story，以及查看互动和观看者；调用本方法只披露指南，不会执行实际 Story 操作。
+- `usePolls`: 加载投票流程指南。用于创建投票/测验、读取投票结果等成组流程；调用本方法只披露相关 API，不会发起投票。
+- `usePeerResolution`: 加载 peer 解析指南。用于处理 PEER_ID_INVALID、access hash 缺失、裸数字 user id 无法发送等问题；调用本方法只披露排障流程。
+- `useMessageSearch`: 加载历史消息检索指南。用于主动爬楼、搜索视野外上下文或流式遍历历史；调用本方法只披露检索 API 和使用流程。
+- `useAccountProfile`: 加载账号资料指南。用于修改 bio、姓名、用户名、头像、生日、emoji status、close friends 等个人资料；调用本方法只披露指南，不直接修改账号。
+- `useAdvancedMessages`: 加载高级消息指南。用于复制、评论、引用、定时消息、网页预览、reaction 用户和消息关联查询等成组能力；调用本方法只披露指南。
+- `useChatAdministration`: 加载群组/频道管理指南。用于建群建频道、成员权限、管理员、标题描述头像、慢速模式和内容保护等管理操作；调用本方法只披露指南。
+- `useInvites`: 加载邀请链接与入群请求指南。用于创建/编辑/撤销邀请链接、查看邀请成员、处理 join request 或预览邀请链接；调用本方法只披露指南。
+- `useForumTopics`: 加载论坛话题指南。用于确认群是否开启 Forum、列出话题或定位 topic id；调用本方法只披露相关 API。
 - `sendText`: 发送普通文本消息
 - `sendMedia`: 发送媒体消息。支持 URL 和本地文件路径（支持绝对路径或基于 cwd 工作区的相对路径）。
 - `sendFile`: 发送磁盘文件到聊天。支持绝对路径或基于 cwd 的相对路径。host 侧读取文件并上传。始终作为文件/文档发送。
 - `sendSticker`: 发送贴纸。通过 uniqueFileId 引用本地已缓存的贴纸文件。
 - `sendMediaGroup`: 发送媒体相册（多张图片/视频合并为一组）。 第一个媒体项的 caption 将作为整组的文案。
-- `sendPoll`: 发起投票或测验。
+- `forwardMessage`: 转发一条或多条已有消息到目标聊天，用于复读、搬运或保留原消息来源。 支持隐藏原作者/原 caption；目标聊天放第一个参数，便于遵守绑定聊天写限制。
 - `sendReaction`: 对消息发送表情表态。传 null 以撤销表态。
 - `editMessage`: 编辑已发送的消息文本。
 - `deleteMessages`: 删除一条或多条消息。
@@ -122,19 +134,12 @@ telegram.d.ts — Telegram 平台 API 这是系统注入的 Telegram host proxy 
 - `getMe`: 获取当前登录机器人的基础信息
 - `getChat`: 精确获取指定会话的基础信息
 - `getUser`: 精确获取指定用户的基础信息
-- `getDialogs`: 获取最近的对话列表（包含 peer、最后一条消息、未读数）
 - `getFullUser`: 获取用户的完整资料（包含个人简介 bio 等）。
 - `getFullChat`: 获取群组/频道的完整资料（包含群描述 about、成员数等）。
 - `getChatMembers`: 分页拉取群组成员列表
-- `getHistory`: 拉取指定会话的历史消息（一次性返回列表）
 - `getMessages`: 按消息 ID 精确获取一条或多条消息。（在别人回复或者提及某消息但是你看不见的时候，善用该函数爬楼获取上下文）
-- `searchMessages`: 在群组内搜索消息。（可主动利用该函数获取视野外上下文信息）
-- `getForumTopics`: 获取指定群组的论坛板块（话题）列表。要求该群组已开启 Forum 模式。
-- `getPollResults`: 主动拉取某条投票消息的最新计票结果。
 - `getMessageReactions`: 主动拉取某条消息的表态（Reaction）汇总数据。
 - `downloadMedia`: 下载媒体文件的二进制数据。返回 base64 编码的 buffer 和文件大小。 需要传入通过 mediaInfo.fileId 获取的文件标识符。
-- `iterHistory`: 以异步迭代器方式遍历历史消息，用于深入流式检索
-- `iterDialogs`: 以异步迭代器方式遍历最近的对话列表
 - `joinChat`: 加入一个群聊或频道
 - `leaveChat`: 退出一个群聊或频道
 - `readHistory`: 将指定会话的所有未读消息标记为已读
