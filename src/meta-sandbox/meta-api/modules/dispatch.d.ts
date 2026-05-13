@@ -44,12 +44,15 @@ interface DispatchedTaskStatus {
     contentDirection: string;
     toneGuidance?: string;
     status: "PENDING" | "RUNNING" | "COMPLETED" | "ERROR" | "SKIPPED" | "TIMEOUT";
-    createdAt: string;
-    updatedAt: string;
-    completedAt?: string;
+    /** Unix epoch milliseconds. */
+    createdAt: number;
+    /** Unix epoch milliseconds. */
+    updatedAt: number;
+    /** Unix epoch milliseconds. */
+    completedAt?: number;
     sessionId?: string;
     summary?: string;
-    sentMessages?: Array<{ messageId?: string; text: string; timestamp: string }>;
+    sentMessages?: Array<{ messageId?: string; text: string; timestamp: number }>;
     error?: string;
 }
 

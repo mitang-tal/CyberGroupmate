@@ -162,7 +162,7 @@ export function createTelegramClientProxy(
                 method,
                 chatId: args.length > 0 ? String(args[0]) : undefined,
                 error: base,
-                timestamp: new Date().toISOString(),
+                timestamp: Date.now(),
             });
             throw new Error(`${base}\n\n${guidance}`);
         }
@@ -213,7 +213,7 @@ export function createTelegramClientProxy(
                     scene: "telegram",
                     chatId: String(chatId),
                     text,
-                    timestamp: new Date().toISOString(),
+                    timestamp: Date.now(),
                 });
                 return null;
             }
@@ -228,7 +228,7 @@ export function createTelegramClientProxy(
                 messageId: typeof sent === "object" && sent && "id" in sent ? (sent as { id?: unknown }).id : undefined,
                 text,
                 replyToMessageId: opts?.replyTo,
-                timestamp: new Date().toISOString(),
+                timestamp: Date.now(),
             });
             return sent;
         },
@@ -243,7 +243,7 @@ export function createTelegramClientProxy(
                     scene: "telegram",
                     chatId: String(chatId),
                     text: mediaText,
-                    timestamp: new Date().toISOString(),
+                    timestamp: Date.now(),
                 });
                 return null;
             }
@@ -270,7 +270,7 @@ export function createTelegramClientProxy(
                 chatId: String(chatId),
                 messageId: typeof sent === "object" && sent && "id" in sent ? (sent as { id?: unknown }).id : undefined,
                 text: opts?.caption ?? "[media]",
-                timestamp: new Date().toISOString(),
+                timestamp: Date.now(),
             });
             return sent;
         },
@@ -289,7 +289,7 @@ export function createTelegramClientProxy(
                     scene: "telegram",
                     chatId: String(chatId),
                     text: fileText,
-                    timestamp: new Date().toISOString(),
+                    timestamp: Date.now(),
                 });
                 return null;
             }
@@ -305,7 +305,7 @@ export function createTelegramClientProxy(
                 messageId: typeof sent === "object" && sent && "id" in sent ? (sent as { id?: unknown }).id : undefined,
                 text: opts?.caption ?? `[file:${filePath}]`,
                 replyToMessageId: opts?.replyTo,
-                timestamp: new Date().toISOString(),
+                timestamp: Date.now(),
             });
             return sent;
         },
@@ -319,7 +319,7 @@ export function createTelegramClientProxy(
                 chatId: String(chatId),
                 messageId: typeof sent === "object" && sent && "id" in sent ? (sent as { id?: unknown }).id : undefined,
                 text: `[🎭 贴纸: ${uniqueFileId}]`,
-                timestamp: new Date().toISOString(),
+                timestamp: Date.now(),
             });
             return sent;
         },
@@ -391,7 +391,7 @@ export function createTelegramClientProxy(
                 chatId: String(chatId),
                 text: `[inline-bot-result:${resultId}]`,
                 replyToMessageId: opts?.replyTo,
-                timestamp: new Date().toISOString(),
+                timestamp: Date.now(),
             });
             return sent;
         },
@@ -431,7 +431,7 @@ export function createTelegramClientProxy(
                     scene: "telegram",
                     chatId: String(chatId),
                     text: mediaGroupText,
-                    timestamp: new Date().toISOString(),
+                    timestamp: Date.now(),
                 });
                 return null;
             }
@@ -456,7 +456,7 @@ export function createTelegramClientProxy(
                 scene: "telegram",
                 chatId: String(chatId),
                 text: mediaGroupText,
-                timestamp: new Date().toISOString(),
+                timestamp: Date.now(),
             });
             return sent;
         },
@@ -481,7 +481,7 @@ export function createTelegramClientProxy(
                 chatId: String(toChatId),
                 messageId: sentMessageId,
                 text: `[forward:${String(fromChatId)}:${ids.join(",")}]`,
-                timestamp: new Date().toISOString(),
+                timestamp: Date.now(),
             });
             return hydrated;
         },
@@ -496,7 +496,7 @@ export function createTelegramClientProxy(
                     scene: "telegram",
                     chatId: String(chatId),
                     text: pollText,
-                    timestamp: new Date().toISOString(),
+                    timestamp: Date.now(),
                 });
                 return null;
             }
@@ -508,7 +508,7 @@ export function createTelegramClientProxy(
                 scene: "telegram",
                 chatId: String(chatId),
                 text: pollText,
-                timestamp: new Date().toISOString(),
+                timestamp: Date.now(),
             });
             return sent;
         },

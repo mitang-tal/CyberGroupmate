@@ -13,6 +13,7 @@ import type { MetaSandbox } from "../meta-sandbox/meta-sandbox.js";
 import { runMetaSession, type MetaLLMCaller, type MetaSessionResult } from "../meta-sandbox/meta-session-runner.js";
 import { buildMetaApiPrefixMap, buildMetaApiReference, lookupMetaApiDocs } from "../meta-sandbox/meta-api/module-registry.js";
 import { loadConfig } from "../core/config.js";
+import { sanitizePromptTimestamps } from "../core/timezone.js";
 import { generateModuleRoster } from "../sandbox/modules/module-registry.js";
 import type { ActiveUserProfile, AttendResult, AttentionQueueEntry, AttentionRecentMessage, MetaSessionHistoryEntry, SubagentCallback, TopicDigest } from "../subagent/types.js";
 import type { GlobalState } from "./global-state.js";
@@ -317,7 +318,7 @@ function normalizeMetaSessionHistoryContent(message: Pick<ChatMessage, "role" | 
     ) {
         return `${content}\n${META_END_TURN_MARKER}`;
     }
-    return content;
+    return sanitizePromptTimestamps(content);
 }
 
 function isMetaRunnerNotice(content: string): boolean {
@@ -344,7 +345,7 @@ function buildHistorySeedMessage(contextManifest: ContextManifest): MetaHistoryM
 
     return {
         role: "user",
-        content: sections.map((section) => section.sentContent).join("\n\n").trim(),
+        content: sanitizePromptTimestamps(sections.map((section) => section.sentContent).join("\n\n").trim()),
     };
 }
 

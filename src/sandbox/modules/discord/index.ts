@@ -117,7 +117,7 @@ export function createDiscordClientProxy(
                     scene: "discord",
                     chatId: channelId,
                     text,
-                    timestamp: new Date().toISOString(),
+                    timestamp: Date.now(),
                 });
                 return null;
             }
@@ -132,7 +132,7 @@ export function createDiscordClientProxy(
                 messageId: typeof sent === "object" && sent && "id" in sent ? (sent as { id?: unknown }).id : undefined,
                 text,
                 replyToMessageId: opts?.replyTo,
-                timestamp: new Date().toISOString(),
+                timestamp: Date.now(),
             });
             return sent;
         },
@@ -148,7 +148,7 @@ export function createDiscordClientProxy(
                     scene: "discord",
                     chatId: channelId,
                     text: mediaText,
-                    timestamp: new Date().toISOString(),
+                    timestamp: Date.now(),
                 });
                 return null;
             }
@@ -174,7 +174,7 @@ export function createDiscordClientProxy(
                 chatId: channelId,
                 messageId: typeof sent === "object" && sent && "id" in sent ? (sent as { id?: unknown }).id : undefined,
                 text: opts?.caption ?? "[media]",
-                timestamp: new Date().toISOString(),
+                timestamp: Date.now(),
             });
             return sent;
         },

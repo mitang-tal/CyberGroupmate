@@ -25,9 +25,9 @@ export const todoModule = {
     get: async (key: string): Promise<{
         key: string;
         content: string;
-        dueAt: string | null;
-        createdAt: string;
-        updatedAt: string;
+        dueAt: number | null;
+        createdAt: number;
+        updatedAt: number;
         expired: boolean;
     } | null> => {
         if (!_callbacks) throw new Error("Todo module not initialized");
@@ -35,9 +35,9 @@ export const todoModule = {
         return result as {
             key: string;
             content: string;
-            dueAt: string | null;
-            createdAt: string;
-            updatedAt: string;
+            dueAt: number | null;
+            createdAt: number;
+            updatedAt: number;
             expired: boolean;
         } | null;
     },
@@ -48,9 +48,9 @@ export const todoModule = {
     list: async (options?: { includeExpired?: boolean }): Promise<Array<{
         key: string;
         content: string;
-        dueAt: string | null;
-        createdAt: string;
-        updatedAt: string;
+        dueAt: number | null;
+        createdAt: number;
+        updatedAt: number;
         expired: boolean;
     }>> => {
         if (!_callbacks) throw new Error("Todo module not initialized");
@@ -58,9 +58,9 @@ export const todoModule = {
         return result as Array<{
             key: string;
             content: string;
-            dueAt: string | null;
-            createdAt: string;
-            updatedAt: string;
+            dueAt: number | null;
+            createdAt: number;
+            updatedAt: number;
             expired: boolean;
         }>;
     },
@@ -68,12 +68,12 @@ export const todoModule = {
     /**
      * 新增或更新 todo
      */
-    upsert: async (key: string, content: string, options?: { dueAt?: string | null }): Promise<{
+    upsert: async (key: string, content: string, options?: { dueAt?: number | null }): Promise<{
         key: string;
         content: string;
-        dueAt: string | null;
-        createdAt: string;
-        updatedAt: string;
+        dueAt: number | null;
+        createdAt: number;
+        updatedAt: number;
         expired: boolean;
     }> => {
         if (!_callbacks) throw new Error("Todo module not initialized");
@@ -81,9 +81,9 @@ export const todoModule = {
         return result as {
             key: string;
             content: string;
-            dueAt: string | null;
-            createdAt: string;
-            updatedAt: string;
+            dueAt: number | null;
+            createdAt: number;
+            updatedAt: number;
             expired: boolean;
         };
     },

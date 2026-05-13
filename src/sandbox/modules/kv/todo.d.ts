@@ -8,9 +8,12 @@
 interface TodoItem {
     key: string;
     content: string;
-    dueAt: string | null;
-    createdAt: string;
-    updatedAt: string;
+    /** Unix epoch milliseconds. */
+    dueAt: number | null;
+    /** Unix epoch milliseconds. */
+    createdAt: number;
+    /** Unix epoch milliseconds. */
+    updatedAt: number;
     expired: boolean;
 }
 
@@ -34,15 +37,15 @@ declare const todo: {
      * 新增或更新 todo。
      * @param key 逻辑键，同群内唯一
      * @param content 内容
-     * @param options.dueAt 可选到期时间，必须是 ISO 时间字符串
+     * @param options.dueAt 可选到期时间，Unix epoch milliseconds
      * @example
      * await todo.upsert("周五提醒", "提醒大家周五 8 点开黑", {
-     *   dueAt: "2026-04-24T12:00:00.000Z",
+     *   dueAt: 1777046400000,
      * }); // 有到期时间，一般是阶段性的安排/规则。
      * 
      * await todo.upsert("大A昵称", "大A指的是Arc"); // 事实性记忆/规则，没有到期时间
      */
-    upsert(key: string, content: string, options?: { dueAt?: string | null }): Promise<TodoItem>;
+    upsert(key: string, content: string, options?: { dueAt?: number | null }): Promise<TodoItem>;
 
     /**
      * 删除 todo。

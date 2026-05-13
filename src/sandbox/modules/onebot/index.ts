@@ -144,7 +144,7 @@ export function createOneBotClientProxy(
                     scene: "onebot",
                     chatId: String(chatId),
                     text,
-                    timestamp: new Date().toISOString(),
+                    timestamp: Date.now(),
                 });
                 return null;
             }
@@ -158,7 +158,7 @@ export function createOneBotClientProxy(
                 messageId: typeof sent === "object" && sent && "message_id" in sent ? (sent as { message_id?: unknown }).message_id : undefined,
                 text,
                 replyToMessageId: opts?.replyTo,
-                timestamp: new Date().toISOString(),
+                timestamp: Date.now(),
             });
             return sent;
         },
@@ -180,7 +180,7 @@ export function createOneBotClientProxy(
                     scene: "onebot",
                     chatId: String(chatId),
                     text: mediaText,
-                    timestamp: new Date().toISOString(),
+                    timestamp: Date.now(),
                 });
                 return null;
             }
@@ -202,7 +202,7 @@ export function createOneBotClientProxy(
                 chatId: String(chatId),
                 messageId: typeof sent === "object" && sent && "message_id" in sent ? (sent as { message_id?: unknown }).message_id : undefined,
                 text: opts?.caption ?? "[media]",
-                timestamp: new Date().toISOString(),
+                timestamp: Date.now(),
             });
             return sent;
         },
@@ -216,7 +216,7 @@ export function createOneBotClientProxy(
                     scene: "onebot",
                     chatId: String(chatId),
                     text: fileText,
-                    timestamp: new Date().toISOString(),
+                    timestamp: Date.now(),
                 });
                 return null;
             }
@@ -231,7 +231,7 @@ export function createOneBotClientProxy(
                 chatId: String(chatId),
                 messageId: typeof sent === "object" && sent && "message_id" in sent ? (sent as { message_id?: unknown }).message_id : undefined,
                 text: opts?.caption ?? `[file:${filePath}]`,
-                timestamp: new Date().toISOString(),
+                timestamp: Date.now(),
             });
             return sent;
         },
@@ -249,7 +249,7 @@ export function createOneBotClientProxy(
                     scene: "onebot",
                     chatId: String(chatId),
                     text: stickerText,
-                    timestamp: new Date().toISOString(),
+                    timestamp: Date.now(),
                 });
                 return null;
             }
@@ -265,7 +265,7 @@ export function createOneBotClientProxy(
                 chatId: String(chatId),
                 messageId: typeof sent === "object" && sent && "message_id" in sent ? (sent as { message_id?: unknown }).message_id : undefined,
                 text: stickerText,
-                timestamp: new Date().toISOString(),
+                timestamp: Date.now(),
             });
             return sent;
         },
@@ -279,7 +279,7 @@ export function createOneBotClientProxy(
                     scene: "onebot",
                     chatId: String(chatId),
                     text,
-                    timestamp: new Date().toISOString(),
+                    timestamp: Date.now(),
                 });
                 return null;
             }
@@ -292,7 +292,7 @@ export function createOneBotClientProxy(
                 chatId: String(chatId),
                 messageId: typeof sent === "object" && sent && "message_id" in sent ? (sent as { message_id?: unknown }).message_id : undefined,
                 text,
-                timestamp: new Date().toISOString(),
+                timestamp: Date.now(),
             });
             return sent;
         },

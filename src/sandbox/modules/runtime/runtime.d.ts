@@ -26,7 +26,7 @@ declare const runtime: {
      * @example
      * runtime.spawnPersistent("monitor", `
      *   while (!signal.aborted) {
-     *     console.log("heartbeat at " + new Date().toISOString());
+     *     console.log("heartbeat at " + Date.now());
      *     await new Promise(r => setTimeout(r, 60000));
      *   }
      * `);
@@ -94,10 +94,12 @@ declare const runtime: {
             id: string;
             type: "reminder" | "cron";
             description: string;
-            triggerAt?: string;
+            /** Unix epoch milliseconds. */
+            triggerAt?: number;
             cronExpr?: string;
             taskDescription?: string;
-            createdAt: string;
+            /** Unix epoch milliseconds. */
+            createdAt: number;
             triggered?: boolean;
         }>;
     }>;
@@ -110,7 +112,7 @@ declare const runtime: {
      *
      * @param request - 给 Meta Agent 的明确任务说明
      * @param options - urgency=high 会提高本次唤醒优先级；data 可附带结构化上下文
-     * @returns { ok, id, enqueuedAt }
+     * @returns { ok, id, enqueuedAt }，enqueuedAt 为 Unix epoch milliseconds
      *
      * @example
      * await runtime.elevate("当前群有人问 D 群上周 API 网关结论。请 Meta 查 D 群历史，把结论派回本群。", {
@@ -121,7 +123,7 @@ declare const runtime: {
     elevate(request: string, options?: {
         urgency?: "normal" | "high";
         data?: unknown;
-    }): Promise<{ ok: true; id: string; enqueuedAt: string }>;
+    }): Promise<{ ok: true; id: string; enqueuedAt: number }>;
 
     /**
      * 增加当前 CodeAct session 的可用轮次。

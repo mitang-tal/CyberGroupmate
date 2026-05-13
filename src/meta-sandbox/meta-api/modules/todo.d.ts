@@ -8,7 +8,8 @@ interface MetaTodoSetInput {
     key: string;
     content: string;
     bindingId?: string;
-    dueAt?: string | null;
+    /** Unix epoch milliseconds. */
+    dueAt?: number | null;
 }
 
 interface MetaTodoListInput {
@@ -20,9 +21,12 @@ interface MetaTodoItem {
     bindingId: string;
     key: string;
     content: string;
-    dueAt?: string | null;
-    createdAt: string;
-    updatedAt: string;
+    /** Unix epoch milliseconds. */
+    dueAt?: number | null;
+    /** Unix epoch milliseconds. */
+    createdAt: number;
+    /** Unix epoch milliseconds. */
+    updatedAt: number;
     expired: boolean;
 }
 

@@ -35,6 +35,7 @@ import { enrichMessages, formatMessageLine, resolveReplyText } from "../core/mes
 import type { MediaDownloader } from "../core/media-downloader.js";
 import type { ChatMessage } from "../core/llm.js";
 import { createLogger } from "../core/logger.js";
+import { formatTsForPrompt, normalizeProgrammaticTimestamps, sanitizePromptTimestamps } from "../core/timezone.js";
 import { getRawId, ensureCompositeId, getPlatform, getGroupModelKey } from "../core/chat-id.js";
 import type { GlobalState } from "../main-agent/global-state.js";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
@@ -76,7 +77,7 @@ function formatFactForPrompt(fact: PromptFact, memory: MemoryStoreV2 | undefined
     const sourceParts = [
         source ? `来源: ${source}` : "",
         fact.sourceTopicLabel ? `话题: ${fact.sourceTopicLabel}` : "",
-        fact.observedAt ? `观察时间: ${fact.observedAt}` : "",
+        fact.observedAt ? `观察时间: ${formatTsForPrompt(fact.observedAt)}` : "",
         fact.visibility ? `visibility=${fact.visibility}` : "",
         fact.sensitivity ? `sensitivity=${fact.sensitivity}` : "",
     ].filter(Boolean).join("；");
@@ -86,7 +87,7 @@ function formatFactForPrompt(fact: PromptFact, memory: MemoryStoreV2 | undefined
 function formatInteractionForPrompt(item: PromptInteraction, memory: MemoryStoreV2 | undefined): string {
     const user = item.userLabel ?? formatUserLabel(memory, item.userId, item.displayName);
     const source = item.chatLabel ?? formatChatLabel(memory, item.chatId);
-    return `- [${item.timestamp}] ${user} @ ${source}: ${item.summary} (${item.sentiment}, type=${item.type}, significance=${item.significance})`;
+    return `- [${formatTsForPrompt(item.timestamp)}] ${user} @ ${source}: ${item.summary} (${item.sentiment}, type=${item.type}, significance=${item.significance})`;
 }
 
 function formatDispatchContextForPrompt(rawContext: string): string {
@@ -96,11 +97,11 @@ function formatDispatchContextForPrompt(rawContext: string): string {
         return [
             "## 派发附加上下文",
             "```json",
-            JSON.stringify(JSON.parse(trimmed), null, 2),
+            JSON.stringify(normalizeProgrammaticTimestamps(JSON.parse(trimmed)), null, 2),
             "```",
         ].join("\n");
     } catch {
-        return `## 派发附加上下文\n${trimmed}`;
+        return `## 派发附加上下文\n${sanitizePromptTimestamps(trimmed)}`;
     }
 }
 
@@ -138,7 +139,7 @@ function formatPendingMessageLine(message: PostTaskReactionMessage): string {
         : "";
     const replySuffix = message.replyToMessageId ? ` (replyTo=${message.replyToMessageId})` : "";
     const text = message.text || "[non-text message]";
-    return `[${message.timestamp}] [msgId:${message.messageId}] ${message.sender}${replySuffix}: ${text}${mediaSuffix}`;
+    return `[${formatTsForPrompt(message.timestamp)}] [msgId:${message.messageId}] ${message.sender}${replySuffix}: ${text}${mediaSuffix}`;
 }
 
 function findLatestDirectAttentionMessage(messages: PostTaskReactionMessage[]): PostTaskReactionMessage | undefined {
@@ -348,7 +349,7 @@ function formatExecutionRecordForCompact(rec: SessionExecutionRecord): string | 
     }
 
     const resultPart = rec.endReason === "end_turn" ? "" : `，结果: ${rec.endReason}`;
-    return `- ${rec.timestamp}${resultPart}${sentPart}${thinkingPart}`;
+    return `- ${formatTsForPrompt(rec.timestamp)}${resultPart}${sentPart}${thinkingPart}`;
 }
 
 /**
@@ -543,7 +544,7 @@ export class CodeActExecutor {
             const thinkingSummary = cancelledByUser
                 ? formatThinkingPlaceholder("执行已被用户取消，未保留可用的思考记录")
                 : formatThinkingPlaceholder("执行在 session 外层异常中断，未保留可用的思考记录");
-            const callback: SubagentCallback = {
+            callback = {
                 taskId: task.taskId,
                 chatId: this.chatId,
                 chatTitle: task.contextSnapshot.chatTitle ?? task.contextSnapshot.groupModel?.chatTitle,
@@ -624,7 +625,7 @@ export class CodeActExecutor {
             hasTodos: todoItems.length > 0,
             todosText: todoItems.map((item) =>
                 item.dueAt
-                    ? `- ${item.key}: ${item.content} (到期: ${item.dueAt})`
+                    ? `- ${item.key}: ${item.content} (到期: ${formatTsForPrompt(item.dueAt)})`
                     : `- ${item.key}: ${item.content}`
             ).join("\n"),
         };
@@ -644,7 +645,7 @@ export class CodeActExecutor {
                         ? `## 相关事实\n${memoryContext.facts.map((fact) => formatFactForPrompt(fact, this.memory ?? undefined)).join("\n")}`
                         : "",
                     memoryContext.topics.length
-                        ? `## 相关历史话题\n${memoryContext.topics.map((topic) => `- [${topic.startedAt}] ${topic.label} — ${topic.summary} (topicId: ${topic.topicId}; 来源: ${formatChatLabel(this.memory ?? undefined, topic.chatId)})`).join("\n")}`
+                        ? `## 相关历史话题\n${memoryContext.topics.map((topic) => `- [${formatTsForPrompt(topic.startedAt)}] ${topic.label} — ${topic.summary} (topicId: ${topic.topicId}; 来源: ${formatChatLabel(this.memory ?? undefined, topic.chatId)})`).join("\n")}`
                         : "",
                     memoryContext.interactions.length
                         ? `## 近期互动\n${memoryContext.interactions.map((item) => formatInteractionForPrompt(item, this.memory ?? undefined)).join("\n")}`
@@ -653,7 +654,7 @@ export class CodeActExecutor {
                 : "";
             const activeUserProfiles = sanitizeActiveUserProfiles(ctx.activeUserProfiles);
             const activeProfilesContext = activeUserProfiles.length
-                ? JSON.stringify(activeUserProfiles)
+                ? JSON.stringify(normalizeProgrammaticTimestamps(activeUserProfiles))
                 : "";
             const legacyPersonContext = typeof ctx.personContext === "string" ? ctx.personContext : undefined;
             const legacyIsPersonContext = looksLikePersonProfileContext(legacyPersonContext);
@@ -733,7 +734,7 @@ export class CodeActExecutor {
                 const isLast = i === this.session.length - 1;
                 messages.push({
                     role: msg.role,
-                    content: msg.content,
+                    content: sanitizePromptTimestamps(msg.content),
                     ...(isLast ? { cacheBreakpoint: true } : {}),
                 });
             }
@@ -845,7 +846,7 @@ export class CodeActExecutor {
             }
             this.session.push({
                 role: msg.role as "system" | "user" | "assistant",
-                content,
+                content: typeof content === "string" ? sanitizePromptTimestamps(content) : content,
                 timestamp: new Date().toISOString(),
             });
         }

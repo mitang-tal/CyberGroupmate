@@ -19,6 +19,7 @@ import { createLogger } from "../core/logger.js";
 import { loadConfig } from "../core/config.js";
 import { getAgentSkillScriptDirs } from "./skill-loader.js";
 import * as pty from "node-pty";
+import { normalizeProgrammaticTimestamps } from "../core/timezone.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -533,7 +534,7 @@ export class Sandbox extends EventEmitter {
                 throw new Error(`No host call handler registered for ${method}`);
             }
 
-            const value = await this.hostCallHandler(method, args);
+            const value = normalizeProgrammaticTimestamps(await this.hostCallHandler(method, args));
             if (!this.child?.stdin) return;
             const msg = JSON.stringify({
                 type: "host_call_result",

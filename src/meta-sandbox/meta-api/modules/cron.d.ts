@@ -23,8 +23,10 @@ interface CronEvent {
     callback: string;
     data?: unknown;
     cronExpr?: string;
-    createdAt: string;
-    lastTriggeredAt?: string;
+    /** Unix epoch milliseconds. */
+    createdAt: number;
+    /** Unix epoch milliseconds. */
+    lastTriggeredAt?: number;
 }
 
 declare const cron: {

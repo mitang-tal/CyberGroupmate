@@ -70,6 +70,188 @@ export function formatTsForDisplay(isoUtc: string | undefined | null, tz?: strin
 }
 
 /**
+ * Convert any supported timestamp value to Unix epoch milliseconds.
+ */
+export function toUnixTimestampMs(value: string | number | Date | null | undefined): number | null {
+    if (value == null || value === "") return null;
+    if (typeof value === "number") {
+        return Number.isFinite(value) ? Math.trunc(value) : null;
+    }
+    if (value instanceof Date) {
+        const time = value.getTime();
+        return Number.isNaN(time) ? null : time;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) {
+        const numeric = Number(trimmed);
+        return Number.isFinite(numeric) ? Math.trunc(numeric) : null;
+    }
+
+    const parsed = Date.parse(trimmed);
+    return Number.isNaN(parsed) ? null : parsed;
+}
+
+/** Format a timestamp for programmatic prompt/API fields as Unix epoch milliseconds. */
+export function formatTsForTimestamp(value: string | number | Date | null | undefined): string {
+    const ts = toUnixTimestampMs(value);
+    return ts == null ? "" : String(ts);
+}
+
+/** Format a timestamp for narrative prompt text in the configured timezone. */
+export function formatTsForPrompt(
+    value: string | number | Date | null | undefined,
+    reference: string | number | Date = new Date(),
+    tz?: string,
+): string {
+    const targetMs = toUnixTimestampMs(value);
+    if (targetMs == null) return "";
+    const referenceMs = toUnixTimestampMs(reference) ?? Date.now();
+    const timezone = tz ?? _globalTimezone;
+    const target = getLocalParts(new Date(targetMs), timezone);
+    const ref = getLocalParts(new Date(referenceMs), timezone);
+    if (!target || !ref) {
+        return formatTsForTimestamp(targetMs);
+    }
+
+    const time = `${target.hour}:${target.minute}`;
+    if (target.year === ref.year && target.month === ref.month && target.day === ref.day) {
+        return time;
+    }
+    if (target.year === ref.year) {
+        return `${Number(target.month)}月${Number(target.day)}日 ${time}`;
+    }
+    return `${target.year}年${Number(target.month)}月${Number(target.day)}日 ${time}`;
+}
+
+const ISO_TIMESTAMP_RE = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:?\d{2})\b/g;
+const OFFSET_TIMESTAMP_RE = /\b\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}\s+[+-]\d{2}:?\d{2}\b/g;
+const PROGRAMMATIC_TIME_FIELD_RE = /((?:["']?(?:createdAt|updatedAt|completedAt|timestamp|dueAt|observedAt|startedAt|endedAt|lastActiveAt|lastAttendedAt|snapshotTimestamp|triggerAt|expiresAt|registeredAt|lastTriggeredAt|savedAt|enqueuedAt|mtime|created_at|updated_at|completed_at|observed_at|started_at|ended_at|last_seen_at|first_seen_at)["']?)\s*:\s*)["'](\d{4}-\d{2}-\d{2}(?:T| )\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:?\d{2}|\s+[+-]\d{2}:?\d{2}))["']/g;
+const PROGRAMMATIC_TIME_KEYS = new Set([
+    "createdAt",
+    "updatedAt",
+    "completedAt",
+    "timestamp",
+    "dueAt",
+    "observedAt",
+    "startedAt",
+    "endedAt",
+    "lastActiveAt",
+    "lastAttendedAt",
+    "snapshotTimestamp",
+    "triggerAt",
+    "expiresAt",
+    "registeredAt",
+    "lastTriggeredAt",
+    "savedAt",
+    "enqueuedAt",
+    "mtime",
+    "created_at",
+    "updated_at",
+    "completed_at",
+    "observed_at",
+    "started_at",
+    "ended_at",
+    "last_seen_at",
+    "first_seen_at",
+]);
+
+export type PromptTimestampSanitizeMode = "natural" | "timestamp";
+
+/**
+ * Best-effort sanitizer for old session history that may already contain ISO
+ * timestamps. Programmatic-looking time fields are normalized to epoch ms;
+ * remaining prose timestamps are rendered as local natural-language time.
+ */
+export function sanitizePromptTimestamps(text: string, mode: PromptTimestampSanitizeMode = "natural"): string {
+    const format = mode === "timestamp" ? formatTsForTimestamp : formatTsForPrompt;
+    return text
+        .replace(PROGRAMMATIC_TIME_FIELD_RE, (match, prefix: string, timestamp: string) => {
+            const formatted = formatTsForTimestamp(timestamp);
+            return formatted ? `${prefix}${formatted}` : match;
+        })
+        .replace(ISO_TIMESTAMP_RE, (match) => format(match) || match)
+        .replace(OFFSET_TIMESTAMP_RE, (match) => format(match) || match);
+}
+
+export function normalizeProgrammaticTimestamps<T>(value: T): T {
+    return normalizeProgrammaticTimestampsInner(value, new WeakMap()) as T;
+}
+
+export function timestampInputToIso(value: string | number | Date | null | undefined): string | null | undefined {
+    if (value == null || value === "") return value == null ? value : null;
+    const ms = toUnixTimestampMs(value);
+    return ms == null ? String(value) : new Date(ms).toISOString();
+}
+
+function normalizeProgrammaticTimestampsInner(value: unknown, seen: WeakMap<object, unknown>): unknown {
+    if (value == null || typeof value !== "object") {
+        return value;
+    }
+    if (value instanceof Date) {
+        return value.getTime();
+    }
+    if (seen.has(value)) {
+        return seen.get(value);
+    }
+    if (Array.isArray(value)) {
+        const out: unknown[] = [];
+        seen.set(value, out);
+        for (const item of value) {
+            out.push(normalizeProgrammaticTimestampsInner(item, seen));
+        }
+        return out;
+    }
+    if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) {
+        return value;
+    }
+
+    const out: Record<string, unknown> = {};
+    seen.set(value, out);
+    for (const [key, child] of Object.entries(value)) {
+        if (PROGRAMMATIC_TIME_KEYS.has(key)) {
+            const timestamp = toUnixTimestampMs(child as string | number | Date | null | undefined);
+            out[key] = timestamp ?? child;
+        } else {
+            out[key] = normalizeProgrammaticTimestampsInner(child, seen);
+        }
+    }
+    return out;
+}
+
+function getLocalParts(date: Date, tz?: string): {
+    year: string;
+    month: string;
+    day: string;
+    hour: string;
+    minute: string;
+} | null {
+    try {
+        const fmt = new Intl.DateTimeFormat("zh-CN", {
+            timeZone: tz,
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hourCycle: "h23",
+        });
+        const parts = fmt.formatToParts(date);
+        const get = (type: string) => parts.find(p => p.type === type)?.value ?? "";
+        return {
+            year: get("year"),
+            month: get("month"),
+            day: get("day"),
+            hour: get("hour"),
+            minute: get("minute"),
+        };
+    } catch {
+        return null;
+    }
+}
+
+/**
  * 计算指定时区在给定时刻的 UTC 偏移量字符串
  * @returns 如 "+08:00" 或 "-05:00"
  */

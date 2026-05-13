@@ -71,15 +71,15 @@ export function installRuntime(env: CapabilityRegistryEnv) {
          */
         remind: async (description: string, delayMinutes: number): Promise<{
             reminderId: string;
-            triggerAt: string;
+            triggerAt: number;
             items: Array<{
                 id: string;
                 type: "reminder" | "cron";
                 description: string;
-                triggerAt?: string;
+                triggerAt?: number;
                 cronExpr?: string;
                 taskDescription?: string;
-                createdAt: string;
+                createdAt: number;
                 triggered?: boolean;
             }>;
         }> => {
@@ -87,15 +87,15 @@ export function installRuntime(env: CapabilityRegistryEnv) {
             const result = await _callbacks.callHost("runtime.remind", [description, delayMinutes]);
             return result as {
                 reminderId: string;
-                triggerAt: string;
+                triggerAt: number;
                 items: Array<{
                     id: string;
                     type: "reminder" | "cron";
                     description: string;
-                    triggerAt?: string;
+                    triggerAt?: number;
                     cronExpr?: string;
                     taskDescription?: string;
-                    createdAt: string;
+                    createdAt: number;
                     triggered?: boolean;
                 }>;
             };
@@ -103,10 +103,10 @@ export function installRuntime(env: CapabilityRegistryEnv) {
         elevate: async (
             request: string,
             options?: { urgency?: "normal" | "high"; data?: unknown },
-        ): Promise<{ ok: true; id: string; enqueuedAt: string }> => {
+        ): Promise<{ ok: true; id: string; enqueuedAt: number }> => {
             if (!_callbacks) throw new Error("Runtime not initialized");
             const result = await _callbacks.callHost("runtime.elevate", [request, options]);
-            return result as { ok: true; id: string; enqueuedAt: string };
+            return result as { ok: true; id: string; enqueuedAt: number };
         },
     };
 }

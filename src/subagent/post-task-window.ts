@@ -19,6 +19,7 @@ import type {
     SubagentPostTaskFollowUpCallback,
 } from "./types.js";
 import { createLogger } from "../core/logger.js";
+import { formatTsForPrompt } from "../core/timezone.js";
 
 const log = createLogger("post-task-window");
 
@@ -327,8 +328,8 @@ export class PostTaskWindowManager {
             postTaskMessages: window.messages,
             postTaskFollowUpCallbacks: followUps.map(toFollowUpCallback),
             postTaskWindow: {
-                startedAt: new Date(window.startedAtMs).toISOString(),
-                endedAt: new Date(endedAtMs).toISOString(),
+                startedAt: window.startedAtMs,
+                endedAt: endedAtMs,
                 durationMs: endedAtMs - window.startedAtMs,
                 messageCount: window.messages.length,
                 directMessageCount: window.messages.filter((msg) => msg.isDirectAttention).length,
@@ -422,7 +423,7 @@ function formatReactionMessageLine(message: PostTaskReactionMessage): string {
         : "";
     const replySuffix = message.replyToMessageId ? ` (replyTo=${message.replyToMessageId})` : "";
     const text = message.text || "[non-text message]";
-    return `[${message.timestamp}] [msgId:${message.messageId}] ${message.sender}${replySuffix}: ${text}${mediaSuffix}`;
+    return `[${formatTsForPrompt(message.timestamp)}] [msgId:${message.messageId}] ${message.sender}${replySuffix}: ${text}${mediaSuffix}`;
 }
 
 export function buildDispatchedRecordForPostTaskDirect(task: CodeActReplyTask): DispatchedSubagentTaskRecord {

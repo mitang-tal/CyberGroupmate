@@ -22,6 +22,7 @@ import { ulid } from "ulid";
 import { createLogger } from "../core/logger.js";
 import { EventEmitter } from "node:events";
 import { extractApiCalls, getDocLookupMethods } from "./api-intent-extractor.js";
+import { sanitizePromptTimestamps } from "../core/timezone.js";
 
 // ─── CodeAct Progress Events ───
 
@@ -340,6 +341,10 @@ export async function runCodeActSession(
     let effectiveMaxTurns = maxTurns;
     let effectiveExecuteTimeout = executeTimeout;
 
+    messages = messages.map((message) => typeof message.content === "string"
+        ? { ...message, content: sanitizePromptTimestamps(message.content) }
+        : message);
+
     // 清理可能残留的控制指令（避免上一个 session 泄漏）
     sandbox.consumeExecutionControl();
 
@@ -374,14 +379,15 @@ export async function runCodeActSession(
         if (pendingMessagesDrain) {
             const newMessages = pendingMessagesDrain();
             if (newMessages) {
+                const sanitizedNewMessages = sanitizePromptTimestamps(newMessages);
                 log.info(`Turn ${turnNum}: 注入前送消息`, { length: newMessages.length });
-                messages.push({ role: "user", content: newMessages });
+                messages.push({ role: "user", content: sanitizedNewMessages });
 
                 // 发射进度事件：新消息到达
                 emitProgress({
                     turn: turnNum,
                     phase: "new_messages",
-                    userMessage: newMessages,
+                    userMessage: sanitizedNewMessages,
                     isProcessing: true,
                 });
             }
@@ -535,7 +541,7 @@ export async function runCodeActSession(
                 isProcessing: true,
             });
 
-            messages.push({ role: "user", content: textOnlyObs });
+            messages.push({ role: "user", content: sanitizePromptTimestamps(textOnlyObs, "timestamp") });
             continue;
         }
 
@@ -779,6 +785,7 @@ ${fullDocs}
             turnStatus += `\n[⚠ 仅剩 1 轮，请尽快完成操作]`;
         }
         observation = observation ? `${observation}\n\n${turnStatus}` : turnStatus;
+        observation = sanitizePromptTimestamps(observation, "timestamp");
 
         // 发射 observation 进度事件
         emitProgress({

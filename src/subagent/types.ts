@@ -253,8 +253,10 @@ export interface SubagentCallback {
     postTaskFollowUpCallbacks?: SubagentPostTaskFollowUpCallback[];
     /** Post-task 窗口元信息 */
     postTaskWindow?: {
-        startedAt: string;
-        endedAt: string;
+        /** Unix epoch milliseconds. */
+        startedAt: number;
+        /** Unix epoch milliseconds. */
+        endedAt: number;
         durationMs: number;
         messageCount: number;
         directMessageCount: number;

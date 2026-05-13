@@ -1,4 +1,5 @@
 import type { MemoryStoreV2 } from "../../memory-v2/index.js";
+import { timestampInputToIso } from "../../core/timezone.js";
 
 type TodoMemory = Pick<MemoryStoreV2,
     "todoList" |
@@ -12,7 +13,7 @@ export interface TodoSetInput {
     key: string;
     content: string;
     bindingId?: string;
-    dueAt?: string | null;
+    dueAt?: string | number | Date | null;
 }
 
 export interface TodoListInput {
@@ -38,7 +39,7 @@ export function createTodoApi(memory: TodoMemory) {
             const bindingId = normalizeBindingId(input.bindingId);
             return {
                 bindingId,
-                ...memory.todoUpsert(bindingId, input.key, input.content, input.dueAt ?? null),
+                ...memory.todoUpsert(bindingId, input.key, input.content, timestampInputToIso(input.dueAt) ?? null),
             };
         },
         delete: async (key: string, bindingId = "meta") => {

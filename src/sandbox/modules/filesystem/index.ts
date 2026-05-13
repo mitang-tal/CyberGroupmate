@@ -298,7 +298,7 @@ export const filesystem = {
     /**
      * 获取文件/目录状态
      */
-    stat(path: string): { size: number; isDirectory: boolean; isFile: boolean; mtime: string } {
+    stat(path: string): { size: number; isDirectory: boolean; isFile: boolean; mtime: number } {
         const resolved = safePath(path);
         if (!existsSync(resolved)) {
             throw new Error(`路径不存在: ${path}`);
@@ -308,7 +308,7 @@ export const filesystem = {
             size: s.size,
             isDirectory: s.isDirectory(),
             isFile: s.isFile(),
-            mtime: s.mtime.toISOString(),
+            mtime: s.mtime.getTime(),
         };
     },
 };

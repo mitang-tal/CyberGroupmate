@@ -1,5 +1,6 @@
 import { Script, createContext, type Context } from "node:vm";
 import { createLogger } from "../core/logger.js";
+import { normalizeProgrammaticTimestamps } from "../core/timezone.js";
 
 const log = createLogger("meta-sandbox");
 
@@ -87,7 +88,9 @@ export class MetaSandbox {
                 const childPath = path ? `${path}.${key}` : key;
                 if (typeof child === "function") {
                     wrapped[key] = async (...args: unknown[]) => {
-                        const result = await (child as (...params: unknown[]) => unknown).apply(value, args);
+                        const result = normalizeProgrammaticTimestamps(
+                            await (child as (...params: unknown[]) => unknown).apply(value, args)
+                        );
                         this.pushConsoleEntry("log", [`[meta-api] ${childPath} ->`, result]);
                         return result;
                     };

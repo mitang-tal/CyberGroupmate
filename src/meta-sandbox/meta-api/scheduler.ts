@@ -1,4 +1,5 @@
 import { validateCronMinInterval } from "../../core/cron-matcher.js";
+import { timestampInputToIso } from "../../core/timezone.js";
 import type { GlobalState } from "../../main-agent/global-state.js";
 import type { SchedulerEvent } from "../../subagent/types.js";
 
@@ -13,7 +14,7 @@ export interface ReminderSetInput {
     name: string;
     callback: string;
     bindingId?: string;
-    triggerAt?: string;
+    triggerAt?: string | number | Date;
     delayMinutes?: number;
     data?: unknown;
 }
@@ -103,11 +104,11 @@ export function createCronApi(globalState: SchedulerState) {
 
 function resolveTriggerAt(input: ReminderSetInput): string {
     if (input.triggerAt) {
-        const parsed = new Date(input.triggerAt);
-        if (Number.isNaN(parsed.getTime())) {
+        const triggerAt = timestampInputToIso(input.triggerAt);
+        if (!triggerAt) {
             throw new Error(`Invalid triggerAt: ${input.triggerAt}`);
         }
-        return parsed.toISOString();
+        return triggerAt;
     }
     if (typeof input.delayMinutes !== "number") {
         throw new Error("remind.set 需要 triggerAt 或 delayMinutes");

@@ -17,7 +17,7 @@ declare const discord: {
      * @example sendText(channelId, "你好！")
      * @example sendText(channelId, "回复你的问题", { replyTo: "1234567890" })
      */
-    sendText(channelId: string, text: string, opts?: { replyTo?: string }): Promise<{ id: string; text: string; channelId: string; guildId?: string; timestamp: string; }>;
+    sendText(channelId: string, text: string, opts?: { replyTo?: string }): Promise<{ id: string; text: string; channelId: string; guildId?: string; timestamp: number; }>;
 
     /**
      * 发送媒体消息（附件）到指定频道。支持 URL 和本地文件路径（支持绝对路径或基于 cwd 工作区的相对路径）。
@@ -28,7 +28,7 @@ declare const discord: {
      * @example sendMedia(channelId, { file: "screenshot.png", caption: "本地截图" }) // 自动基于 process.cwd() 解析
      * @example sendMedia(channelId, "screenshot.png")
      */
-    sendMedia(channelId: string, media: string | { type?: "photo" | "video" | "document" | "audio" | "auto"; url?: string; file?: string; caption?: string; fileName?: string }, opts?: { replyTo?: string; caption?: string }): Promise<{ id: string; text: string; channelId: string; guildId?: string; timestamp: string; }>;
+    sendMedia(channelId: string, media: string | { type?: "photo" | "video" | "document" | "audio" | "auto"; url?: string; file?: string; caption?: string; fileName?: string }, opts?: { replyTo?: string; caption?: string }): Promise<{ id: string; text: string; channelId: string; guildId?: string; timestamp: number; }>;
 
     // ─── 状态操作 ───
 

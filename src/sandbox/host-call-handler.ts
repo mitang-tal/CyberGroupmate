@@ -20,6 +20,7 @@ import { createMemoryApi } from "../meta-sandbox/meta-api/memory.js";
 import type { AttentionAccumulator } from "../accumulator/attention-accumulator.js";
 import type { PlatformAdapter } from "../adapter/platform-adapter.js";
 import { getTelegramMtcuteWriteTarget, TELEGRAM_MTCUTE_WRITE_METHODS } from "../core/telegram-mtcute-passthrough.js";
+import { timestampInputToIso } from "../core/timezone.js";
 import { SandboxPool } from "./sandbox-pool.js";
 import { type Sandbox } from "./sandbox.js";
 
@@ -345,8 +346,8 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             return memory.todoGet(chatId, String(args[0]));
         }
         if (method === "todo.upsert") {
-            const [key, content, options] = args as [string, string, { dueAt?: string | null } | undefined];
-            return memory.todoUpsert(chatId, key, content, options?.dueAt ?? null);
+            const [key, content, options] = args as [string, string, { dueAt?: string | number | Date | null } | undefined];
+            return memory.todoUpsert(chatId, key, content, timestampInputToIso(options?.dueAt) ?? null);
         }
         if (method === "todo.remove") {
             memory.todoRemove(chatId, String(args[0]));
@@ -406,12 +407,22 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             });
         }
         if (method === "memory.searchTopics") {
-            const [query, options] = args as [string, { chatId?: string; after?: string; before?: string; limit?: number } | undefined];
-            return memory.searchTopics(query, { ...options, chatId: options?.chatId ?? chatId });
+            const [query, options] = args as [string, { chatId?: string; after?: string | number | Date; before?: string | number | Date; limit?: number } | undefined];
+            return memory.searchTopics(query, {
+                ...options,
+                after: timestampInputToIso(options?.after) ?? undefined,
+                before: timestampInputToIso(options?.before) ?? undefined,
+                chatId: options?.chatId ?? chatId,
+            });
         }
         if (method === "memory.searchMessages") {
-            const [query, options] = args as [string, { chatId?: string; userId?: string; after?: string; before?: string; limit?: number } | undefined];
-            return memory.searchMessages(query, { ...options, chatId: options?.chatId ?? chatId });
+            const [query, options] = args as [string, { chatId?: string; userId?: string; after?: string | number | Date; before?: string | number | Date; limit?: number } | undefined];
+            return memory.searchMessages(query, {
+                ...options,
+                after: timestampInputToIso(options?.after) ?? undefined,
+                before: timestampInputToIso(options?.before) ?? undefined,
+                chatId: options?.chatId ?? chatId,
+            });
         }
         if (method === "memory.getUserProfile") {
             const [userId, targetChatId] = args as [string, string | undefined];

@@ -3,11 +3,12 @@ import type { GroundingConfig } from "../../core/config.js";
 import { runParallelGrounding } from "../../main-agent/grounding-util.js";
 import type { AttentionAccumulator } from "../../accumulator/attention-accumulator.js";
 import { CodeActExecutor } from "../../subagent/code-act-executor.js";
-import type { ActiveUserProfile, GroupContextPackage, CodeActReplyTask } from "../../subagent/types.js";
+import type { ActiveUserProfile, GroupContextPackage, CodeActReplyTask, DispatchedSubagentTaskRecord } from "../../subagent/types.js";
 import type { MemoryStoreV2 } from "../../memory-v2/index.js";
 import type { GlobalState } from "../../main-agent/global-state.js";
 import type { SubagentManager } from "../../subagent/subagent-manager.js";
 import { getGroupModelKey } from "../../core/chat-id.js";
+import { toUnixTimestampMs } from "../../core/timezone.js";
 
 export interface DispatchTrackingSpec {
     key?: string;
@@ -31,6 +32,20 @@ export interface DispatchTaskResult {
     trackingKey?: string;
     reminderId?: string;
 }
+
+export type DispatchedTaskStatusForPrompt = Omit<
+    DispatchedSubagentTaskRecord,
+    "createdAt" | "updatedAt" | "completedAt" | "sentMessages"
+> & {
+    createdAt: number;
+    updatedAt: number;
+    completedAt?: number;
+    sentMessages?: Array<{
+        messageId?: string;
+        text: string;
+        timestamp: number;
+    }>;
+};
 
 type ExecutorLike = Pick<CodeActExecutor,
     "enqueue" |
@@ -125,12 +140,33 @@ export function createDispatchApi(deps: DispatchApiDeps) {
             if (!task) {
                 return null;
             }
-            return task;
+            return toPromptTaskStatus(task);
         },
         listTasks: async (options?: { chatId?: string; status?: string; limit?: number; offset?: number }) => {
-            return deps.globalState?.listDispatchedSubagentTasks(options) ?? { tasks: [], total: 0, hasMore: false };
+            const page = deps.globalState?.listDispatchedSubagentTasks(options) ?? { tasks: [], total: 0, hasMore: false };
+            return {
+                ...page,
+                tasks: page.tasks.map(toPromptTaskStatus),
+            };
         },
     };
+}
+
+function toPromptTaskStatus(task: DispatchedSubagentTaskRecord): DispatchedTaskStatusForPrompt {
+    return {
+        ...task,
+        createdAt: timestampOrZero(task.createdAt),
+        updatedAt: timestampOrZero(task.updatedAt),
+        completedAt: task.completedAt ? timestampOrZero(task.completedAt) : undefined,
+        sentMessages: task.sentMessages?.map((message) => ({
+            ...message,
+            timestamp: timestampOrZero(message.timestamp),
+        })),
+    };
+}
+
+function timestampOrZero(value: string | number | Date | null | undefined): number {
+    return toUnixTimestampMs(value) ?? 0;
 }
 
 async function ensureExecutor(

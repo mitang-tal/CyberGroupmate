@@ -12,8 +12,8 @@ interface AgentStatus {
     queueSize: number;
     /** 当前是否在执行。 */
     isProcessing: boolean;
-    /** 最后活跃时间，ISO 字符串。 */
-    lastActiveAt: string;
+    /** 最后活跃时间，Unix epoch milliseconds。 */
+    lastActiveAt: number;
     stickinessLevel: "CORE" | "FAMILIAR" | "ACQUAINTANCE" | "STRANGER";
 }
 

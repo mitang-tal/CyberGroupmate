@@ -13,10 +13,10 @@ interface ConversationsQueryFilters {
     userId?: string;
     /** 正文关键词；无 user 或 user 未解析时会先匹配 displayName，再匹配正文。 */
     keyword?: string;
-    /** ISO 时间下限。 */
-    after?: string;
-    /** ISO 时间上限。 */
-    before?: string;
+    /** Unix epoch milliseconds 时间下限。 */
+    after?: number;
+    /** Unix epoch milliseconds 时间上限。 */
+    before?: number;
     /** 结果数上限，默认 20，最大 100。 */
     limit?: number;
 }
@@ -30,7 +30,8 @@ interface ConversationMessageResult {
     userId: string;
     displayName: string;
     content: string;
-    timestamp: string;
+    /** Unix epoch milliseconds. */
+    timestamp: number;
 }
 
 interface ConversationTopicResult {
@@ -43,8 +44,10 @@ interface ConversationTopicResult {
     summary: string;
     keywords: string[];
     participants: string[];
-    startedAt: string;
-    endedAt?: string | null;
+    /** Unix epoch milliseconds. */
+    startedAt: number;
+    /** Unix epoch milliseconds. */
+    endedAt?: number | null;
     sentiment?: string;
     callbackPotential?: number;
 }
@@ -67,10 +70,10 @@ interface ConversationsMessagesOptions {
     limit?: number;
     /** 上一页返回的游标；继续往更早消息滚动时原样传回。 */
     cursor?: string;
-    /** ISO 时间上限；cursor 未传时生效。 */
-    before?: string;
-    /** ISO 时间下限。 */
-    after?: string;
+    /** Unix epoch milliseconds 时间上限；cursor 未传时生效。 */
+    before?: number;
+    /** Unix epoch milliseconds 时间下限。 */
+    after?: number;
 }
 
 interface ConversationsMessagesResult {
@@ -101,7 +104,8 @@ interface ConversationInboxMessage {
     userId: string;
     displayName: string;
     content: string;
-    timestamp: string;
+    /** Unix epoch milliseconds. */
+    timestamp: number;
 }
 
 interface ConversationInboxItem {
@@ -117,8 +121,10 @@ interface ConversationInboxItem {
     unread: boolean;
     /** 最近未读消息数；最多精确到最近 100 条。 */
     unreadCount: number;
-    lastAttendedAt: string | null;
-    lastActiveAt?: string;
+    /** Unix epoch milliseconds. */
+    lastAttendedAt: number | null;
+    /** Unix epoch milliseconds. */
+    lastActiveAt?: number;
     queueSize: number;
     isProcessing: boolean;
     stickinessLevel: string;

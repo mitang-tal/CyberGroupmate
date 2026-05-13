@@ -8,6 +8,7 @@ import type {
     TopicNode,
     TopicSearchResult,
 } from "../../memory-v2/index.js";
+import { timestampInputToIso } from "../../core/timezone.js";
 
 export interface ConversationsQueryFilters {
     chatIds?: string[];
@@ -17,8 +18,8 @@ export interface ConversationsQueryFilters {
     userId?: string;
     /** 正文关键词。若 user 未传或未解析到，会先匹配 displayName，再匹配正文。 */
     keyword?: string;
-    after?: string;
-    before?: string;
+    after?: string | number | Date;
+    before?: string | number | Date;
     limit?: number;
 }
 
@@ -52,10 +53,10 @@ export interface ConversationsMessagesOptions {
     limit?: number;
     /** 上一页返回的游标；继续往更早消息滚动时原样传回。 */
     cursor?: string;
-    /** ISO 时间上限；cursor 未传时生效。 */
-    before?: string;
-    /** ISO 时间下限。 */
-    after?: string;
+    /** Unix epoch milliseconds；cursor 未传时生效。 */
+    before?: string | number | Date;
+    /** Unix epoch milliseconds. */
+    after?: string | number | Date;
 }
 
 export interface ConversationsMessagesResult {
@@ -180,10 +181,11 @@ export function createConversationsApi(memory: ConversationsReader, subagentMana
         },
         messages: async (chatId: string, options: ConversationsMessagesOptions = {}): Promise<ConversationsMessagesResult> => {
             const limit = clampLimit(options.limit, 50, 99);
-            const before = decodeMessageCursor(options.cursor) ?? options.before;
+            const before = timestampInputToIso(decodeMessageCursor(options.cursor) ?? options.before) ?? undefined;
+            const after = timestampInputToIso(options.after) ?? undefined;
             const rows = enrichMessages(memory, queryMessagesWith(memory, {
                 chatIds: [chatId],
-                after: options.after,
+                after,
                 before,
                 limit: limit + 1,
             }));
@@ -199,15 +201,16 @@ export function createConversationsApi(memory: ConversationsReader, subagentMana
             };
         },
         query: async (filters: ConversationsQueryFilters = {}): Promise<ConversationsQueryResult> => {
+            const normalizedFilters = normalizeFilters(filters);
             const limit = clampLimit(filters.limit, 20, 100);
             const chatIds = uniqueStrings(filters.chatIds);
             const keyword = filters.keyword?.trim();
-            const resolvedUsers = resolveUsers(memory, filters, limit);
+            const resolvedUsers = resolveUsers(memory, normalizedFilters, limit);
             const userIds = resolvedUsers.map((user) => user.userId);
             const fallbackName = filters.user && userIds.length === 0 ? filters.user.trim() : undefined;
 
             const messages = enrichMessages(memory, queryMessages(memory, {
-                filters,
+                filters: normalizedFilters,
                 limit,
                 chatIds,
                 keyword,
@@ -215,7 +218,7 @@ export function createConversationsApi(memory: ConversationsReader, subagentMana
                 fallbackName,
             }));
             const topics = enrichTopics(memory, queryTopics(memory, {
-                filters,
+                filters: normalizedFilters,
                 limit,
                 chatIds,
                 keyword,
@@ -406,12 +409,25 @@ function makeBeforeCursor(timestamp: string | undefined): string | undefined {
     if (Number.isNaN(parsed.getTime())) {
         return timestamp;
     }
-    return new Date(parsed.getTime() - 1).toISOString();
+    return String(parsed.getTime() - 1);
+}
+
+type NormalizedConversationFilters = Omit<ConversationsQueryFilters, "after" | "before"> & {
+    after?: string;
+    before?: string;
+};
+
+function normalizeFilters(filters: ConversationsQueryFilters): NormalizedConversationFilters {
+    return {
+        ...filters,
+        after: timestampInputToIso(filters.after) ?? undefined,
+        before: timestampInputToIso(filters.before) ?? undefined,
+    };
 }
 
 function resolveUsers(
     memory: ConversationsReader,
-    filters: ConversationsQueryFilters,
+    filters: NormalizedConversationFilters,
     limit: number,
 ): ResolvedConversationUser[] {
     const resolved = new Map<string, PersonIdentity>();
@@ -459,7 +475,7 @@ function identityFromUserId(userId: string): PersonIdentity {
 function queryMessages(
     memory: ConversationsReader,
     input: {
-        filters: ConversationsQueryFilters;
+        filters: NormalizedConversationFilters;
         limit: number;
         chatIds: string[];
         keyword?: string;
@@ -587,7 +603,7 @@ function queryMessagesByKeyword(
 function queryTopics(
     memory: ConversationsReader,
     input: {
-        filters: ConversationsQueryFilters;
+        filters: NormalizedConversationFilters;
         limit: number;
         chatIds: string[];
         keyword?: string;
@@ -671,7 +687,7 @@ function formatChatLabel(chatTitle: string, chatId: string): string {
 
 function matchesMessageFilters(
     row: Awaited<ReturnType<ConversationsReader["getRecentMessages"]>>[number],
-    filters: ConversationsQueryFilters,
+    filters: NormalizedConversationFilters,
 ): boolean {
     if (filters.userId && row.userId !== filters.userId) {
         return false;
@@ -685,7 +701,7 @@ function matchesMessageFilters(
     return true;
 }
 
-function matchesTopicFilters(topic: TopicNode, filters: ConversationsQueryFilters, userIds: string[]): boolean {
+function matchesTopicFilters(topic: TopicNode, filters: NormalizedConversationFilters, userIds: string[]): boolean {
     const participantFilters = userIds.length > 0 ? userIds : filters.userId ? [filters.userId] : [];
     if (participantFilters.length > 0 && !participantFilters.some((userId) => topic.participants.includes(userId))) {
         return false;

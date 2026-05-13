@@ -38,10 +38,12 @@ declare const cron: {
             id: string;
             type: "reminder" | "cron";
             description: string;
-            triggerAt?: string;
+            /** Unix epoch milliseconds. */
+            triggerAt?: number;
             cronExpr?: string;
             taskDescription?: string;
-            createdAt: string;
+            /** Unix epoch milliseconds. */
+            createdAt: number;
             triggered?: boolean;
         }>;
     }>;

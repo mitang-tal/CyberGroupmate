@@ -16,7 +16,7 @@ import { processMediaBatch, type MediaAttachment, type ProcessedMedia, type Down
 import { resolveComponentTimeout, type LLMConfig, type VisionConfig } from "./config.js";
 import type { MediaDownloader } from "./media-downloader.js";
 import type { ImageCatalog } from "./image-catalog.js";
-import { formatTsForDisplay } from "./timezone.js";
+import { formatTsForPrompt } from "./timezone.js";
 import { createLogger } from "./logger.js";
 import { extractUrls, fetchOpenGraphBatch, downloadOgImage, type OGResult } from "./opengraph.js";
 import { callLLMWithFallback, type ChatMessage } from "./llm.js";
@@ -265,7 +265,7 @@ export function formatMessageLine(
         }
     }
 
-    return `[${formatTsForDisplay(m.timestamp) ?? ""}] [msgId:${m.id ?? "?"}] ${m.sender ?? "?"}${replyTag}: ${textPart}`;
+    return `[${formatTsForPrompt(m.timestamp)}] [msgId:${m.id ?? "?"}] ${m.sender ?? "?"}${replyTag}: ${textPart}`;
 }
 
 /**
@@ -510,7 +510,7 @@ export function formatMessages(
         }
 
         const replyTag = buildReplyTag(m);
-        lines.push(`[${formatTsForDisplay(m.timestamp) ?? ""}] [msgId:${m.id ?? "?"}] ${m.sender ?? "?"}${replyTag}: ${textPart}`);
+        lines.push(`[${formatTsForPrompt(m.timestamp)}] [msgId:${m.id ?? "?"}] ${m.sender ?? "?"}${replyTag}: ${textPart}`);
     }
 
     // ─── 最后一条消息距今时间标记 ───

@@ -10,8 +10,8 @@ interface ReminderSetInput {
     callback: string;
     /** composite chatId 或 "meta"，默认 "meta"。 */
     bindingId?: string;
-    /** ISO 时间；与 delayMinutes 二选一。 */
-    triggerAt?: string;
+    /** Unix epoch milliseconds；与 delayMinutes 二选一。 */
+    triggerAt?: number;
     /** 延迟分钟数；与 triggerAt 二选一。 */
     delayMinutes?: number;
     data?: unknown;
@@ -29,8 +29,10 @@ interface ReminderEvent {
     name: string;
     callback: string;
     data?: unknown;
-    triggerAt?: string;
-    createdAt: string;
+    /** Unix epoch milliseconds. */
+    triggerAt?: number;
+    /** Unix epoch milliseconds. */
+    createdAt: number;
     triggered?: boolean;
 }
 

@@ -6,6 +6,7 @@ import type { MetaSandbox } from "./meta-sandbox.js";
 import type { ContextManifest } from "../context-engine/types.js";
 import { codeActEvents, type CodeActProgressEvent } from "../sandbox/session-runner.js";
 import { extractApiCalls, getDocLookupMethods } from "../sandbox/api-intent-extractor.js";
+import { sanitizePromptTimestamps } from "../core/timezone.js";
 
 const log = createLogger("meta-session");
 
@@ -486,11 +487,11 @@ export async function runMetaSession(
 }
 
 function formatObservation(output: string): string {
-    return `[MetaSandbox observation]\n${output}`;
+    return `[MetaSandbox observation]\n${sanitizePromptTimestamps(output, "timestamp")}`;
 }
 
 function buildAssistantHistoryContent(content: string): string {
-    return content.trim();
+    return sanitizePromptTimestamps(content.trim());
 }
 
 function hasInjectedMethodDoc(messages: ChatMessage[], method: string): boolean {

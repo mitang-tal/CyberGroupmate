@@ -20,9 +20,9 @@ interface MemoryPersonMatch {
         username?: string;
         aliases: string[];
         totalMessageCount: number;
-        lastSeenAt: string;
-        firstSeenAt: string;
-        updatedAt: string;
+        lastSeenAt: number;
+        firstSeenAt: number;
+        updatedAt: number;
     };
     profile: {
         identity: {
@@ -50,7 +50,7 @@ interface MemoryPersonMatch {
             sourceChatId?: string | null;
             sourceChatTitle?: string | null;
             sourceTopicLabel?: string | null;
-            observedAt?: string | null;
+            observedAt?: number | null;
             visibility?: "private" | "contextual" | "public";
             sensitivity?: "low" | "medium" | "high";
         }>;
@@ -77,16 +77,16 @@ interface MemoryModule {
         sourceTopicLabel?: string | null;
         sourceMessageIds?: string[];
         sourceInteractionIds?: string[];
-        observedAt?: string | null;
+        observedAt?: number | null;
         visibility?: "private" | "contextual" | "public";
         sensitivity?: "low" | "medium" | "high";
-        updatedAt: string;
+        updatedAt: number;
     }>>;
 
     searchTopics(query: string, options?: {
         chatId?: string;
-        after?: string;
-        before?: string;
+        after?: number;
+        before?: number;
         limit?: number;
     }): Promise<Array<{
         topicId: string;
@@ -95,16 +95,16 @@ interface MemoryModule {
         summary: string;
         keywords: string[];
         participants: string[];
-        startedAt: string;
-        endedAt: string | null;
+        startedAt: number;
+        endedAt: number | null;
         callbackPotential: number;
     }>>;
 
     searchMessages(query: string, options?: {
         chatId?: string;
         userId?: string;
-        after?: string;
-        before?: string;
+        after?: number;
+        before?: number;
         limit?: number;
     }): Promise<Array<{
         messageId: string;
@@ -112,7 +112,7 @@ interface MemoryModule {
         userId: string;
         displayName: string;
         content: string;
-        timestamp: string;
+        timestamp: number;
     }>>;
 
     getUserProfile(userId: string, chatId?: string): Promise<{
@@ -167,14 +167,14 @@ interface MemoryModule {
             sourceChatId?: string | null;
             sourceChatTitle?: string | null;
             sourceTopicLabel?: string | null;
-            observedAt?: string | null;
+            observedAt?: number | null;
             visibility?: "private" | "contextual" | "public";
             sensitivity?: "low" | "medium" | "high";
         }>;
     }>;
 
     getRecentInteractions(chatId?: string, userId?: string, limit?: number): Promise<Array<{
-        timestamp: string;
+        timestamp: number;
         chatId: string;
         chatLabel?: string;
         userId: string;
@@ -217,7 +217,7 @@ interface MemoryModule {
                 communicationStyle: string;
                 relationToAgent: string;
                 messageCount: number;
-                lastSeenAt: string;
+                lastSeenAt: number;
             }>;
             facts: Array<{
                 id: string;
@@ -228,13 +228,13 @@ interface MemoryModule {
                 sourceChatId?: string | null;
                 sourceChatTitle?: string | null;
                 sourceTopicLabel?: string | null;
-                observedAt?: string | null;
+                observedAt?: number | null;
                 visibility?: "private" | "contextual" | "public";
                 sensitivity?: "low" | "medium" | "high";
-                updatedAt: string;
+                updatedAt: number;
             }>;
             recentInteractions: Array<{
-                timestamp: string;
+                timestamp: number;
                 chatId: string;
                 userId: string;
                 type: string;
@@ -249,8 +249,8 @@ interface MemoryModule {
                 summary: string;
                 keywords: string[];
                 participants: string[];
-                startedAt: string;
-                endedAt: string | null;
+                startedAt: number;
+                endedAt: number | null;
                 callbackPotential: number;
             }>;
             recentMessages: Array<{
@@ -259,7 +259,7 @@ interface MemoryModule {
                 userId: string;
                 displayName: string;
                 content: string;
-                timestamp: string;
+                timestamp: number;
             }>;
         }>;
     }>;

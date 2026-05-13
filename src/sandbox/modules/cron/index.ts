@@ -35,10 +35,10 @@ export const cronModule = {
             id: string;
             type: "reminder" | "cron";
             description: string;
-            triggerAt?: string;
+            triggerAt?: number;
             cronExpr?: string;
             taskDescription?: string;
-            createdAt: string;
+            createdAt: number;
             triggered?: boolean;
         }>;
     }> => {
@@ -50,10 +50,10 @@ export const cronModule = {
                 id: string;
                 type: "reminder" | "cron";
                 description: string;
-                triggerAt?: string;
+                triggerAt?: number;
                 cronExpr?: string;
                 taskDescription?: string;
-                createdAt: string;
+                createdAt: number;
                 triggered?: boolean;
             }>;
         };

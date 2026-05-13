@@ -14,6 +14,7 @@
 
 import type { SectionProvider, ResolveContext, DiffResult } from "../types.js";
 import { deriveChatType } from "../prompt-renderer-utils.js";
+import { formatTsForPrompt } from "../../core/timezone.js";
 
 // ─── ResolveContext 扩展（executor 专用字段） ───
 
@@ -322,7 +323,7 @@ export const executorSessionDigestsProvider: SectionProvider<Array<{ createdAt: 
     render(data) {
         return [
             "# 历史 Session Digests",
-            ...data.map((item) => `- [${item.createdAt}] ${item.content}`),
+            ...data.map((item) => `- [${formatTsForPrompt(item.createdAt)}] ${item.content}`),
         ].join("\n");
     },
 };

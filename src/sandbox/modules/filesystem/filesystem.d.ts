@@ -50,7 +50,7 @@ declare const fs: {
      * @param content - 追加的内容
      * 
      * @example
-     * fs.appendFile("logs/activity.log", `${new Date().toISOString()} 执行了任务\n`);
+     * fs.appendFile("logs/activity.log", `${Date.now()} 执行了任务\n`);
      */
     appendFile(path: string, content: string): void;
 
@@ -114,7 +114,7 @@ declare const fs: {
         isDirectory: boolean;
         /** 是否是文件 */
         isFile: boolean;
-        /** 最后修改时间（ISO 字符串） */
-        mtime: string;
+        /** 最后修改时间，Unix epoch milliseconds */
+        mtime: number;
     };
 };

@@ -10,6 +10,7 @@ import { deriveChatType, formatTopicList, type FormattableTopic } from "../promp
 import { formatMessageLine, type RawMessage, type StickerDescriptionLookup } from "../../core/message-enricher.js";
 import { getRawId } from "../../core/chat-id.js";
 import type { VisionConfig } from "../../core/config.js";
+import { formatTsForPrompt } from "../../core/timezone.js";
 
 const META_ASSOCIATED_MEMORIES_ENABLED = false;
 
@@ -307,7 +308,7 @@ export const metaHistoricalProvider: SectionProvider<MetaHistoricalData> = {
     render(data) {
         return [
             "# 历史 Session Digests",
-            ...data.sessionDigests.map((item) => `- [${item.createdAt}] ${item.content}`),
+            ...data.sessionDigests.map((item) => `- [${formatTsForPrompt(item.createdAt)}] ${item.content}`),
         ].join("\n");
     },
     renderDelta(delta) {
@@ -318,7 +319,7 @@ export const metaHistoricalProvider: SectionProvider<MetaHistoricalData> = {
         return [
             "# 历史 Session Digests",
             `(增量: ${delta.sessionDigests.length} 条)`,
-            ...delta.sessionDigests.map((item) => `- [${item.createdAt}] ${item.content}`),
+            ...delta.sessionDigests.map((item) => `- [${formatTsForPrompt(item.createdAt)}] ${item.content}`),
         ].join("\n");
     },
 };
@@ -342,7 +343,7 @@ export const metaTodosProvider: SectionProvider<MetaTodosData> = {
         return [
             "# 当前 Todo",
             ...data.todos.map((item) =>
-                `- [${item.bindingId}] ${item.key}: ${item.content}${item.dueAt ? ` (dueAt=${item.dueAt})` : ""}${item.expired ? " (expired)" : ""}`
+                `- [${item.bindingId}] ${item.key}: ${item.content}${item.dueAt ? ` (dueAt=${formatTsForPrompt(item.dueAt)})` : ""}${item.expired ? " (expired)" : ""}`
             ),
         ].join("\n");
     },
@@ -376,7 +377,7 @@ export const metaCallbacksProvider: SectionProvider<MetaCallbacksData> = {
                     ? [
                         `  postTaskWindow=${cb.postTaskWindow?.durationMs ?? ""}ms, messages=${cb.postTaskMessages.length}, direct=${cb.postTaskWindow?.directMessageCount ?? 0}`,
                         ...cb.postTaskMessages.map((msg) =>
-                            `    - [${msg.timestamp}] ${msg.sender}${msg.isDirectAttention ? ` (${msg.directReason ?? "direct"})` : ""}: ${msg.text}${msg.replyToMessageId ? ` (replyTo=${msg.replyToMessageId})` : ""}`
+                            `    - [${formatTsForPrompt(msg.timestamp)}] ${msg.sender}${msg.isDirectAttention ? ` (${msg.directReason ?? "direct"})` : ""}: ${msg.text}${msg.replyToMessageId ? ` (replyTo=${msg.replyToMessageId})` : ""}`
                         ),
                     ].join("\n")
                     : "",

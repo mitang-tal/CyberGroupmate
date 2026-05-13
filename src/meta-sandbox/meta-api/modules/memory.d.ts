@@ -28,10 +28,10 @@ type MemoryIdentityMatchType =
 interface MemorySearchEntitiesOptions {
     /** 限定群组。 */
     chatId?: string;
-    /** ISO 时间下限。 */
-    after?: string;
-    /** ISO 时间上限。 */
-    before?: string;
+    /** Unix epoch milliseconds 时间下限。 */
+    after?: number;
+    /** Unix epoch milliseconds 时间上限。 */
+    before?: number;
     /** 事实分类过滤。 */
     categories?: MetaFactCategory[];
     /** 默认 10，最大 50。 */
@@ -45,7 +45,8 @@ interface MemoryIdentityMatch {
         displayName: string;
         username?: string;
         totalMessageCount?: number;
-        lastSeenAt?: string;
+        /** Unix epoch milliseconds. */
+        lastSeenAt?: number;
     };
     profile: {
         recentFacts?: unknown[];
@@ -68,17 +69,19 @@ interface MemorySearchEntitiesResult {
         keywords: string[];
         participants: string[];
     }>;
-    sessionDigests: Array<{ createdAt: string; content: string }>;
+    sessionDigests: Array<{ createdAt: number; content: string }>;
     coreFacts: Array<{
         factId: string;
         subject: string;
         content: string;
         category: MetaFactCategory;
-        updatedAt: string;
+        /** Unix epoch milliseconds. */
+        updatedAt: number;
         sourceChatId?: string;
         sourceChatTitle?: string;
         sourceTopicLabel?: string;
-        observedAt?: string;
+        /** Unix epoch milliseconds. */
+        observedAt?: number;
         visibility?: "private" | "contextual" | "public";
         sensitivity?: "low" | "medium" | "high";
     }>;
@@ -116,7 +119,8 @@ interface MemoryGetPersonDossierResult {
             communicationStyle: string;
             relationToAgent: string;
             messageCount: number;
-            lastSeenAt: string;
+            /** Unix epoch milliseconds. */
+            lastSeenAt: number;
         }>;
         facts: Array<{
             id: string;
@@ -127,10 +131,12 @@ interface MemoryGetPersonDossierResult {
             sourceChatId?: string | null;
             sourceChatTitle?: string | null;
             sourceTopicLabel?: string | null;
-            observedAt?: string | null;
+            /** Unix epoch milliseconds. */
+            observedAt?: number | null;
             visibility?: "private" | "contextual" | "public";
             sensitivity?: "low" | "medium" | "high";
-            updatedAt: string;
+            /** Unix epoch milliseconds. */
+            updatedAt: number;
         }>;
         recentInteractions: unknown[];
         recentTopics: unknown[];

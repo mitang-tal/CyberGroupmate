@@ -12,11 +12,12 @@ import type {
     MemoryStoreV2,
 } from "../../memory-v2/index.js";
 import type { GlobalState } from "../../main-agent/global-state.js";
+import { timestampInputToIso } from "../../core/timezone.js";
 
 export interface MemorySearchEntitiesOptions {
     chatId?: string;
-    after?: string;
-    before?: string;
+    after?: string | number | Date;
+    before?: string | number | Date;
     categories?: FactCategory[];
     limit?: number;
 }
@@ -157,6 +158,8 @@ export function createMemoryApi(memory: MemoryEntityReader, globalState?: Sessio
         ): Promise<MemorySearchEntitiesResult> => {
             const normalizedQuery = query.trim();
             const limit = clampLimit(options.limit, DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
+            const after = timestampInputToIso(options.after) ?? undefined;
+            const before = timestampInputToIso(options.before) ?? undefined;
 
             if (!normalizedQuery) {
                 return {
@@ -181,8 +184,8 @@ export function createMemoryApi(memory: MemoryEntityReader, globalState?: Sessio
 
             const recentSessions = memory.searchTopics(normalizedQuery, {
                 chatId: options.chatId,
-                after: options.after,
-                before: options.before,
+                after,
+                before,
                 limit,
             });
             const directFactMatches = memory.searchFacts(normalizedQuery, {
