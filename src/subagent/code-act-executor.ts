@@ -14,6 +14,7 @@
 import type {
     ActiveUserProfile,
     CodeActReplyTask,
+    PostTaskReactionMessage,
     SubagentCallback,
 } from "./types.js";
 import type { FactSearchResult, InteractionSearchResult, MemoryStoreV2, RecentMessageEntry } from "../memory-v2/index.js";
@@ -129,6 +130,48 @@ function looksLikePersonProfileContext(rawContext: string | undefined): boolean 
     } catch {
         return true;
     }
+}
+
+function formatPendingMessageLine(message: PostTaskReactionMessage): string {
+    const mediaSuffix = message.mediaType
+        ? ` [${message.mediaType}${message.mediaInfo ? ` ${message.mediaInfo}` : ""}]`
+        : "";
+    const replySuffix = message.replyToMessageId ? ` (replyTo=${message.replyToMessageId})` : "";
+    const text = message.text || "[non-text message]";
+    return `[${message.timestamp}] [msgId:${message.messageId}] ${message.sender}${replySuffix}: ${text}${mediaSuffix}`;
+}
+
+function findLatestDirectAttentionMessage(messages: PostTaskReactionMessage[]): PostTaskReactionMessage | undefined {
+    for (let index = messages.length - 1; index >= 0; index--) {
+        if (messages[index]?.isDirectAttention) {
+            return messages[index];
+        }
+    }
+    return undefined;
+}
+
+function formatPendingMessages(messages: PostTaskReactionMessage[]): string {
+    const lines = messages.map((message) =>
+        formatMessageLine({
+            id: message.messageId,
+            sender: message.sender,
+            text: message.text,
+            timestamp: message.timestamp,
+            mediaType: message.mediaType,
+            mediaInfo: message.mediaInfo,
+        }, { includeMediaTags: true })
+    ).join("\n");
+    return `[📩 新消息到达]\n${lines}`;
+}
+
+function formatMidTurnDirectAttentionPrompt(messages: PostTaskReactionMessage[], directReason: string): string {
+    const lines = messages.map((message) => formatPendingMessageLine(message));
+    return [
+        "[📩 新消息到达]",
+        ...lines,
+        "",
+        `[mid-turn direct attention: ${directReason}] 这些消息发生在你处理当前任务期间，其中有人直接叫住你、回复你或提及你。请结合当前会话、刚才的执行结果和上面所有尚未处理的新消息判断是否需要调整下一步行动或直接回复；需要时在下一轮自然处理，不需要则继续当前任务。`,
+    ].join("\n");
 }
 
 // ─── API 概览缓存 ───
@@ -347,7 +390,7 @@ export class CodeActExecutor {
     private callbackHandler: ((cb: SubagentCallback) => void) | null = null;
 
     /** 层 2: 消息前送缓冲区 — NC hook 在 session 执行期间推入新消息 */
-    private pendingMessages: Array<{ id: string; sender: string; text: string; timestamp: string; mediaType?: string; mediaInfo?: string }> = [];
+    private pendingMessages: PostTaskReactionMessage[] = [];
 
     /** Memory 引用（层 1 用于刷新目标消息） */
     private memory: MemoryStoreV2 | null = null;
@@ -483,14 +526,16 @@ export class CodeActExecutor {
             hasSandbox: this.hasDependencies(),
         });
 
+        let callback: SubagentCallback;
+
         try {
             // ═══ Fix 9: 实际的 Sandbox 执行逻辑 ═══
             if (this.hasDependencies()) {
-                return await this.executeWithSandbox(task, startTime);
+                callback = await this.executeWithSandbox(task, startTime);
+            } else {
+                // Fallback: 无依赖时使用骨架逻辑（测试用）
+                callback = this.executeSkeletonFallback(task, startTime);
             }
-
-            // Fallback: 无依赖时使用骨架逻辑（测试用）
-            return this.executeSkeletonFallback(task, startTime);
 
         } catch (err) {
             const durationMs = Date.now() - startTime;
@@ -527,8 +572,17 @@ export class CodeActExecutor {
             } else {
                 log.error("execute: 失败", { chatId: this.chatId, taskId: task.taskId, error: String(err) });
             }
-            return callback;
         }
+
+        await this.finalizeExecutionArtifacts();
+        return callback;
+    }
+
+    private async finalizeExecutionArtifacts(): Promise<void> {
+        if (this.session.length > this.config.maxSessionMessages) {
+            await this.compactSession();
+        }
+        this.saveSession();
     }
 
     /**
@@ -749,6 +803,7 @@ export class CodeActExecutor {
                 this.config.maxExecutionTimeMs,
                 sentCollector, // Fix 1: 传入 collector
                 () => this.drainPendingMessages(), // 层 2: turn 间消息注入
+                () => this.drainPendingMessagesForObservation(), // 层 2: direct attention 立即并入 observation
                 `让${this.personaName}想想，`,  // prefill: 引导 LLM 以角色开始思考
                 ["[Execution Output]"],  // stop sequences
                 this.chatId,  // 关联 chatId，用于 codeActEvents 进度广播
@@ -906,13 +961,16 @@ export class CodeActExecutor {
     ): SubagentCallback {
         const durationMs = Date.now() - startTime;
 
-        if (task.continuationPrompt) {
-            this.session.push({
-                role: "user",
-                content: task.continuationPrompt,
-                timestamp: new Date().toISOString(),
-            });
-        }
+        const taskPrompt = (
+            task.continuationPrompt
+            ?? task.contextSnapshot.contentDirection
+            ?? task.decisions.map((decision) => decision.contentDirection ?? decision.reason ?? "").filter(Boolean).join("\n")
+        ) || `[TASK] ${task.replyMode} (${task.decisions.length} decisions)`;
+        this.session.push({
+            role: "user",
+            content: taskPrompt,
+            timestamp: new Date().toISOString(),
+        });
 
         this.session.push({
             role: "assistant",
@@ -981,16 +1039,35 @@ export class CodeActExecutor {
      * 层 2: 推入一条新消息到 pending buffer
      * 由 NC hook 在 session 执行期间调用
      */
-    pushPendingMessage(msg: { id: string; sender: string; text: string; timestamp: string; mediaType?: string; mediaInfo?: string }): void {
+    pushPendingMessage(msg: PostTaskReactionMessage): void {
         this.pendingMessages.push(msg);
         log.debug("pushPendingMessage", {
             chatId: this.chatId,
-            msgId: msg.id,
+            msgId: msg.messageId,
             sender: msg.sender,
             textPreview: msg.text.length > 50 ? msg.text.slice(0, 50) + "..." : msg.text,
+            directReason: msg.directReason,
             hasMedia: !!msg.mediaInfo,
             bufferSize: this.pendingMessages.length,
         });
+    }
+
+    /**
+     * 层 2: 在当前 turn 的 observation 前优先抽取 direct attention 消息
+     * 仅当有人直接叫住 agent 时才清空 buffer 并立即反馈给模型。
+     */
+    drainPendingMessagesForObservation(): string | null {
+        const trigger = findLatestDirectAttentionMessage(this.pendingMessages);
+        if (!trigger) return null;
+
+        const drained = this.pendingMessages.splice(0);
+        const directReason = trigger.directReason ?? "direct-address";
+        log.info("drainPendingMessagesForObservation", {
+            chatId: this.chatId,
+            count: drained.length,
+            directReason,
+        });
+        return formatMidTurnDirectAttentionPrompt(drained, directReason);
     }
 
     /**
@@ -1001,21 +1078,16 @@ export class CodeActExecutor {
     drainPendingMessages(): string | null {
         if (this.pendingMessages.length === 0) return null;
         const drained = this.pendingMessages.splice(0);
-        const lines = drained.map(m =>
-            formatMessageLine({
-                id: m.id,
-                sender: m.sender,
-                text: m.text,
-                timestamp: m.timestamp,
-                mediaType: m.mediaType,
-                mediaInfo: m.mediaInfo,
-            }, { includeMediaTags: true })
-        ).join("\n");
+        const trigger = findLatestDirectAttentionMessage(drained);
         log.info("drainPendingMessages", {
             chatId: this.chatId,
             count: drained.length,
+            hasDirectAttention: !!trigger,
         });
-        return `[📩 新消息到达]\n${lines}`;
+        if (trigger) {
+            return formatMidTurnDirectAttentionPrompt(drained, trigger.directReason ?? "direct-address");
+        }
+        return formatPendingMessages(drained);
     }
 
     /**
@@ -1138,14 +1210,6 @@ export class CodeActExecutor {
                     this.taskQueue = [];
                     break;
                 }
-
-                // 每次任务完成后 compact session（从任务开始前移至此处，避免延迟任务执行）
-                if (this.session.length > this.config.maxSessionMessages) {
-                    await this.compactSession();
-                }
-
-                // 每次任务完成后自动持久化 session
-                this.saveSession();
             }
         } finally {
             this.processing = false;

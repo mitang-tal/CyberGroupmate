@@ -171,6 +171,72 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
             assert.equal(callbacks.length, 1, "callback 应被调用一次");
             assert.equal(callbacks[0].taskId, task.taskId);
         });
+
+        it("#6a direct pending messages are injected into current observation", () => {
+            const executor = new CodeActExecutor("chat1");
+
+            executor.pushPendingMessage({
+                messageId: "msg-1",
+                sender: "Alice",
+                text: "前面这句也要一起看",
+                timestamp: "2026-05-13T10:00:00.000Z",
+            });
+            executor.pushPendingMessage({
+                messageId: "msg-2",
+                sender: "Bob",
+                text: "你在吗？",
+                timestamp: "2026-05-13T10:00:01.000Z",
+                isDirectAttention: true,
+                directReason: "reply-to-agent",
+                replyToMessageId: "sent-1",
+            });
+
+            const observation = executor.drainPendingMessagesForObservation();
+
+            assert.match(observation ?? "", /\[📩 新消息到达\]/);
+            assert.match(observation ?? "", /前面这句也要一起看/);
+            assert.match(observation ?? "", /你在吗/);
+            assert.match(observation ?? "", /replyTo=sent-1/);
+            assert.match(observation ?? "", /\[mid-turn direct attention: reply-to-agent\]/);
+            assert.equal(executor.drainPendingMessages(), null);
+        });
+
+        it("#6b non-direct pending messages stay on the next-turn injection path", () => {
+            const executor = new CodeActExecutor("chat1");
+
+            executor.pushPendingMessage({
+                messageId: "msg-1",
+                sender: "Alice",
+                text: "普通插话",
+                timestamp: "2026-05-13T10:00:00.000Z",
+            });
+
+            assert.equal(executor.drainPendingMessagesForObservation(), null);
+
+            const nextTurn = executor.drainPendingMessages();
+
+            assert.match(nextTurn ?? "", /\[📩 新消息到达\]/);
+            assert.match(nextTurn ?? "", /普通插话/);
+            assert.doesNotMatch(nextTurn ?? "", /mid-turn direct attention/);
+        });
+
+        it("#6c direct pending messages stay highlighted if they miss current observation", () => {
+            const executor = new CodeActExecutor("chat1");
+
+            executor.pushPendingMessage({
+                messageId: "msg-2",
+                sender: "Bob",
+                text: "看一下我这条",
+                timestamp: "2026-05-13T10:00:01.000Z",
+                isDirectAttention: true,
+                directReason: "@mention",
+            });
+
+            const nextTurn = executor.drainPendingMessages();
+
+            assert.match(nextTurn ?? "", /\[mid-turn direct attention: @mention\]/);
+            assert.match(nextTurn ?? "", /看一下我这条/);
+        });
     });
 
 

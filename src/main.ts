@@ -755,10 +755,13 @@ async function main(): Promise<void> {
         const executor = sub.codeActExecutor as import("./subagent/code-act-executor.js").CodeActExecutor | null;
         if (executor?.isProcessing() && !inPostTaskWindow) {
             executor.pushPendingMessage({
-                id: String(event.messageId ?? event.id ?? `msg_${Date.now()}`),
+                messageId: String(event.messageId ?? event.id ?? `msg_${Date.now()}`),
                 sender: String(event.displayName ?? event.senderName ?? event.userName ?? "?"),
                 text: String(event.text ?? event.message ?? ""),
                 timestamp: String(event.timestamp ?? new Date().toISOString()),
+                isDirectAttention,
+                directReason: directReason || undefined,
+                replyToMessageId: event.replyToMessageId != null ? String(event.replyToMessageId) : undefined,
                 mediaType: (event as any).mediaInfo?.type ?? undefined,
                 mediaInfo: (event as any).mediaInfo ? JSON.stringify((event as any).mediaInfo) : undefined,
             });

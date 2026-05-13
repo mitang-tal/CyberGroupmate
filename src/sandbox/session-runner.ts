@@ -313,6 +313,8 @@ export async function runCodeActSession(
     sentMessageCollector?: SentMessageCollector,
     /** 层 2 消息前送：每轮 LLM 调用前检查是否有新消息到达 */
     pendingMessagesDrain?: () => string | null,
+    /** 层 2 observation 注入：当前 turn 结束时优先并入 direct attention 新消息 */
+    pendingMessagesObservationDrain?: () => string | null,
     /** LLM prefill（预填充回复开头） */
     prefill?: string,
     /** LLM stop sequences */
@@ -503,6 +505,13 @@ export async function runCodeActSession(
                 const sentConfirmation = SentMessageCollector.formatAsObservation(turnSent, turnDupWarnings);
                 if (sentConfirmation) {
                     textOnlyObs += `\n\n${sentConfirmation}`;
+                }
+            }
+
+            if (pendingMessagesObservationDrain) {
+                const pendingObservation = pendingMessagesObservationDrain();
+                if (pendingObservation) {
+                    textOnlyObs += `\n\n${pendingObservation}`;
                 }
             }
 
@@ -747,6 +756,13 @@ ${fullDocs}
             const sentConfirmation = SentMessageCollector.formatAsObservation(turnSent, turnDupWarnings);
             if (sentConfirmation) {
                 observation = observation ? `${observation}\n\n${sentConfirmation}` : sentConfirmation;
+            }
+        }
+
+        if (pendingMessagesObservationDrain) {
+            const pendingObservation = pendingMessagesObservationDrain();
+            if (pendingObservation) {
+                observation = observation ? `${observation}\n\n${pendingObservation}` : pendingObservation;
             }
         }
 
