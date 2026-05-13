@@ -594,9 +594,7 @@ export const executorStickersProvider: SectionProvider<string> = {
         if (!ctx.availableStickers?.length) return null;
         return ctx.availableStickers
             .map(s => {
-                const emojis = s.emojis?.length ? s.emojis : (s.emoji ? [s.emoji] : []);
-                const emojiText = emojis.length ? `${emojis.join(" ")} ` : "";
-                return `- ${emojiText}${s.description} (uniqueFileId: ${s.uniqueFileId})`;
+                return `- ${s.description} (uniqueFileId: ${s.uniqueFileId})`;
             })
             .join("\n");
     },
