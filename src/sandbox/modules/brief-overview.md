@@ -109,7 +109,7 @@ shell.d.ts — 终端 Tab 管理模块 提供类似 tmux/terminal tabs 的多终
 shared/skills.d.ts — Skills 高层能力 + 管理接口
 
 - `install`: 安装或创建一个新 Skill。支持SKILL.md 型（多数场景）和TS Skills（复杂能力场景） 两种方式完成文件后，都需要调用 skills.reload() 生效。
-- `list`: 列出当前已加载的 Skills 名称
+- `list`: 列出当前已加载的 Skills 元数据。 `bindingName` 用于调用注入的全局变量，`path` 用于通过 fs 读取该 skill 的文件。
 - `reload`: 热重载所有 Skills。在 workspace/skills/ 下创建/修改文件后调用。
 - `npmInstall`: 安装 npm 包到 workspace/skills/ 目录
 

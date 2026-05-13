@@ -52,19 +52,38 @@ const PROJECT_ROOT = resolve(__dirname, "../..");
 const SKILLS_DIR = resolve(PROJECT_ROOT, "workspace/skills");
 
 export interface LoadedSkill {
-    /** Skill 名称（目录名） */
+    /** Sandbox 中注入的 JS 变量名。保留 name 字段兼容旧调用方。 */
     name: string;
+    /** workspace/skills 下的真实目录名，也是文件访问用的 path segment。 */
+    id: string;
+    /** Sandbox 中注入的 JS 变量名。 */
+    bindingName: string;
+    /** SKILL.md frontmatter name 或目录名，用于展示。 */
+    displayName: string;
+    /** Agent 在 sandbox fs 中访问该 skill 的相对路径，如 skills/find-ero。 */
+    path: string;
     /** 作为顶层变量注入 sandbox 的对象 */
     exports: Record<string, unknown>;
     /** d.ts 文件路径（如有） */
     dtsPath?: string;
+    /** SKILL.md 文件路径（如有） */
+    skillMdPath?: string;
     /** 是否为纯 AgentSkill（SKILL.md 驱动，无代码入口） */
     isAgentSkill?: boolean;
 }
 
 /** discoverSkills 返回的发现结果 */
 export interface DiscoveredSkill {
+    /** workspace/skills 下的真实目录名。 */
+    id: string;
+    /** Sandbox 中注入的 JS 变量名。保留 name 字段兼容旧调用方。 */
     name: string;
+    /** Sandbox 中注入的 JS 变量名。 */
+    bindingName: string;
+    /** SKILL.md frontmatter name 或目录名，用于展示。 */
+    displayName: string;
+    /** Agent 在 sandbox fs 中访问该 skill 的相对路径，如 skills/find-ero。 */
+    path: string;
     indexPath: string;
     dtsPath?: string;
     /** 纯 AgentSkill 标记 */
@@ -78,6 +97,64 @@ function toSafeIdentifier(str: string): string {
     name = name.replace(/[^a-zA-Z0-9_$]/g, "_");
     if (/^[0-9]/.test(name)) name = "_" + name;
     return name;
+}
+
+function createDiscoveredSkill(params: {
+    entry: string;
+    indexPath: string;
+    dtsPath?: string;
+    isAgentSkill?: boolean;
+    skillMdPath?: string;
+    frontmatterName?: string;
+    preferUnderscoreBinding?: boolean;
+}): DiscoveredSkill {
+    const displayName = params.frontmatterName?.trim() || params.entry;
+    const bindingSource = displayName || params.entry;
+    const bindingName = params.preferUnderscoreBinding
+        ? toSafeSkillName(bindingSource)
+        : toSafeIdentifier(bindingSource);
+    return {
+        id: params.entry,
+        name: bindingName,
+        bindingName,
+        displayName,
+        path: `skills/${params.entry}`,
+        indexPath: params.indexPath,
+        dtsPath: params.dtsPath,
+        isAgentSkill: params.isAgentSkill,
+        skillMdPath: params.skillMdPath,
+    };
+}
+
+export interface SkillListEntry {
+    /** workspace/skills 下的真实目录名。读写文件请使用 path/id，不要猜 bindingName。 */
+    id: string;
+    /** SKILL.md frontmatter name 或目录名，用于展示。 */
+    name: string;
+    /** Sandbox 中注入的 JS 变量名，例如 find_ero。调用 Skill API 用它。 */
+    bindingName: string;
+    /** Agent 在 sandbox fs 中访问该 skill 的相对路径，例如 skills/find-ero。 */
+    path: string;
+    /** Skill 类型：agent 为 SKILL.md-only，code 为 index.ts/js 代码型。 */
+    kind: "agent" | "code";
+    hasSkillMd: boolean;
+    hasDts: boolean;
+}
+
+export function toSkillListEntry(skill: Pick<DiscoveredSkill | LoadedSkill, "id" | "displayName" | "bindingName" | "path" | "isAgentSkill"> & { dtsPath?: string; skillMdPath?: string }): SkillListEntry {
+    return {
+        id: skill.id,
+        name: skill.displayName,
+        bindingName: skill.bindingName,
+        path: skill.path,
+        kind: skill.isAgentSkill ? "agent" : "code",
+        hasSkillMd: Boolean(skill.skillMdPath || skill.isAgentSkill),
+        hasDts: Boolean(skill.dtsPath),
+    };
+}
+
+export function getSkillListEntries(skills: LoadedSkill[]): SkillListEntry[] {
+    return skills.map(toSkillListEntry);
 }
 
 /**
@@ -112,10 +189,22 @@ export function discoverSkills(): DiscoveredSkill[] {
                 try {
                     const raw = readFileSync(skillMdPath, "utf-8");
                     const parsed = parseSkillMdFrontmatter(raw);
-                    const name = parsed.name ? toSafeSkillName(parsed.name) : toSafeSkillName(entry);
-                    skills.push({ name, indexPath: "", isAgentSkill: true, skillMdPath });
+                    skills.push(createDiscoveredSkill({
+                        entry,
+                        indexPath: "",
+                        isAgentSkill: true,
+                        skillMdPath,
+                        frontmatterName: parsed.name,
+                        preferUnderscoreBinding: true,
+                    }));
                 } catch {
-                    skills.push({ name: toSafeSkillName(entry), indexPath: "", isAgentSkill: true, skillMdPath });
+                    skills.push(createDiscoveredSkill({
+                        entry,
+                        indexPath: "",
+                        isAgentSkill: true,
+                        skillMdPath,
+                        preferUnderscoreBinding: true,
+                    }));
                 }
             } else {
                 log.warn(`[skill-loader] ⚠ 跳过 ${entry}/: 未找到 index.ts、index.js 或 SKILL.md\n`);
@@ -129,13 +218,13 @@ export function discoverSkills(): DiscoveredSkill[] {
         const dtsPath = preferredDts ? join(dirPath, preferredDts)
             : dtsFiles.length > 0 ? join(dirPath, dtsFiles[0]) : undefined;
 
-        skills.push({ name: toSafeIdentifier(entry), indexPath, dtsPath, skillMdPath });
+        skills.push(createDiscoveredSkill({ entry, indexPath, dtsPath, skillMdPath }));
     }
 
     return skills;
 }
 
-function buildAgentSkillUse(skillName: string, skillMdPath: string): { description: string; use: () => string } {
+function buildAgentSkillUse(skill: Pick<DiscoveredSkill | LoadedSkill, "bindingName" | "displayName" | "path">, skillMdPath: string): { description: string; use: () => string } {
     const raw = readFileSync(skillMdPath, "utf-8");
     const parsed = parseSkillMdFrontmatter(raw);
     const description = parsed.description || "Agent Skill";
@@ -144,8 +233,8 @@ function buildAgentSkillUse(skillName: string, skillMdPath: string): { descripti
     return {
         description,
         use: () => {
-            const header = `\n═══ [AgentSkill: ${skillName}] ${description} ═══`;
-            const footer = `═══ [/${skillName}] ═══\n`;
+            const header = `\n═══ [AgentSkill: ${skill.displayName} | binding: ${skill.bindingName} | path: ${skill.path}/SKILL.md] ${description} ═══`;
+            const footer = `═══ [/${skill.displayName}] ═══\n`;
             const content = `${header}\n${body}\n${footer}`;
             console.log(content);
             return content;
@@ -156,7 +245,7 @@ function buildAgentSkillUse(skillName: string, skillMdPath: string): { descripti
 function attachSkillGuideUse(skill: DiscoveredSkill, exports: Record<string, unknown>): void {
     if (!skill.skillMdPath || typeof exports !== "object" || exports === null || "use" in exports) return;
     try {
-        exports.use = buildAgentSkillUse(skill.name, skill.skillMdPath).use;
+        exports.use = buildAgentSkillUse(skill, skill.skillMdPath).use;
     } catch (err) {
         const msg = err instanceof Error ? err.stack ?? err.message : String(err);
         log.warn(`[skill-loader] ⚠ 读取 Skill "${skill.name}" 的 SKILL.md 指南失败:\n${msg}\n`);
@@ -171,11 +260,11 @@ function createSkillMdModuleEntry(skill: DiscoveredSkill): ModuleEntry | null {
         const parsed = parseSkillMdFrontmatter(raw);
         const description = parsed.description || "Agent Skill";
         return {
-            name: skill.name,
+            name: skill.bindingName,
             description,
             methods: [{
                 name: "use",
-                brief: `打印并阅读该 Skill 的详细指南。调用方式: await ${skill.name}.use()`,
+                brief: `打印并阅读该 Skill 的详细指南。调用: await ${skill.bindingName}.use(); 文件: ${skill.path}/SKILL.md`,
                 fullDoc: "",  // use() 本身即自文档（调用后输出 SKILL.md 全文），无需 two-pass 注入
             }],
         };
@@ -258,14 +347,20 @@ export async function loadAllSkills(): Promise<LoadedSkill[]> {
         // ═══ 纯 AgentSkill：生成虚拟 use() 导出 ═══
         if (skill.isAgentSkill && skill.skillMdPath) {
             try {
-                const skillName = skill.name;
-                const guide = buildAgentSkillUse(skillName, skill.skillMdPath);
+                const skillName = skill.bindingName;
+                const guide = buildAgentSkillUse(skill, skill.skillMdPath);
 
                 loaded.push({
                     name: skillName,
+                    id: skill.id,
+                    bindingName: skill.bindingName,
+                    displayName: skill.displayName,
+                    path: skill.path,
                     exports: {
                         use: guide.use,
                     },
+                    dtsPath: skill.dtsPath,
+                    skillMdPath: skill.skillMdPath,
                     isAgentSkill: true,
                 });
                 log.info(`[skill-loader] ✅ ${skillName} (AgentSkill) 已加载\n`);
@@ -281,9 +376,15 @@ export async function loadAllSkills(): Promise<LoadedSkill[]> {
         if (exports) {
             attachSkillGuideUse(skill, exports);
             loaded.push({
-                name: skill.name,
+                name: skill.bindingName,
+                id: skill.id,
+                bindingName: skill.bindingName,
+                displayName: skill.displayName,
+                path: skill.path,
                 exports,
                 dtsPath: skill.dtsPath,
+                skillMdPath: skill.skillMdPath,
+                isAgentSkill: false,
             });
             log.info(`[skill-loader] ✅ ${skill.name} 已加载\n`);
         }
@@ -296,7 +397,7 @@ export async function loadAllSkills(): Promise<LoadedSkill[]> {
  * 获取所有已加载 Skills 的模块名称列表（用于动态构建 api-intent-extractor 的前缀）
  */
 export function getSkillNames(skills: LoadedSkill[]): string[] {
-    return skills.map(s => s.name);
+    return skills.map(s => s.bindingName);
 }
 
 /**
@@ -327,7 +428,7 @@ export function parseAllSkillDocs(): ModuleEntry[] {
                 // 修正默认占位符名称为实际的 skill.name
                 for (const mod of parsed) {
                     if (mod.name === "default") {
-                        mod.name = skill.name;
+                        mod.name = skill.bindingName;
                     }
                     entries.push(mod);
                 }
@@ -431,14 +532,20 @@ export async function reloadAllSkills(): Promise<LoadedSkill[]> {
         // ═══ 纯 AgentSkill：重新读取 SKILL.md 并生成新的 use() 闭包 ═══
         if (skill.isAgentSkill && skill.skillMdPath) {
             try {
-                const skillName = skill.name;
-                const guide = buildAgentSkillUse(skillName, skill.skillMdPath);
+                const skillName = skill.bindingName;
+                const guide = buildAgentSkillUse(skill, skill.skillMdPath);
 
                 loaded.push({
                     name: skillName,
+                    id: skill.id,
+                    bindingName: skill.bindingName,
+                    displayName: skill.displayName,
+                    path: skill.path,
                     exports: {
                         use: guide.use,
                     },
+                    dtsPath: skill.dtsPath,
+                    skillMdPath: skill.skillMdPath,
                     isAgentSkill: true,
                 });
                 log.info(`[skill-loader] ✅ ${skillName} (AgentSkill) 已重载`);
@@ -458,8 +565,8 @@ export async function reloadAllSkills(): Promise<LoadedSkill[]> {
             let exports: Record<string, unknown>;
             if (mod.default) {
                 exports = mod.default;
-            } else if (mod[skill.name]) {
-                exports = mod[skill.name];
+            } else if (mod[skill.bindingName]) {
+                exports = mod[skill.bindingName];
             } else {
                 exports = {};
                 for (const [key, value] of Object.entries(mod)) {
@@ -469,9 +576,15 @@ export async function reloadAllSkills(): Promise<LoadedSkill[]> {
             attachSkillGuideUse(skill, exports);
 
             loaded.push({
-                name: skill.name,
+                name: skill.bindingName,
+                id: skill.id,
+                bindingName: skill.bindingName,
+                displayName: skill.displayName,
+                path: skill.path,
                 exports,
                 dtsPath: skill.dtsPath,
+                skillMdPath: skill.skillMdPath,
+                isAgentSkill: false,
             });
             log.info(`[skill-loader] ✅ ${skill.name} 已重载`);
         } catch (err) {

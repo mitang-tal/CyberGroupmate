@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-import { discoverSkills, getAgentSkillScriptDirs, loadAllSkills, parseAllSkillDocs } from "../src/sandbox/skill-loader.js";
+import { discoverSkills, getAgentSkillScriptDirs, getSkillListEntries, loadAllSkills, parseAllSkillDocs } from "../src/sandbox/skill-loader.js";
 import { loadApiTypeDefs, refreshModuleRegistryCache } from "../src/subagent/code-act-executor.js";
 import { buildEnhancedShellPath } from "../src/sandbox/sandbox.js";
 
@@ -156,5 +156,49 @@ describe("Agent Skills native support", () => {
         const runtimeSkill = loaded.find(skill => skill.name === "gptImage2");
         assert.equal(typeof runtimeSkill?.exports.use, "function");
         assert.equal(await (runtimeSkill?.exports.generate as () => Promise<string>)(), "ok");
+    });
+
+    it("keeps hyphenated skill directory names separate from JS binding names", async () => {
+        const skillDir = join(process.cwd(), "workspace", "skills", "find-ero");
+        const skillMdPath = join(skillDir, "SKILL.md");
+
+        ensureDir(skillDir);
+        writeFile(skillMdPath, [
+            "---",
+            "name: find-ero",
+            "description: Find image source references.",
+            "---",
+            "",
+            "# Find Ero",
+            "",
+            "Read this guide before using the workflow.",
+            "",
+        ].join("\n"));
+
+        const discovered = discoverSkills().find(skill => skill.id === "find-ero");
+        assert.ok(discovered, "应发现带横杠目录名的 Skill");
+        assert.equal(discovered?.bindingName, "find_ero");
+        assert.equal(discovered?.name, "find_ero");
+        assert.equal(discovered?.displayName, "find-ero");
+        assert.equal(discovered?.path, "skills/find-ero");
+
+        const modules = parseAllSkillDocs();
+        const item = modules.find(mod => mod.name === "find_ero");
+        assert.ok(item, "API overview 应使用可调用的 JS binding");
+        assert.equal(item?.description, "Find image source references.");
+        assert.ok(item?.methods[0].brief.includes("await find_ero.use()"));
+        assert.ok(item?.methods[0].brief.includes("skills/find-ero/SKILL.md"));
+
+        const loaded = await loadAllSkills();
+        const entry = getSkillListEntries(loaded).find(skill => skill.id === "find-ero");
+        assert.deepEqual(entry, {
+            id: "find-ero",
+            name: "find-ero",
+            bindingName: "find_ero",
+            path: "skills/find-ero",
+            kind: "agent",
+            hasSkillMd: true,
+            hasDts: false,
+        });
     });
 });

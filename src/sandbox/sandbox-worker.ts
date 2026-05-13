@@ -24,7 +24,7 @@ import { memoryModule, setMemoryCallbacks } from "./modules/memory/index.js";
 import { setSkillManagerCallbacks } from "./modules/skills/index.js";
 import { setRuntimeCallbacks } from "./modules/runtime/index.js";
 import { installShell, setShellCallbacks } from "./modules/shell/index.js";
-import { loadAllSkills, reloadAllSkills, installDepsRuntime, type LoadedSkill } from "./skill-loader.js";
+import { getSkillListEntries, loadAllSkills, reloadAllSkills, installDepsRuntime, type LoadedSkill } from "./skill-loader.js";
 import { configureLogger } from "../core/logger.js";
 
 // ─── 全局 Skills 缓存（Worker 启动时加载一次） ───
@@ -382,7 +382,7 @@ async function executeCode(id: string, code: string): Promise<void> {
         const skillArgNames: string[] = [];
         const skillArgValues: unknown[] = [];
         for (const skill of loadedSkills) {
-            skillArgNames.push(skill.name);
+            skillArgNames.push(skill.bindingName);
             // wrap skill exports 以追踪未 await 的 Promise
             const wrapped = tracker.wrap(skill.exports as Record<string, unknown>);
             skillArgValues.push(wrapped);
@@ -511,10 +511,10 @@ async function initWorker(): Promise<void> {
 
     // 注入 Skill 管理回调（让 skills.list/reload/npmInstall 可用）
     setSkillManagerCallbacks({
-        listSkills: () => loadedSkills.map(s => s.name),
+        listSkills: () => getSkillListEntries(loadedSkills),
         reloadSkills: async () => {
             loadedSkills = await reloadAllSkills();
-            return loadedSkills.map(s => s.name);
+            return getSkillListEntries(loadedSkills);
         },
         npmInstall: async (packages: string[]) => installDepsRuntime(packages),
     });

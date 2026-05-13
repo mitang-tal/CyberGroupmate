@@ -4,7 +4,7 @@
  * 高层代码型 skills 能力：
  * 
  * 管理能力：
- * - skills.list(): 列出已加载的 Skills
+ * - skills.list(): 列出已加载的 Skills 及其真实目录名/JS 绑定名
  * - skills.reload(): 热重载所有 Skills
  * - skills.npmInstall(packages): 安装 npm 依赖
  */
@@ -12,12 +12,27 @@
 import type { CapabilityRegistryEnv } from "../../capability-registry.js";
 import { createTelegramClientProxy } from "../telegram/index.js";
 
+export interface SkillListEntry {
+    /** workspace/skills 下的真实目录名。读写文件请使用 path/id，不要猜 bindingName。 */
+    id: string;
+    /** SKILL.md frontmatter name 或目录名，用于展示。 */
+    name: string;
+    /** Sandbox 中注入的 JS 变量名，例如 find_ero。调用 Skill API 用它。 */
+    bindingName: string;
+    /** Agent 在 sandbox fs 中访问该 skill 的相对路径，例如 skills/find-ero。 */
+    path: string;
+    /** Skill 类型：agent 为 SKILL.md-only，code 为 index.ts/js 代码型。 */
+    kind: "agent" | "code";
+    hasSkillMd: boolean;
+    hasDts: boolean;
+}
+
 /** 供外部注入的 Skill 管理回调 */
 export interface SkillManagerCallbacks {
-    /** 返回当前已加载的 skill 名称列表 */
-    listSkills: () => string[];
-    /** 热重载所有 Skills，返回新的 skill 名称列表 */
-    reloadSkills: () => Promise<string[]>;
+    /** 返回当前已加载的 skill 元数据 */
+    listSkills: () => SkillListEntry[];
+    /** 热重载所有 Skills，返回新的 skill 元数据 */
+    reloadSkills: () => Promise<SkillListEntry[]>;
     /** 运行时安装 npm 包 */
     npmInstall: (packages: string[]) => Promise<string>;
 }
@@ -61,7 +76,8 @@ export function installSkills(
 
 3. 使其生效
     - 文件创建或修改后，调用 \`skills.reload()\` 热重载
-    - 重载成功后，可按全局变量 \`${name}\` 直接调用该 Skill。`;
+    - 重载成功后，使用返回条目里的 \`bindingName\` 调用该 Skill；使用 \`path\` 读取/修改该 Skill 的文件。
+      例如目录名 \`find-ero\` 会暴露为合法 JS 变量 \`find_ero\`，文件仍在 \`skills/find-ero\`。`;
         },
         /** 列出当前已加载的 Skills */
         list: () => _managerCallbacks.listSkills(),

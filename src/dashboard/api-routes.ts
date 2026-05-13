@@ -223,7 +223,7 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
     // ─── Skills ───
     router.get("/skills", (_req, res) => {
         try {
-            const discovered = new Set(discoverSkills().map((skill) => skill.name));
+            const discovered = new Set(discoverSkills().map((skill) => skill.id));
             const skills = listSkillEntries().map((skill) => ({
                 ...skill,
                 loaded: discovered.has(skill.id),
@@ -319,7 +319,11 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             res.json({
                 ok: true,
                 activeSandboxCount: activeSandboxes.length,
-                reloadedSkills: discoverSkills().map((skill) => skill.name),
+                reloadedSkills: discoverSkills().map((skill) => ({
+                    id: skill.id,
+                    bindingName: skill.bindingName,
+                    path: skill.path,
+                })),
                 sandboxResults: results,
             });
         } catch (err) {
