@@ -698,15 +698,13 @@ async function main(): Promise<void> {
                         ? "reply-to-agent"
                         : "";
         const isDirectAttention = directReason.length > 0;
-        const inPostTaskWindow = postTaskWindows.hasActiveWindow(chatId);
+        const executor = sub.codeActExecutor as import("./subagent/code-act-executor.js").CodeActExecutor | null;
+        const executorProcessing = !!executor?.isProcessing();
 
-        postTaskWindows.recordMessage(chatId, event, {
-            isDirectAttention,
-            directReason: directReason || undefined,
-        });
+        if (!executorProcessing) postTaskWindows.recordMessage(chatId, event, { isDirectAttention, directReason: directReason || undefined });
 
         if (isDirectAttention) {
-            const handledByPostTaskWindow = postTaskWindows.tryForwardDirectMessage(chatId, event, directReason);
+            const handledByPostTaskWindow = executorProcessing || postTaskWindows.tryForwardDirectMessage(chatId, event, directReason);
             if (!handledByPostTaskWindow) {
                 const entry = sub.buildQueueEntry("DIRECT_ADDRESS");
                 accumulator.ingest(0, createDirectAddressItem(chatId, {
@@ -752,8 +750,7 @@ async function main(): Promise<void> {
         }
 
         // 层 2 消息前送：如果该 chatId 的 CodeActExecutor 正在执行，推入 pending buffer
-        const executor = sub.codeActExecutor as import("./subagent/code-act-executor.js").CodeActExecutor | null;
-        if (executor?.isProcessing() && !inPostTaskWindow) {
+        if (executorProcessing && executor) {
             executor.pushPendingMessage({
                 messageId: String(event.messageId ?? event.id ?? `msg_${Date.now()}`),
                 sender: String(event.displayName ?? event.senderName ?? event.userName ?? "?"),

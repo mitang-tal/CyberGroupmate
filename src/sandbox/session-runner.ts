@@ -360,6 +360,22 @@ export async function runCodeActSession(
         codeActEvents.emit("codeact:progress", payload);
     };
 
+    const injectPendingBeforeEnd = (turnNum: number, turn: SessionTurn, source: string): boolean => {
+        const newMessages = pendingMessagesDrain?.();
+        if (!newMessages) return false;
+        const sanitizedNewMessages = sanitizePromptTimestamps(newMessages);
+        log.info(`Turn ${turnNum}: ${source}<end_task> 前收到新消息，继续处理`, { length: newMessages.length });
+        turns.push(turn);
+        messages.push({ role: "user", content: sanitizedNewMessages });
+        emitProgress({
+            turn: turnNum,
+            phase: "new_messages",
+            userMessage: sanitizedNewMessages,
+            isProcessing: true,
+        });
+        return true;
+    };
+
     // ─── 发射初始任务 prompt 进度事件 ───
     // 取 messages 中最后一条 user 消息作为任务 prompt 展示
     const lastUserMsg = [...messages].reverse().find(m => m.role === "user");
@@ -474,6 +490,7 @@ export async function runCodeActSession(
 
         // ─── <end_task> 且无代码块 → 直接结束 session ───
         if (hasEndTurn && codeBlocks.length === 0) {
+            if (injectPendingBeforeEnd(turnNum, turn, "")) continue;
             if (!hasSessionDigest(thinking)) {
                 log.info(`Turn ${turnNum}: <end_task> 缺少 SESSION_DIGEST，要求补充摘要`);
                 turns.push(turn);
@@ -633,6 +650,7 @@ ${fullDocs}
 
                             // 如果 Pass 2 有 <end_task> 且无代码块，结束 session
                             if (pass2HasEndTurn && pass2Parsed.codeBlocks.length === 0) {
+                                if (injectPendingBeforeEnd(turnNum, turn, "Pass 2 ")) continue;
                                 if (!hasSessionDigest(pass2Parsed.thinking)) {
                                     log.info(`Turn ${turnNum}: Pass 2 <end_task> 缺少 SESSION_DIGEST，要求补充摘要`);
                                     turns.push(turn);
