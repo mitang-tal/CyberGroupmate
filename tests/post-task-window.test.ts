@@ -225,6 +225,7 @@ describe("PostTaskWindowManager", () => {
         assert.equal(handled, true);
         assert.equal(q5.size, 0);
         assert.equal(enqueued.length, 1);
+        assert.match(enqueued[0].taskId, /^post-task-[0-9a-f]{8}$/);
         assert.deepEqual(directTasks.map((task) => task.taskId), [enqueued[0].taskId]);
         assert.equal(enqueued[0].chatId, "telegram:1");
         assert.deepEqual(enqueued[0].targetMessageIds, ["msg-1", "msg-2"]);

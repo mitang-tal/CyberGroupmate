@@ -5,7 +5,6 @@
  * 窗口内普通群聊只记录，L0/direct attention 直接交给同群 subagent 补一轮。
  */
 
-import { randomUUID } from "node:crypto";
 import type { NotificationEvent } from "../event/notification-center.js";
 import type { AttentionAccumulator } from "../accumulator/attention-accumulator.js";
 import type { CallbackQueue } from "./callback-queue.js";
@@ -20,6 +19,7 @@ import type {
 } from "./types.js";
 import { createLogger } from "../core/logger.js";
 import { formatTsForPrompt } from "../core/timezone.js";
+import { prefixedShortUuid } from "../core/ids.js";
 
 const log = createLogger("post-task-window");
 
@@ -209,7 +209,7 @@ export class PostTaskWindowManager {
         const task: CodeActReplyTask = {
             type: "CODEACT_REPLY",
             chatId,
-            taskId: `post-task-${randomUUID()}`,
+            taskId: prefixedShortUuid("post-task-"),
             decisions: [{
                 action: "REPLY",
                 reason: `Post-task L0 direct attention: ${directReason}`,

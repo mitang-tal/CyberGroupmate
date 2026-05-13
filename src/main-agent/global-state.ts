@@ -27,7 +27,7 @@ import type {
     DispatchedSubagentTaskRecord,
 } from "../subagent/types.js";
 import { createLogger } from "../core/logger.js";
-import { randomUUID } from "node:crypto";
+import { shortUuid } from "../core/ids.js";
 import { trimMetaSessionHistoryWindow } from "./meta-history-retention.js";
 
 const log = createLogger("global-state");
@@ -88,7 +88,7 @@ export class GlobalState {
         options?: { bindingId?: string; name?: string; callback?: string; data?: unknown },
     ): SchedulerEvent {
         const event: SchedulerEvent = {
-            id: randomUUID(),
+            id: shortUuid(),
             type: "reminder",
             chatId,
             bindingId: options?.bindingId,
@@ -116,7 +116,7 @@ export class GlobalState {
         options?: { bindingId?: string; name?: string; callback?: string; data?: unknown },
     ): SchedulerEvent {
         const event: SchedulerEvent = {
-            id: randomUUID(),
+            id: shortUuid(),
             type: "cron",
             chatId,
             bindingId: options?.bindingId,
@@ -277,7 +277,7 @@ export class GlobalState {
 
     addWakeCondition(condition: WakeCondition): string {
         const wakeCondition: WakeConditionRecord = {
-            id: randomUUID(),
+            id: shortUuid(),
             condition,
             registeredAt: new Date().toISOString(),
         };

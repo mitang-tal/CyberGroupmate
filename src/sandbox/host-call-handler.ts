@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
-import { randomUUID } from "node:crypto";
 import { ensureCompositeId, getGroupModelKey, getPlatform } from "../core/chat-id.js";
 import {
     loadConfig,
@@ -21,6 +20,7 @@ import type { AttentionAccumulator } from "../accumulator/attention-accumulator.
 import type { PlatformAdapter } from "../adapter/platform-adapter.js";
 import { getTelegramMtcuteWriteTarget, TELEGRAM_MTCUTE_WRITE_METHODS } from "../core/telegram-mtcute-passthrough.js";
 import { timestampInputToIso } from "../core/timezone.js";
+import { prefixedShortUuid } from "../core/ids.js";
 import { SandboxPool } from "./sandbox-pool.js";
 import { type Sandbox } from "./sandbox.js";
 
@@ -246,7 +246,7 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             }
             const urgency = options?.urgency === "high" ? "high" : "normal";
             const now = Date.now();
-            const id = `elevate:${randomUUID()}`;
+            const id = prefixedShortUuid("elevate:");
             accumulator.ingest(0, {
                 chatId: "__meta__",
                 source: "WAKE_CONDITION",

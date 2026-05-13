@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
 import type { GroundingConfig } from "../../core/config.js";
+import { shortUuid } from "../../core/ids.js";
 import { runParallelGrounding } from "../../main-agent/grounding-util.js";
 import type { AttentionAccumulator } from "../../accumulator/attention-accumulator.js";
 import { CodeActExecutor } from "../../subagent/code-act-executor.js";
@@ -88,7 +88,7 @@ export function createDispatchApi(deps: DispatchApiDeps) {
         taskToGroup: async (chatId: string, taskSpec: DispatchTaskSpec): Promise<DispatchTaskResult> => {
             const subagent = deps.subagentManager.getOrCreate(chatId) as SubagentLike;
             const executor = await ensureExecutor(subagent, chatId, deps);
-            const taskId = deps.taskIdFactory?.() ?? randomUUID();
+            const taskId = deps.taskIdFactory?.() ?? shortUuid();
             const groundingContext = await maybeRunGrounding(deps, taskSpec.contentDirection);
 
             const task: CodeActReplyTask = {

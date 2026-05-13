@@ -159,7 +159,7 @@ describe("S6: Global State", () => {
         const dir = tempDir();
         const gs = new GlobalState({ filePath: join(dir, "s.json"), autoSaveInterval: 0 });
         const id = gs.addWakeCondition({ type: "callback_received", taskId: "task-1" });
-        assert.ok(id);
+        assert.match(id, /^[0-9a-f]{8}$/);
         assert.equal(gs.getWakeConditions().length, 1);
         assert.equal(gs.removeWakeCondition(id), true);
         assert.equal(gs.removeWakeCondition(id), false);
@@ -192,6 +192,8 @@ describe("S6: Global State", () => {
         const cron = gs.addCron("chat-1", "日报", "0 9 * * *", "send daily summary");
         const events = gs.getSchedulerEvents("chat-1");
         assert.equal(events.length, 2);
+        assert.match(reminder.id, /^[0-9a-f]{8}$/);
+        assert.match(cron.id, /^[0-9a-f]{8}$/);
         assert.equal(gs.cancelSchedulerEvent(reminder.id), true);
         assert.equal(gs.getSchedulerEvents("chat-1").length, 1);
         assert.equal(gs.getSchedulerEvents("chat-1")[0].id, cron.id);

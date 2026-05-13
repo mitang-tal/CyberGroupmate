@@ -29,12 +29,13 @@ describe("runtime.elevate host call", () => {
         ]) as { ok: true; id: string; enqueuedAt: string };
 
         assert.equal(result.ok, true);
-        assert.match(result.id, /^elevate:/);
+        assert.match(result.id, /^elevate:[0-9a-f]{8}$/);
         assert.equal(captured.length, 1);
         assert.equal(captured[0].layer, 0);
         assert.equal(captured[0].item.chatId, "__meta__");
         assert.equal(captured[0].item.source, "WAKE_CONDITION");
         assert.equal(captured[0].item.pressure, 100);
+        assert.equal(captured[0].item.payload.id, result.id);
         assert.equal(captured[0].item.payload.type, "wake_condition");
         assert.equal(captured[0].item.payload.bindingId, "telegram:g1");
         assert.equal(captured[0].item.payload.callback, "请 Meta 查询 D 群 API 网关讨论并派回当前群");

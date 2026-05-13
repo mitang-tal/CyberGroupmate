@@ -131,6 +131,35 @@ describe("createDispatchApi", () => {
         assert.equal(createdExecutors.length, 1);
     });
 
+    it("uses short task ids by default", async () => {
+        const enqueued: any[] = [];
+        const subagent = {
+            chatId: "telegram:short",
+            codeActExecutor: {
+                enqueue: (task: unknown) => enqueued.push(task),
+                getSessionFilePath: () => "workspace/sessions/telegram/short.json",
+            },
+        };
+
+        const api = createDispatchApi({
+            memory: {} as any,
+            subagentManager: {
+                getOrCreate: () => subagent as any,
+                getSessionFilePath: () => "workspace/sessions/telegram/short.json",
+            },
+            accumulator: {
+                markActioned: () => undefined,
+            } as any,
+        });
+
+        const result = await api.taskToGroup("telegram:short", {
+            contentDirection: "say hi",
+        });
+
+        assert.match(result.taskId, /^[0-9a-f]{8}$/);
+        assert.equal(enqueued[0].taskId, result.taskId);
+    });
+
     it("records dispatch tracking into todo and optional reminder", async () => {
         const enqueued: any[] = [];
         const todos: any[] = [];
