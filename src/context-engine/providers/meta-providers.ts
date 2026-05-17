@@ -385,7 +385,10 @@ export const metaTodosProvider: SectionProvider<MetaTodosData> = {
         history: "delta-only",
     },
     resolve(ctx) {
-        const todos = (ctx.todos as MetaTodosData["todos"] | undefined) ?? [];
+        if (!Object.prototype.hasOwnProperty.call(ctx, "todos")) {
+            return null;
+        }
+        const todos = Array.isArray(ctx.todos) ? ctx.todos as MetaTodosData["todos"] : [];
         return { todos };
     },
     diff(current, committed): DiffResult<MetaTodosData> {
@@ -765,7 +768,6 @@ export const metaGroupModelProvider: SectionProvider<MetaGroupModelData> = {
         }
         return {
             modules: [
-                { key: "chatTitle", label: "标题", value: groupModel.chatTitle },
                 { key: "description", label: "描述", value: groupModel.description },
                 { key: "dominantLanguage", label: "主要语言", value: groupModel.dominantLanguage },
                 { key: "communicationNorms", label: "交流规范", value: groupModel.communicationNorms ?? [] },

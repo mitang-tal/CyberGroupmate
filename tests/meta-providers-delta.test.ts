@@ -59,6 +59,26 @@ describe("Meta delta providers", () => {
         assert.equal(removed.tree[0].deltaStats?.added, 1);
     });
 
+    it("metaTodosProvider skips contexts without todos instead of overwriting the ledger", () => {
+        const engine = new ContextEngine("meta-todo-missing-context-test");
+        engine.register(metaTodosProvider);
+
+        const first = engine.render({
+            todos: [{ bindingId: "meta", key: "followup", content: "回看构建结果", dueAt: null }],
+        });
+        engine.commit(first.tree);
+
+        const unrelated = engine.render({ currentTurnInstruction: "不带 todo 的上下文" });
+        assert.equal(unrelated.tree[0].skipped, true);
+        engine.commit(unrelated.tree);
+
+        const same = engine.render({
+            todos: [{ bindingId: "meta", key: "followup", content: "回看构建结果", dueAt: null }],
+        });
+        assert.equal(same.historicalContent, "");
+        assert.equal(same.tree[0].deltaStats?.added, 0);
+    });
+
     it("metaGroupModelProvider emits only missing or updated profile modules", () => {
         const engine = new ContextEngine("meta-group-model-delta-test");
         engine.register(metaGroupModelProvider);
@@ -88,5 +108,25 @@ describe("Meta delta providers", () => {
         assert.match(changed.historicalContent, /最近反馈: 最近希望 Meta 少重复旧画像/);
         assert.doesNotMatch(changed.historicalContent, /标题: 测试群/);
         assert.equal(changed.tree[0].deltaStats?.added, 2);
+    });
+
+    it("metaGroupModelProvider ignores title-only changes", () => {
+        const engine = new ContextEngine("meta-group-title-delta-test");
+        engine.register(metaGroupModelProvider);
+
+        const ctx = {
+            chatId: "telegram:g1",
+            groupModel: makeGroupModel(),
+            tonePreset: "轻松自然",
+        };
+        const first = engine.render(ctx);
+        engine.commit(first.tree);
+
+        const titleOnly = engine.render({
+            ...ctx,
+            groupModel: makeGroupModel({ chatTitle: "测试群 (3)" }),
+        });
+        assert.equal(titleOnly.historicalContent, "");
+        assert.equal(titleOnly.tree[0].deltaStats?.added, 0);
     });
 });
