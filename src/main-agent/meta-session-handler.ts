@@ -30,9 +30,11 @@ export interface MetaSessionHandler {
 }
 const META_HISTORY_SECTION_ALLOWLIST = new Set([
     "meta.session_digests",
+    "meta.todos",
     "meta.attend_header",
     "meta.topic_digests",
     "meta.messages",
+    "meta.group_model",
 ]);
 
 export interface MetaSessionHandlerDeps {

@@ -22,8 +22,17 @@ interface MetaHistoricalData {
     sessionDigests: Array<{ createdAt: string; content: string }>;
 }
 
+interface MetaTodoItem {
+    key: string;
+    content: string;
+    bindingId: string;
+    dueAt?: string | null;
+    expired?: boolean;
+}
+
 interface MetaTodosData {
-    todos: Array<{ key: string; content: string; bindingId: string; dueAt?: string | null; expired?: boolean }>;
+    todos: MetaTodoItem[];
+    removedTodos?: MetaTodoItem[];
 }
 
 interface MetaCallbacksData {
@@ -60,14 +69,14 @@ interface MetaMessagesData {
     stickerDescriptions?: Record<string, { description: string; emoji?: string; emojis?: string[] }>;
 }
 
+interface MetaGroupModelModule {
+    key: string;
+    label: string;
+    value: string | number | string[];
+}
+
 interface MetaGroupModelData {
-    chatTitle: string;
-    description: string;
-    agentRole: string;
-    engagementLevel: string;
-    hotTopics: string[];
-    recentFeedback?: string;
-    tonePreset: string;
+    modules: MetaGroupModelModule[];
 }
 
 interface MetaProfilesData {
@@ -77,6 +86,19 @@ interface MetaProfilesData {
 function stableStringList(values?: string[]): string {
     if (!values || values.length === 0) return "";
     return [...values].map((value) => String(value)).sort((left, right) => left.localeCompare(right)).join("|");
+}
+
+function getTodoIdentity(todo: MetaTodoItem): string {
+    return `${todo.bindingId}::${todo.key}`;
+}
+
+function getTodoSignature(todo: MetaTodoItem): string {
+    return [
+        getTodoIdentity(todo),
+        todo.content,
+        todo.dueAt ?? "",
+        todo.expired ? "expired" : "active",
+    ].join("::");
 }
 
 function getAssociatedMemorySignature(memory: AssociatedMemory): string {
@@ -140,6 +162,36 @@ function getProfileSignature(profile: ActiveUserProfile): string {
         stableStringList(profile.aliases),
         stableStringList(profile.traits),
     ].join("::");
+}
+
+function getGroupModelModuleSignature(module: MetaGroupModelModule): string {
+    const value = Array.isArray(module.value)
+        ? stableStringList(module.value)
+        : String(module.value ?? "");
+    return [module.key, module.label, value].join("::");
+}
+
+function formatTodoLine(item: MetaTodoItem): string {
+    return `- [${item.bindingId}] ${item.key}: ${item.content}${item.dueAt ? ` (dueAt=${formatTsForPrompt(item.dueAt)})` : ""}${item.expired ? " (expired)" : ""}`;
+}
+
+function formatRemovedTodoLine(item: MetaTodoItem): string {
+    const previous = item.content ? ` (原: ${item.content})` : "";
+    return `- [${item.bindingId}] ${item.key}: 已移除${previous}`;
+}
+
+function formatGroupModelValue(module: MetaGroupModelModule): string {
+    if (Array.isArray(module.value)) {
+        return module.value.length > 0 ? module.value.join(", ") : "无";
+    }
+    if (typeof module.value === "number") {
+        return Number.isFinite(module.value) ? String(module.value) : "(未知)";
+    }
+    return String(module.value ?? "").trim() || "(无)";
+}
+
+function formatGroupModelModuleLine(module: MetaGroupModelModule): string {
+    return `- ${module.label}: ${formatGroupModelValue(module)}`;
 }
 
 function formatAssociatedMemories(memories?: AssociatedMemory[]): string[] {
@@ -329,22 +381,65 @@ export const metaTodosProvider: SectionProvider<MetaTodosData> = {
         name: "meta.todos",
         label: "Meta Todo",
         source: "memory.todo",
-        cache: "snapshot",
-        history: "persistent",
+        cache: "delta",
+        history: "delta-only",
     },
     resolve(ctx) {
         const todos = (ctx.todos as MetaTodosData["todos"] | undefined) ?? [];
-        if (todos.length === 0) {
-            return null;
-        }
         return { todos };
+    },
+    diff(current, committed): DiffResult<MetaTodosData> {
+        if (!committed) {
+            return {
+                full: current,
+                delta: current,
+                stats: { total: current.todos.length, added: current.todos.length, unchanged: 0 },
+            };
+        }
+
+        const committedMap = new Map(
+            committed.todos.map((todo) => [getTodoIdentity(todo), todo])
+        );
+        const committedSignatures = new Map(
+            committed.todos.map((todo) => [getTodoIdentity(todo), getTodoSignature(todo)])
+        );
+        const currentIds = new Set(current.todos.map(getTodoIdentity));
+        const deltaTodos = current.todos.filter(
+            (todo) => committedSignatures.get(getTodoIdentity(todo)) !== getTodoSignature(todo)
+        );
+        const removedTodos = [...committedMap.entries()]
+            .filter(([id]) => !currentIds.has(id))
+            .map(([, todo]) => todo);
+        const changedCount = deltaTodos.length + removedTodos.length;
+
+        return {
+            full: current,
+            delta: { todos: deltaTodos, removedTodos },
+            stats: {
+                total: current.todos.length,
+                added: changedCount,
+                unchanged: Math.max(0, current.todos.length - deltaTodos.length),
+            },
+        };
     },
     render(data) {
         return [
             "# 当前 Todo",
-            ...data.todos.map((item) =>
-                `- [${item.bindingId}] ${item.key}: ${item.content}${item.dueAt ? ` (dueAt=${formatTsForPrompt(item.dueAt)})` : ""}${item.expired ? " (expired)" : ""}`
-            ),
+            ...(data.todos.length > 0 ? data.todos.map(formatTodoLine) : ["(无)"]),
+        ].join("\n");
+    },
+    renderDelta(delta) {
+        const changedTodos = delta.todos;
+        const removedTodos = delta.removedTodos ?? [];
+        if (changedTodos.length === 0 && removedTodos.length === 0) {
+            return "";
+        }
+
+        return [
+            "# 当前 Todo 增量",
+            `(增量: ${changedTodos.length} 条新增/更新${removedTodos.length > 0 ? `, ${removedTodos.length} 条移除` : ""})`,
+            ...changedTodos.map(formatTodoLine),
+            ...removedTodos.map(formatRemovedTodoLine),
         ].join("\n");
     },
 };
@@ -657,8 +752,8 @@ export const metaGroupModelProvider: SectionProvider<MetaGroupModelData> = {
         name: "meta.group_model",
         label: "Meta 聊天画像",
         source: "memory.groupModel",
-        cache: "static",
-        history: "ephemeral",
+        cache: "delta",
+        history: "delta-only",
     },
     scopeKey(ctx) {
         return scopeByChatId(ctx);
@@ -669,40 +764,65 @@ export const metaGroupModelProvider: SectionProvider<MetaGroupModelData> = {
             return null;
         }
         return {
-            chatTitle: groupModel.chatTitle,
-            description: groupModel.description,
-            agentRole: groupModel.agentRole,
-            engagementLevel: groupModel.engagementLevel,
-            hotTopics: groupModel.hotTopics ?? [],
-            recentFeedback: groupModel.recentFeedback,
-            tonePreset: typeof ctx.tonePreset === "string" ? ctx.tonePreset : "礼貌得体",
+            modules: [
+                { key: "chatTitle", label: "标题", value: groupModel.chatTitle },
+                { key: "description", label: "描述", value: groupModel.description },
+                { key: "dominantLanguage", label: "主要语言", value: groupModel.dominantLanguage },
+                { key: "communicationNorms", label: "交流规范", value: groupModel.communicationNorms ?? [] },
+                { key: "activeMembers", label: "活跃成员数", value: groupModel.activeMembers },
+                { key: "avgMessagesPerDay", label: "日均消息量", value: groupModel.avgMessagesPerDay },
+                { key: "peakHours", label: "活跃高峰时段", value: (groupModel.peakHours ?? []).map((hour) => `${hour}:00`) },
+                { key: "agentRole", label: "当前 agent 角色", value: groupModel.agentRole },
+                { key: "engagementLevel", label: "活跃度", value: groupModel.engagementLevel },
+                { key: "hotTopics", label: "热点话题", value: groupModel.hotTopics ?? [] },
+                { key: "tabooTopics", label: "不宜讨论的话题", value: groupModel.tabooTopics ?? [] },
+                { key: "recentFeedback", label: "最近反馈", value: groupModel.recentFeedback },
+                { key: "tonePreset", label: "语气预设", value: typeof ctx.tonePreset === "string" ? ctx.tonePreset : "礼貌得体" },
+            ],
+        };
+    },
+    diff(current, committed): DiffResult<MetaGroupModelData> {
+        if (!committed) {
+            return {
+                full: current,
+                delta: current,
+                stats: { total: current.modules.length, added: current.modules.length, unchanged: 0 },
+            };
+        }
+
+        const committedMap = new Map(
+            committed.modules.map((module) => [module.key, getGroupModelModuleSignature(module)])
+        );
+        const deltaModules = current.modules.filter(
+            (module) => committedMap.get(module.key) !== getGroupModelModuleSignature(module)
+        );
+
+        return {
+            full: current,
+            delta: { modules: deltaModules },
+            stats: {
+                total: current.modules.length,
+                added: deltaModules.length,
+                unchanged: current.modules.length - deltaModules.length,
+            },
         };
     },
     render(data) {
         const lines = [
             "## 聊天画像",
-            `- 标题: ${data.chatTitle}`,
-            `- 描述: ${data.description || "(无)"}`,
-            `- 当前 agent 角色: ${data.agentRole || "(未定义)"}`,
-            `- 活跃度: ${data.engagementLevel || "(未知)"}`,
-            `- 热点话题: ${data.hotTopics.length > 0 ? data.hotTopics.join(", ") : "无"}`,
-            `- 语气预设: ${data.tonePreset}`,
+            ...data.modules.map(formatGroupModelModuleLine),
         ];
-        if (data.recentFeedback) {
-            lines.push(`- 最近反馈: ${data.recentFeedback}`);
-        }
         return lines.join("\n");
     },
-    hash(data) {
+    renderDelta(delta) {
+        if (delta.modules.length === 0) {
+            return "";
+        }
         return [
-            data.chatTitle,
-            data.description,
-            data.agentRole,
-            data.engagementLevel,
-            stableStringList(data.hotTopics),
-            data.recentFeedback ?? "",
-            data.tonePreset,
-        ].join("::");
+            "## 聊天画像增量",
+            `(增量: ${delta.modules.length} 个模块更新)`,
+            ...delta.modules.map(formatGroupModelModuleLine),
+        ].join("\n");
     },
 };
 
