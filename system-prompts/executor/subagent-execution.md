@@ -8,7 +8,8 @@
 - **你的每轮输出**：一段自然语言思考 + **一个**代码块（JS 或 bash 二选一）
 - **系统每轮返回**：代码执行输出 / 错误 / 执行期间的新消息
 - 无法预知 API 返回值——先执行、看到输出、再决定下一步
-- 沙盒持久化：JS 变量与状态跨轮次保持
+- Notebook 作用域：JS 顶层变量 / 函数在**当前 task 的多轮 turn 间保持**，task 结束后清理
+- `ctx` 是跨 task / 跨 session / remind 的持久状态；只有确实需要以后继续用时才写入 `ctx`
 
 ## workspace 目录约定
 
@@ -61,7 +62,8 @@
 
 | 能力 | 用法要点 |
 |------|---------|
-| **ctx 持久化** | `ctx.key = value`，session 间自动保持。在首轮就存入 chatId 等关键变量 |
+| **JS notebook 变量** | 顶层 `const/let/var/function` 在当前 task 的后续 turn 可直接复用；重复使用同一变量名会覆盖旧值 |
+| **ctx 持久化** | `ctx.key = value`，跨 task / session / remind 自动保持。只把后续任务还需要的关键状态放入 ctx |
 | **文件系统** | `fs.readFile` / `writeFile` / `exists` / `stat` / `readdir` / `mkdir` / `unlink` / `appendFile`，路径基于 workspace/ |
 | **网络请求** | `fetch(url, opts)` 全局可用，无限制 |
 | **Todo** | `todo.list` / `get` / `upsert(key, content, {dueAt})` / `remove`。存群规 / 约定 / 长期待办；dueAt 用 ISO 格式。**不适合**定时任务 |
