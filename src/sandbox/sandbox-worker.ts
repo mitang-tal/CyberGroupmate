@@ -21,6 +21,7 @@ import { cronModule, setCronCallbacks } from "./modules/cron/index.js";
 import { todoModule, setTodoCallbacks } from "./modules/kv/index.js";
 import { visionModule, setVisionCallbacks } from "./modules/vision/index.js";
 import { memoryModule, setMemoryCallbacks } from "./modules/memory/index.js";
+import { dispatchModule, setDispatchCallbacks, type SandboxQuoteOutput } from "./modules/dispatch/index.js";
 import { setSkillManagerCallbacks } from "./modules/skills/index.js";
 import { setRuntimeCallbacks } from "./modules/runtime/index.js";
 import { installShell, setShellCallbacks } from "./modules/shell/index.js";
@@ -30,6 +31,10 @@ import { configureLogger } from "../core/logger.js";
 
 // ─── 全局 Skills 缓存（Worker 启动时加载一次） ───
 let loadedSkills: LoadedSkill[] = [];
+
+const outputLedger: SandboxQuoteOutput[] = [];
+let outputLedgerCounter = 0;
+const MAX_OUTPUT_LEDGER_ITEMS = 50;
 
 
 
@@ -407,6 +412,24 @@ function callHost(method: string, args: unknown[] = []): Promise<unknown> {
     });
 }
 
+function getExecutionOutput(index: number): SandboxQuoteOutput | null {
+    const found = outputLedger.find((item) => item.index === index);
+    return found ? { ...found } : null;
+}
+
+function recordExecutionOutput(output: string, error: boolean): void {
+    outputLedger.push({
+        index: outputLedgerCounter++,
+        output,
+        error,
+        timestamp: new Date().toISOString(),
+        source: "subagent",
+    });
+    while (outputLedger.length > MAX_OUTPUT_LEDGER_ITEMS) {
+        outputLedger.shift();
+    }
+}
+
 // ─── 后台任务管理（通过 BackgroundManager 统一管理） ───
 
 /** 持久化任务存储路径 */
@@ -559,8 +582,8 @@ async function executeCode(id: string, code: string, scopeId?: string): Promise<
         // 构造参数列表：固定参数 + 平台 API + 动态 Skill 参数
         // ctx 保留为纯用户 state bag（LLM 可跨 turn 存取任意属性）
         const sh = installShell();
-        const fixedArgNames = ["ctx", "runtime", "scene", "skills", "fs", "mcp", "cron", "todo", "vision", "memory", "shell", "telegram", "discord", "onebot", "qq"];
-        const fixedArgValues = [ctx, rt, scene, sk, filesystem, mcpBridge, tracker.wrap(cronModule as unknown as Record<string, unknown>), tracker.wrap(todoModule as unknown as Record<string, unknown>), tracker.wrap(visionModule as unknown as Record<string, unknown>), tracker.wrap(memoryModule as unknown as Record<string, unknown>), sh, tg, dc, ob, ob];
+        const fixedArgNames = ["ctx", "runtime", "scene", "skills", "fs", "mcp", "cron", "todo", "vision", "memory", "dispatch", "shell", "telegram", "discord", "onebot", "qq"];
+        const fixedArgValues = [ctx, rt, scene, sk, filesystem, mcpBridge, tracker.wrap(cronModule as unknown as Record<string, unknown>), tracker.wrap(todoModule as unknown as Record<string, unknown>), tracker.wrap(visionModule as unknown as Record<string, unknown>), tracker.wrap(memoryModule as unknown as Record<string, unknown>), tracker.wrap(dispatchModule as unknown as Record<string, unknown>), sh, tg, dc, ob, ob];
         const allArgNames = [...fixedArgNames, ...skillArgNames];
         const allArgValues = [...fixedArgValues, ...skillArgValues];
 
@@ -623,10 +646,12 @@ async function executeCode(id: string, code: string, scopeId?: string): Promise<
         const notebookWarning = activeNotebookScope ? enforceNotebookScopeLimit(activeNotebookScope) : null;
         if (notebookWarning) outputLines.push(notebookWarning);
 
+        const output = outputLines.join("\n");
+        recordExecutionOutput(output, false);
         sendToHost({
             type: "result",
             id,
-            output: outputLines.join("\n"),
+            output,
             error: false,
             ...(executionControl.extendSteps > 0 ? { extendSteps: executionControl.extendSteps } : {}),
             ...(executionControl.timeoutMs != null ? { timeoutMs: executionControl.timeoutMs } : {}),
@@ -646,10 +671,12 @@ async function executeCode(id: string, code: string, scopeId?: string): Promise<
         const notebookWarning = activeNotebookScope ? enforceNotebookScopeLimit(activeNotebookScope) : null;
         if (notebookWarning) outputLines.push(notebookWarning);
 
+        const output = outputLines.join("\n");
+        recordExecutionOutput(output, true);
         sendToHost({
             type: "result",
             id,
-            output: outputLines.join("\n"),
+            output,
             error: true,
             ...(executionControl.extendSteps > 0 ? { extendSteps: executionControl.extendSteps } : {}),
             ...(executionControl.timeoutMs != null ? { timeoutMs: executionControl.timeoutMs } : {}),
@@ -749,6 +776,7 @@ async function initWorker(): Promise<void> {
     setTodoCallbacks({ callHost });
     setVisionCallbacks({ callHost });
     setMemoryCallbacks({ callHost });
+    setDispatchCallbacks({ callHost, getOutput: getExecutionOutput });
 
     // 注入 Runtime 扩展回调（spawnPersistent, home, workspace, callHost）
     setRuntimeCallbacks({
