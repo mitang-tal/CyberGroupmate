@@ -415,7 +415,7 @@ async function main(): Promise<void> {
     }
 
     if (appConfig.discord) {
-        const discordAdapter = new DiscordAdapter(appConfig.discord, nc);
+        const discordAdapter = new DiscordAdapter(appConfig.discord, nc, memory);
         adapters.push(discordAdapter);
     }
 
