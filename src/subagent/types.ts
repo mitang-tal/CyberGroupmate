@@ -293,6 +293,9 @@ export interface SubagentPostTaskFollowUpCallback {
 export interface DispatchedSubagentTaskRecord {
     taskId: string;
     chatId: string;
+    sourceType?: "meta" | "subagent";
+    sourceChatId?: string;
+    sourceTaskId?: string;
     contentDirection: string;
     toneGuidance?: string;
     suggestedEmojis?: string[];

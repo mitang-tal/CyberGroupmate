@@ -40,7 +40,7 @@ interface McpBridgeLike {
 }
 
 interface DispatchApiLike {
-    taskToGroup(chatId: string, taskSpec: unknown): Promise<unknown>;
+    taskToGroup(chatId: string, taskSpec: unknown, options?: unknown): Promise<unknown>;
     getTask(taskId: string): Promise<unknown>;
     listTasks(options?: unknown): Promise<unknown>;
 }
@@ -532,7 +532,12 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             if (targetChatId === chatId) {
                 throw new Error("当前 Subagent 不能 dispatch 给自己；当前群内行动请直接调用平台 API。");
             }
-            return dispatchApi.taskToGroup(targetChatId, args[1]);
+            return dispatchApi.taskToGroup(targetChatId, args[1], {
+                source: {
+                    type: "subagent",
+                    chatId,
+                },
+            });
         }
         if (method === "dispatch.getTask") {
             if (!dispatchApi) {

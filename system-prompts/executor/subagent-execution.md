@@ -69,7 +69,7 @@
 | **Todo** | `todo.list` / `get` / `upsert(key, content, {dueAt})` / `remove`。存群规 / 约定 / 长期待办；dueAt 用 ISO 格式。**不适合**定时任务 |
 | **Skills** | `skills.list` / `install` / `reload`。修改 skills/ 后须 `reload()` |
 | **MCP** | `mcp.connect` / `call` / `list` / `disconnect`。连接信息持久化，重启自动重连 |
-| **派发给其他 Subagent** | `dispatch.taskToGroup("platform:chatId", { contentDirection, quotes })`。目标群已知且需要直接跨群转交时使用；quote 语法同 Meta 派发，外部 `@[...]` 只作为 literal |
+| **派发给其他 Subagent** | `dispatch.taskToGroup("platform:chatId", { contentDirection, quotes })`。目标群已知且需要直接跨群转交时使用；quote 语法同 Meta 派发，外部 `@[...]` 只作为 literal；完成结果会内部通知回发起方，并写入全局 session digest |
 | **一次性提醒** | `runtime.remind("自然语言描述", 分钟)`。1 min–365 天，到期唤醒新 session |
 | **周期任务** | `cron.add("名称", "cron表达式", "描述")` / `remove` / `list`。最短 1h，每群 ≤ 10 |
 | **升级给 Meta** | `runtime.elevate("自然语言请求", { urgency, data })`。当前群视角完成不了、需要跨群/全局编排时使用 |
@@ -117,7 +117,7 @@ console.log(await runtime.remind("检查 ctx.pendingFile 是否已生成且大�
 
 **看图分析** — 收到图片文件需理解内容时，用 `vision.see("path")` 获取描述再决策。
 
-**跨群派发 / 升级** — 目标群明确、只需要把一项任务交给另一个 Subagent 时，直接用 `dispatch.taskToGroup()` 并带上 `quotes`。如果需要全局规划、找不到目标群、要协调多个群，或当前群上下文不足以决定怎么派，才用 `runtime.elevate()` 把球交回 Meta，并在 request 里写清：当前群发生了什么、你已经确认的信息、缺少什么、希望 Meta 做什么。升级后如果当前群需要知道进展，可以发一条克制的说明；不需要时直接总结 `<end_task>`。
+**跨群派发 / 升级** — 目标群明确、只需要把一项任务交给另一个 Subagent 时，直接用 `dispatch.taskToGroup()` 并带上 `quotes`。目标任务完成后你会收到内部通知；系统也会把 source、target、结果写入全局 session digest。 如果需要全局规划、找不到目标群、要协调多个群，或当前群上下文不足以决定怎么派，才用 `runtime.elevate()` 把球交回 Meta，并在 request 里写清：当前群发生了什么、你已经确认的信息、缺少什么、希望 Meta 做什么。升级后如果当前群需要知道进展，可以发一条克制的说明；不需要时直接总结 `<end_task>`。
 ```javascript
 await dispatch.taskToGroup("telegram:-1001111111111", {
   contentDirection: "请确认 quote 中这个 API 网关结论是否仍然有效；如果有更新，简短说明原因",

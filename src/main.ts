@@ -342,7 +342,7 @@ async function main(): Promise<void> {
     const nc = new NotificationCenter(EVENTS_PATH);
     let shuttingDown = false;
     let sandboxDispatchApi: {
-        taskToGroup: (chatId: string, taskSpec: any) => Promise<unknown>;
+        taskToGroup: (chatId: string, taskSpec: any, options?: any) => Promise<unknown>;
         getTask: (taskId: string) => Promise<unknown>;
         listTasks: (options?: any) => Promise<unknown>;
     } | null = null;
@@ -370,11 +370,11 @@ async function main(): Promise<void> {
                 mcpBridge,
                 accumulator,
                 dispatchApi: {
-                    taskToGroup: async (targetChatId, taskSpec) => {
+                    taskToGroup: async (targetChatId, taskSpec, options) => {
                         if (!sandboxDispatchApi) {
                             throw new Error("dispatch API not initialized");
                         }
-                        return sandboxDispatchApi.taskToGroup(targetChatId, taskSpec);
+                        return sandboxDispatchApi.taskToGroup(targetChatId, taskSpec, options);
                     },
                     getTask: async (taskId) => {
                         if (!sandboxDispatchApi) {

@@ -5,7 +5,7 @@
  *
  * Task prompt 由多个结构化 section 组成，每个 section 有独立的 history 策略：
  * - persistent：保留在 session 历史中（header/decisions）
- * - delta-only：只把新增/变化部分写入 session 历史（targetMessages/personContext）
+ * - delta-only：只把新增/变化部分写入 session 历史（sessionDigests/targetMessages/personContext）
  * - ephemeral：仅在当前 turn 出现，下次 render 不进入历史（topicSummary/memoryContext）
  *
  * 这样在 session 历史积累时，不需要 stripVerboseSections 这种 regex hack，
@@ -57,6 +57,10 @@ interface ExecutorTargetMessageEntry {
 
 interface ExecutorTargetMessagesData {
     entries: ExecutorTargetMessageEntry[];
+}
+
+interface ExecutorSessionDigestsData {
+    sessionDigests: Array<{ createdAt: string; content: string }>;
 }
 
 const TARGET_MESSAGE_HEADER_RE = /^\[[^\]]*\] \[msgId:([^\]]+)\] /;
@@ -307,24 +311,61 @@ function clampSessionDigestLimit(value: unknown): number {
 
 // ═══ 0. Meta Session Digests ═══
 
-/** Meta 历史 Session Digests — persistent（给 subagent 同步总编排者最近状态） */
-export const executorSessionDigestsProvider: SectionProvider<Array<{ createdAt: string; content: string }>> = {
+/** Meta 历史 Session Digests — delta-only（给 subagent 同步总编排者最近状态增量） */
+export const executorSessionDigestsProvider: SectionProvider<ExecutorSessionDigestsData> = {
     schema: {
         name: "executor.session_digests",
         label: "Meta 历史 Session Digests",
         source: "globalState.sessionDigests",
-        cache: "volatile",
-        history: "persistent",
+        cache: "delta",
+        history: "delta-only",
     },
     resolve(ctx: ExecutorResolveContext) {
         if (!ctx.sessionDigests?.length) return null;
         const limit = clampSessionDigestLimit(ctx.sessionDigestLimit);
-        return ctx.sessionDigests.slice(-limit);
+        return { sessionDigests: ctx.sessionDigests.slice(-limit) };
+    },
+    diff(current, committed): DiffResult<ExecutorSessionDigestsData> {
+        if (!committed) {
+            return {
+                full: current,
+                delta: current,
+                stats: { total: current.sessionDigests.length, added: current.sessionDigests.length, unchanged: 0 },
+            };
+        }
+
+        const committedSet = new Set(
+            committed.sessionDigests.map((item) => `${item.createdAt}::${item.content}`)
+        );
+        const deltaDigests = current.sessionDigests.filter(
+            (item) => !committedSet.has(`${item.createdAt}::${item.content}`)
+        );
+
+        return {
+            full: current,
+            delta: { sessionDigests: deltaDigests },
+            stats: {
+                total: current.sessionDigests.length,
+                added: deltaDigests.length,
+                unchanged: current.sessionDigests.length - deltaDigests.length,
+            },
+        };
     },
     render(data) {
         return [
             "# 历史 Session Digests",
-            ...data.map((item) => `- [${formatTsForPrompt(item.createdAt)}] ${item.content}`),
+            ...data.sessionDigests.map((item) => `- [${formatTsForPrompt(item.createdAt)}] ${item.content}`),
+        ].join("\n");
+    },
+    renderDelta(delta) {
+        if (delta.sessionDigests.length === 0) {
+            return "";
+        }
+
+        return [
+            "# 历史 Session Digests",
+            `(增量: ${delta.sessionDigests.length} 条)`,
+            ...delta.sessionDigests.map((item) => `- [${formatTsForPrompt(item.createdAt)}] ${item.content}`),
         ].join("\n");
     },
 };

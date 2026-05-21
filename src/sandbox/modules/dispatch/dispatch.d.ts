@@ -54,6 +54,9 @@ interface DispatchTaskResult {
 interface DispatchedTaskStatus {
     taskId: string;
     chatId: string;
+    sourceType?: "meta" | "subagent";
+    sourceChatId?: string;
+    sourceTaskId?: string;
     contentDirection: string;
     toneGuidance?: string;
     quotes?: string[];
@@ -78,6 +81,7 @@ declare const dispatch: {
      * chatId 必须使用 composite chatId，例如 "telegram:-1001234567890"。
      * 当前 Subagent 不能用 dispatch 给自己派任务；当前群内行动直接调用平台 API。
      * 不要使用已废弃的 context 字段；需要搬运材料时写 quotes 或 inline quote。
+     * 目标任务完成后，结果会作为内部通知发回发起方 Subagent；全局 session digest 也会记录 source -> target -> result。
      *
      * @param chatId 目标 composite chatId。
      * @param taskSpec 任务方向、语气、quote、技能和跟踪信息。
