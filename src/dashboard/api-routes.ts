@@ -66,6 +66,24 @@ function qs(val: unknown): string {
     return String(val ?? "");
 }
 
+const EMOJI_SEARCH_CHAR_RE = /[\p{Extended_Pictographic}\p{Regional_Indicator}]/u;
+
+function parseStickerSearchTerms(raw: string): string[] {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+
+    const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+    const candidates: string[] = [];
+
+    for (const { segment } of segmenter.segment(trimmed)) {
+        const token = segment.trim();
+        if (!token || !EMOJI_SEARCH_CHAR_RE.test(token) || candidates.includes(token)) continue;
+        candidates.push(token);
+    }
+
+    return candidates;
+}
+
 function fromJSONSafe(val: string | null | undefined): unknown[] {
     try { return JSON.parse(String(val || "[]")); } catch { return []; }
 }
@@ -1011,8 +1029,20 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
     });
 
     // ─── Sticker Management ───
-    router.get("/stickers", (_req, res) => {
-        const stickers = deps.memory.getAllStickerDescriptions();
+    router.get("/stickers", (req, res) => {
+        const searchQuery = qs(req.query.q).trim();
+        const allStickers = deps.memory.getAllStickerDescriptions();
+        const searchTerms = parseStickerSearchTerms(searchQuery);
+        const matchedIds = searchQuery
+            ? new Set(
+                searchTerms.length > 0
+                    ? deps.memory.searchStickersByEmoji(searchTerms, Math.max(allStickers.length, 1)).map(item => item.uniqueFileId)
+                    : []
+            )
+            : null;
+        const stickers = matchedIds
+            ? allStickers.filter(sticker => matchedIds.has(sticker.uniqueFileId))
+            : allStickers;
         // 附加 hasImage 标记 + 过滤 webm
         const result = stickers.map(s => {
             const filePath = deps.mediaDownloader?.getExistingPath(s.uniqueFileId);
