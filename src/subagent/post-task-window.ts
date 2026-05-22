@@ -413,7 +413,7 @@ function formatPostTaskContinuationPrompt(messages: PostTaskReactionMessage[], d
         "[📩 新消息到达]",
         ...lines,
         "",
-        `[post-task direct attention: ${directReason}] 这些消息发生在你刚完成上一轮任务后的发酵窗口内，其中有人直接叫住你、回复你或提及你。请基于上一轮会话、刚才发出的内容和上面所有尚未处理的新消息判断是否需要简短回应；需要时调用 sendMessage/sendSticker，不需要则直接结束，不要硬接。`,
+        `[post-task direct attention: ${directReason}] 请基于上下文决定如何行动。`,
     ].join("\n");
 }
 
