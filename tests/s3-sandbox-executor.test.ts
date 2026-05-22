@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 
 import { CodeActExecutor } from "../src/subagent/code-act-executor.js";
 import { CallbackQueue } from "../src/subagent/callback-queue.js";
+import { EXECUTOR_FOOTER_TEXT } from "../src/context-engine/providers/executor-providers.js";
 import type { CodeActReplyTask, SubagentCallback, GroupContextPackage, Decision } from "../src/subagent/types.js";
 import { cleanupTestMemory, createTestMemory } from "./helpers/test-db.js";
 
@@ -280,6 +281,49 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
                 Math.random = originalRandom;
                 cleanupTestMemory(memory, "executor-sticker-availability");
             }
+        });
+
+        it("#6e continuation keeps only the latest task prompt uncollapsed", () => {
+            const executor = new CodeActExecutor("chat1");
+            const firstPrompt = [
+                "═══ task-1 ═══",
+                "聊天对象: chat1(chat1) [群聊]",
+                "",
+                "## 目标消息",
+                "[2026-05-13 10:00] [msgId:m1] Alice: 第一轮",
+                "",
+                EXECUTOR_FOOTER_TEXT,
+                "",
+                "## 相关记忆",
+                "只该在 continuation 之前保留到当前 turn。",
+            ].join("\n");
+            const secondPrompt = [
+                "═══ task-2 ═══",
+                "聊天对象: chat1(chat1) [群聊]",
+                "",
+                "## 目标消息",
+                "[2026-05-13 10:01] [msgId:m2] Bob: 第二轮",
+                "",
+                EXECUTOR_FOOTER_TEXT,
+                "",
+                "## 话题摘要",
+                "这是当前 turn 的 volatile 内容。",
+            ].join("\n");
+
+            executor.session = [
+                { role: "user", content: firstPrompt, timestamp: "2026-05-13T10:00:00.000Z" },
+                { role: "assistant", content: "第一轮完成", timestamp: "2026-05-13T10:00:05.000Z" },
+                { role: "user", content: secondPrompt, timestamp: "2026-05-13T10:01:00.000Z" },
+                { role: "assistant", content: "第二轮完成", timestamp: "2026-05-13T10:01:05.000Z" },
+            ];
+
+            const continued = (executor as any).buildSessionHistoryMessages(true);
+            assert.doesNotMatch(continued[0].content, /## 相关记忆/);
+            assert.match(continued[2].content, /## 话题摘要/);
+
+            const freshTask = (executor as any).buildSessionHistoryMessages(false);
+            assert.doesNotMatch(freshTask[2].content, /## 话题摘要/);
+            assert.ok(freshTask[2].content.endsWith(EXECUTOR_FOOTER_TEXT));
         });
     });
 

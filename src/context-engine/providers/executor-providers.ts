@@ -700,6 +700,8 @@ export const executorGroundingProvider: SectionProvider<string> = {
 
 // ═══ 9. Footer ═══
 
+export const EXECUTOR_FOOTER_TEXT = "请根据以上任务信息，编写代码完成任务。先做事（下载/查询/处理），确认结果后再 sendMessage。";
+
 /** 任务结尾指令 — persistent */
 export const executorFooterProvider: SectionProvider<true> = {
     schema: {
@@ -711,7 +713,7 @@ export const executorFooterProvider: SectionProvider<true> = {
     },
     resolve() { return true; },
     render() {
-        return "请根据以上任务信息，编写代码完成任务。先做事（下载/查询/处理），确认结果后再 sendMessage。";
+        return EXECUTOR_FOOTER_TEXT;
     },
     hash() { return "footer-v1"; },
 };

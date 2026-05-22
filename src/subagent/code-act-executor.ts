@@ -28,7 +28,7 @@ import { buildPrefixMap } from "../sandbox/api-intent-extractor.js";
 import { renderPrompt } from "../context-engine/template-engine.js";
 import { deriveChatType } from "../context-engine/prompt-renderer-utils.js";
 import { ContextEngine } from "../context-engine/context-engine.js";
-import { getExecutorTaskProviders, type ExecutorResolveContext } from "../context-engine/providers/executor-providers.js";
+import { EXECUTOR_FOOTER_TEXT, getExecutorTaskProviders, type ExecutorResolveContext } from "../context-engine/providers/executor-providers.js";
 import type { LLMConfig, VisionConfig } from "../core/config.js";
 import { resolveComponentProfiles, loadConfig } from "../core/config.js";
 import { enrichMessages, formatMessageLine, resolveReplyText } from "../core/message-enricher.js";
@@ -275,6 +275,27 @@ function formatThinkingTranscript(result: SessionResult): string {
 function formatThinkingPlaceholder(reason: string): string {
     return `本次思考过程：\n\`\`\`text\n${reason}\n\`\`\``;
 }
+
+function isExecutorTaskPrompt(content: string): boolean {
+    return content.startsWith("═══ ") && content.includes(EXECUTOR_FOOTER_TEXT);
+}
+
+function collapseExecutorTaskPrompt(content: string): string {
+    const footerIndex = content.lastIndexOf(EXECUTOR_FOOTER_TEXT);
+    return footerIndex === -1
+        ? content
+        : content.slice(0, footerIndex + EXECUTOR_FOOTER_TEXT.length);
+}
+
+function findLatestExecutorTaskPromptIndex(messages: SessionMessage[]): number {
+    for (let index = messages.length - 1; index >= 0; index--) {
+        if (messages[index]?.role === "user" && isExecutorTaskPrompt(messages[index].content)) {
+            return index;
+        }
+    }
+    return -1;
+}
+
 export interface CodeActExecutorConfig {
     /** 单次执行最大超时 (ms)。默认 60000 */
     maxExecutionTimeMs: number;
@@ -477,6 +498,19 @@ export class CodeActExecutor {
     /** 检查是否已注入依赖 */
     hasDependencies(): boolean {
         return this.sandboxPool !== null && this.nc !== null && resolveComponentProfiles("session").length > 0;
+    }
+
+    private buildSessionHistoryMessages(isContinuation: boolean): ChatMessage[] {
+        const latestTaskPromptIndex = isContinuation ? findLatestExecutorTaskPromptIndex(this.session) : -1;
+        return this.session.map((msg, index) => ({
+            role: msg.role,
+            content: sanitizePromptTimestamps(
+                msg.role === "user" && isExecutorTaskPrompt(msg.content) && index !== latestTaskPromptIndex
+                    ? collapseExecutorTaskPrompt(msg.content)
+                    : msg.content,
+            ),
+            ...(index === this.session.length - 1 ? { cacheBreakpoint: true } : {}),
+        }));
     }
 
     /**
@@ -710,15 +744,7 @@ export class CodeActExecutor {
 
         // 注入历史 session（如果有）
         if (this.session.length > 0) {
-            for (let i = 0; i < this.session.length; i++) {
-                const msg = this.session[i];
-                const isLast = i === this.session.length - 1;
-                messages.push({
-                    role: msg.role,
-                    content: sanitizePromptTimestamps(msg.content),
-                    ...(isLast ? { cacheBreakpoint: true } : {}),
-                });
-            }
+            messages.push(...this.buildSessionHistoryMessages(isContinuation));
         }
 
         // 当前任务 prompt 放在最后（路径 A 时附加图片）
@@ -817,17 +843,10 @@ export class CodeActExecutor {
         // 跳过已有的历史消息（只保存新产生的对话）
         const historyOffset = 1 + this.session.length; // 1 for system prompt + existing history
         const newMessages = sessionResult.messages.slice(historyOffset);
-        for (let mi = 0; mi < newMessages.length; mi++) {
-            const msg = newMessages[mi];
-            let content = msg.content;
-            // 首条 user message = task prompt：用 ContextEngine 的 historicalRendered 替代
-            // historicalRendered 自动按 history 策略处理（ephemeral sections 不保留，omit sections 用占位符）
-            if (mi === 0 && msg.role === "user" && renderResult?.historicalContent) {
-                content = renderResult.historicalContent;
-            }
+        for (const msg of newMessages) {
             this.session.push({
                 role: msg.role as "system" | "user" | "assistant",
-                content: typeof content === "string" ? sanitizePromptTimestamps(content) : content,
+                content: sanitizePromptTimestamps(msg.content),
                 timestamp: new Date().toISOString(),
             });
         }
