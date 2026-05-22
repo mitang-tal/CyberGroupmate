@@ -4,10 +4,10 @@
  * 运行一个完整的 CodeAct 交互 session：LLM 生成思考和代码 → 
  * sandbox 执行代码 → 结果作为 observation 反馈 → 重复直到完成。
  *
- * 支持 Two-pass Code Generation：
- * - Pass 1：LLM 基于轻量 API 概览生成初版代码
- * - 类型解析：提取代码中调用的 API 方法，按需注入完整 TypeDoc 文档
- * - Pass 2：LLM 基于完整文档重新生成代码（仅在需要时触发）
+ * 支持运行时错误后的 API 文档恢复：
+ * - LLM 基于轻量 API 概览直接生成并执行代码
+ * - 只有代码出现运行时错误时，才提取代码中调用的 API 方法并按需注入完整 d.ts 文档
+ * - 注入文档时保留上一条 assistant/code 消息，让模型能同时看到原代码、错误和文档
  *
  * 在整体架构中的位置：
  * - Orchestrator (main.ts) 在处理事件时调用 runCodeActSession
@@ -274,6 +274,40 @@ function buildMissingDigestObservation(): string {
     ].join("\n");
 }
 
+interface RuntimeDocInjectionConfig {
+    getPrefixMap: () => Record<string, string>;
+    lookupDocs: (calledMethods: string[]) => string;
+}
+
+function hasInjectedMethodDoc(messages: ChatMessage[], method: string): boolean {
+    const marker = `### ${method}`;
+    return messages.some((message) =>
+        typeof message.content === "string" && message.content.includes(marker)
+    );
+}
+
+function findMissingRuntimeDocMethods(
+    code: string,
+    messages: ChatMessage[],
+    config: RuntimeDocInjectionConfig,
+): { calledMethods: string[]; missingMethods: string[] } {
+    const calledMethods = extractApiCalls(code, config.getPrefixMap());
+    const docLookupMethods = getDocLookupMethods(calledMethods);
+    const missingMethods = docLookupMethods.filter((method) => !hasInjectedMethodDoc(messages, method));
+    return { calledMethods, missingMethods };
+}
+
+function buildRuntimeErrorDocsMessage(missingMethods: string[], fullDocs: string): string {
+    return `[📚 运行时错误后加载 API d.ts 文档]
+
+刚才的代码出现了运行时错误，并且用到了以下 API: ${missingMethods.join(", ")}。
+以下是这些方法的完整类型定义和用法文档。请结合上面的错误信息修正代码；不要删除或改写前一条代码消息，也不要重复已经成功完成的外部发送动作。
+
+${fullDocs}
+
+注意：获取完信息 console.log 出来看看再决定下一步行动。`;
+}
+
 // ─── Session Runner ───
 
 /**
@@ -325,9 +359,9 @@ export async function runCodeActSession(
     /** 最大交互轮次，默认 15 */
     maxTurns: number = DEFAULT_MAX_TURNS,
     /**
-     * Two-pass 配置。
+     * 运行时错误后的文档注入配置。
      * - getPrefixMap: 每个 turn 动态获取最新模块前缀映射（支持 MCP 热插拔）
-     * - lookupDocs: 接收方法调用列表，返回完整 TypeDoc 文档
+     * - lookupDocs: 接收方法调用列表，返回完整 d.ts / TypeDoc 文档
      */
     twoPassConfig?: {
         getPrefixMap: () => Record<string, string>;
@@ -563,147 +597,11 @@ export async function runCodeActSession(
             continue;
         }
 
-        // ─── Two-pass: 类型解析与文档注入（无状态去重） ───
-        // 每一轮都检测代码中的 API 调用，但只注入上下文中尚未存在的方法文档。
-        // 如果文档因 compact 被清理，下次调用时会自动重新注入。
-        if (twoPassConfig && codeBlocks.length > 0) {
-            // 合并所有代码块的 API 调用
-            const allCode = codeBlocks.map(b => b.code).join("\n");
-            const calledMethods = extractApiCalls(allCode, twoPassConfig.getPrefixMap());
-            const docLookupMethods = getDocLookupMethods(calledMethods);
-
-            if (docLookupMethods.length > 0) {
-                // ─── 无状态去重：检查 messages 中哪些方法文档已经存在 ───
-                const missingMethods = docLookupMethods.filter(method => {
-                    // 文档注入时使用 "### module.method" 作为标记
-                    const marker = `### ${method}`;
-                    return !messages.some(m =>
-                        typeof m.content === "string" && m.content.includes(marker)
-                    );
-                });
-
-                if (missingMethods.length > 0) {
-                    const fullDocs = twoPassConfig.lookupDocs(missingMethods);
-                    if (fullDocs) {
-                        log.info(`Turn ${turnNum}: Two-pass 触发`, {
-                            calledMethods,
-                            missingMethods,
-                            alreadyInContext: calledMethods.length - missingMethods.length,
-                            docsLength: fullDocs.length,
-                        });
-
-                        // 发射 type_resolving 进度事件
-                        emitProgress({
-                            turn: turnNum,
-                            phase: "type_resolving",
-                            thinking: `正在查阅 API 文档: ${missingMethods.join(", ")}`,
-                            isProcessing: true,
-                        });
-
-                        // 将 Pass 1 的 assistant 输出替换为第一人称提示
-                        messages.pop();
-                        // 注入文档到 history 中（作为系统提示的补充）
-                        messages.push({
-                            role: "user",
-                            content: `[📚 API 文档加载完成]
-
-你打算使用以下 API: ${missingMethods.join(", ")}。
-以下是这些方法的完整类型定义和用法文档，请仔细阅读后编写代码：
-${fullDocs}
-
-注意：获取完信息 console.log 出来看看再决定下一步行动。
-`,
-
-
-                        });
-
-                        // Pass 2: 重新调用 LLM，让其基于完整文档重新生成代码
-                        try {
-                            const pass2Response = await callLLMWithFallback(messages, configs, {
-                                caller: "session-runner-pass2",
-                                ...(prefill ? { prefill } : {}),
-                                ...(stopSequences ? { stop: stopSequences } : {}),
-                                ...(contextManifest ? { contextManifest } : {}),
-                            });
-
-                            // ─── Pass 2: 检测 <end_task> ───
-                            const pass2Raw = pass2Response.content;
-                            let pass2HasEndTurn = pass2Raw.includes(END_TURN_MARKER);
-
-                            // Pass 2 同样防御：代码块 + <end_task> 共存时剥离
-                            const { codeBlocks: pass2ProbeBlocks } = parseResponse(pass2Raw);
-                            if (pass2HasEndTurn && pass2ProbeBlocks.length > 0) {
-                                log.info(`Turn ${turnNum}: Pass 2 代码块与 <end_task> 共存，剥离 <end_task>`);
-                                pass2HasEndTurn = false;
-                            }
-
-                            const pass2Text = trimAfterFirstCodeBlock(pass2Raw, pass2HasEndTurn);
-                            hasEndTurn = pass2HasEndTurn; // Pass 2 覆盖 Pass 1 的终止信号
-
-                            messages.push({ role: "assistant", content: pass2Text });
-
-                            // 重新解析 Pass 2 的输出
-                            const pass2Parsed = parseResponse(pass2Text);
-                            turn.assistantMessage = pass2Text;
-                            turn.thinking = pass2Parsed.thinking;
-                            turn.codeBlocks = pass2Parsed.codeBlocks;
-                            turn.usage = pass2Response.usage;
-
-                            // 如果 Pass 2 有 <end_task> 且无代码块，结束 session
-                            if (pass2HasEndTurn && pass2Parsed.codeBlocks.length === 0) {
-                                if (injectPendingBeforeEnd(turnNum, turn, "Pass 2 ")) continue;
-                                if (!hasSessionDigest(pass2Parsed.thinking)) {
-                                    log.info(`Turn ${turnNum}: Pass 2 <end_task> 缺少 SESSION_DIGEST，要求补充摘要`);
-                                    turns.push(turn);
-                                    const observation = buildMissingDigestObservation();
-                                    emitProgress({
-                                        turn: turnNum,
-                                        phase: "observation",
-                                        executionOutput: observation,
-                                        isProcessing: true,
-                                    });
-                                    messages.push({ role: "user", content: observation });
-                                    continue;
-                                }
-                                log.debug(`Turn ${turnNum}: Pass 2 检测到 <end_task>，session 结束`);
-                                turns.push(turn);
-                                emitProgress({ turn: turnNum, phase: "end", thinking: pass2Parsed.thinking, isProcessing: false, endReason: "end_turn" });
-                                return { sessionId, turns, messages, endReason: "end_turn" };
-                            }
-
-                            log.info(`Turn ${turnNum}: Pass 2 完成`, {
-                                codeBlocks: pass2Parsed.codeBlocks.length,
-                            });
-
-                            // 发射 Pass 2 thinking 进度事件（覆盖 Pass 1 的代码块）
-                            emitProgress({
-                                turn: turnNum,
-                                phase: "thinking",
-                                thinking: pass2Parsed.thinking,
-                                codeBlocks: pass2Parsed.codeBlocks.length > 0 ? pass2Parsed.codeBlocks : undefined,
-                                isProcessing: true,
-                            });
-                        } catch (err: unknown) {
-                            // Pass 2 LLM 失败 → 回退到 Pass 1 的代码继续执行
-                            log.warn(`Turn ${turnNum}: Pass 2 LLM 失败，回退到 Pass 1 代码`, {
-                                error: String(err),
-                            });
-                            // 移除文档注入消息，恢复 Pass 1 assistant 消息
-                            messages.pop(); // 移除文档 user message
-                            messages.push({ role: "assistant", content: assistantText }); // 恢复 Pass 1
-                        }
-                    }
-                } else {
-                    log.debug(`Turn ${turnNum}: 所有方法文档已在上下文中，跳过 Two-pass`, {
-                        calledMethods,
-                    });
-                }
-            }
-        }
-
-        // ─── 执行代码块（可能是 Pass 1 原始代码或 Pass 2 重写后的代码） ───
-        const { codeBlocks: finalCodeBlocks } = turn; // 使用可能被 Pass 2 更新的 codeBlocks
+        // ─── 执行代码块 ───
+        const { codeBlocks: finalCodeBlocks } = turn;
         const outputParts: string[] = [];
+        let executionHadRuntimeError = false;
+        const runtimeErrorCodeParts: string[] = [];
 
         for (let codeIndex = 0; codeIndex < finalCodeBlocks.length; codeIndex++) {
             const block = finalCodeBlocks[codeIndex];
@@ -737,6 +635,8 @@ ${fullDocs}
 
                 if (result.error) {
                     errorOccurred = true;
+                    executionHadRuntimeError = true;
+                    runtimeErrorCodeParts.push(block.code);
                 }
             } catch (err: unknown) {
                 const errorMsg =
@@ -747,6 +647,8 @@ ${fullDocs}
                 });
                 outputParts.push(`[⚠ Sandbox Error]\n${errorMsg}`);
                 errorOccurred = true;
+                executionHadRuntimeError = true;
+                runtimeErrorCodeParts.push(block.code);
 
                 // 如果 sandbox 进程已死或本轮执行超时，立即终止 session（不再用卡住的 worker 重试）。
                 if (!sandbox.isAlive() || isCodeExecutionTimeoutError(errorMsg)) {
@@ -773,6 +675,37 @@ ${fullDocs}
 
         // ─── 组装 observation ───
         let observation = outputParts.join("\n\n");
+
+        if (executionHadRuntimeError && twoPassConfig) {
+            const failedCode = runtimeErrorCodeParts.join("\n");
+            const { calledMethods, missingMethods } = findMissingRuntimeDocMethods(failedCode, messages, twoPassConfig);
+
+            if (missingMethods.length > 0) {
+                const fullDocs = twoPassConfig.lookupDocs(missingMethods);
+                if (fullDocs) {
+                    log.info(`Turn ${turnNum}: 运行时错误后注入 API d.ts 文档`, {
+                        calledMethods,
+                        missingMethods,
+                        alreadyInContext: calledMethods.length - missingMethods.length,
+                        docsLength: fullDocs.length,
+                    });
+
+                    emitProgress({
+                        turn: turnNum,
+                        phase: "type_resolving",
+                        thinking: `运行时错误后查阅 API d.ts 文档: ${missingMethods.join(", ")}`,
+                        isProcessing: true,
+                    });
+
+                    const docsMessage = buildRuntimeErrorDocsMessage(missingMethods, fullDocs);
+                    observation = observation ? `${observation}\n\n${docsMessage}` : docsMessage;
+                }
+            } else {
+                log.debug(`Turn ${turnNum}: 运行时错误后无需注入 API d.ts 文档`, {
+                    calledMethods,
+                });
+            }
+        }
 
         // Fix 1: 追加本轮已发送消息确认 + 重复拦截警告到 observation
         if (sentMessageCollector) {

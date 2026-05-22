@@ -163,7 +163,7 @@ function formatMidTurnDirectAttentionPrompt(messages: PostTaskReactionMessage[],
 // ─── API 概览缓存 ───
 const _apiBriefCache = new Map<string, string>();
 
-/** 模块注册表缓存（Two-pass 用） */
+/** 模块注册表缓存（运行时错误后文档注入用） */
 let _moduleRegistryCache: ModuleEntry[] | null = null;
 
 /**
@@ -180,7 +180,7 @@ export function refreshModuleRegistryCache(): void {
 
 /**
  * 获取当前模块注册表缓存（懒加载）。
- * 供外部（如 session-runner Two-pass）使用。
+ * 供外部（如 session-runner 的运行时错误文档注入）使用。
  */
 export function getModuleRegistryCache(): ModuleEntry[] {
     if (!_moduleRegistryCache) {
@@ -202,7 +202,7 @@ const PLATFORM_MODULES: Record<string, string> = {
  * 重要变更：不再读取原始 .d.ts 全文！
  * 改为从 modules-docs.json 提取 Host-coupled APIs，并在运行时动态解析
  * workspace/skills/ 里的 TS Skills 的 .d.ts，提取每个方法的一句话 brief 签名。
- * 完整文档由 Two-pass 机制在 session-runner 中按需注入。
+ * 完整文档由 session-runner 在运行时错误后按需注入。
  */
 export function loadApiTypeDefs(platform: string = "telegram", allowedModules?: Set<string>): string {
     try {
@@ -816,7 +816,7 @@ export class CodeActExecutor {
                 ["[Execution Output]"],  // stop sequences
                 this.chatId,  // 关联 chatId，用于 codeActEvents 进度广播
                 this.config.maxTurns,  // 最大交互轮次
-                // Two-pass: 按需加载完整 API 文档（每个 turn 动态获取最新 registry）
+                // 运行时错误后按需加载完整 API 文档（每个 turn 动态获取最新 registry）
                 (() => {
                     const registry = getModuleRegistryCache();
                     if (registry.length === 0) return undefined;
