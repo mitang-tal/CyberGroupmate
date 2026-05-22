@@ -178,6 +178,10 @@ export function createDiscordClientProxy(
             });
             return sent;
         },
+        sendReaction: async (channelId: string, messageId: string, emoji: string) => {
+            await env.callHost("discord.sendReaction", [channelId, messageId, emoji]);
+            env.emitOutput(`[Discord] sendReaction ok channel=${channelId} msg=${messageId} emoji=${emoji}`);
+        },
         sendTyping: async (channelId: string) => {
             await env.callHost("discord.sendTyping", [channelId]);
             env.emitOutput(`[Discord] sendTyping ok channel=${channelId}`);

@@ -35,6 +35,11 @@
         "fullDoc": "```typescript\nsendMedia(channelId: string, media: string | { type?: \"photo\" | \"video\" | \"document\" | \"audio\" | \"auto\"; url?: string; file?: string; caption?: string; fileName?: string }, opts?: { replyTo?: string; caption?: string }): Promise<{ id: string; text: string; channelId: string; guildId?: string; timestamp: number; }>\n```\n\n\n发送媒体消息（附件）到指定频道。支持 URL 和本地文件路径（支持绝对路径或基于 cwd 工作区的相对路径）。\n\n**参数：**\n- `channelId`: 目标频道 ID\n- `media`: 媒体对象或路径字符串，支持 URL、本地文件路径、data URL 或文件内容\n- `opts`: 可选参数\n\n**示例：**\n```typescript\n// sendMedia(channelId, { url: \"https://example.com/image.png\", caption: \"看看这张图\" })\n```\n\n```typescript\n// sendMedia(channelId, { file: \"screenshot.png\", caption: \"本地截图\" }) // 自动基于 process.cwd() 解析\n```\n\n```typescript\n// sendMedia(channelId, \"screenshot.png\")\n```"
       },
       {
+        "name": "sendReaction",
+        "brief": "对指定消息添加表情反应。支持 Unicode emoji、自定义 emoji ID、name:id 或 Discord emoji mention 格式。",
+        "fullDoc": "```typescript\nsendReaction(channelId: string, messageId: string, emoji: string): Promise<void>\n```\n\n\n对指定消息添加表情反应。支持 Unicode emoji、自定义 emoji ID、name:id 或 Discord emoji mention 格式。\n\n**参数：**\n- `channelId`: 目标频道 ID（由 sandbox 上下文自动填入当前频道）\n- `messageId`: 目标消息 ID\n- `emoji`: 表情字符串，例如 \"😄\"、\"123456789012345678\" 或 \"<:blobreach:123456789012345678>\"\n\n**示例：**\n```typescript\n// sendReaction(channelId, \"1234567890123456789\", \"😄\")\n```\n\n```typescript\n// sendReaction(channelId, \"1234567890123456789\", \"<:blobreach:123456789012345678>\")\n```"
+      },
+      {
         "name": "sendTyping",
         "brief": "在频道中显示 \"正在输入...\" 状态。",
         "fullDoc": "```typescript\nsendTyping(channelId: string): Promise<void>\n```\n\n\n在频道中显示 \"正在输入...\" 状态。\n\n**参数：**\n- `channelId`: 目标频道 ID"

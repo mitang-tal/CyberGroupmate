@@ -207,6 +207,7 @@ export class DiscordAdapter implements PlatformAdapter {
         return [
             "discord.sendText",
             "discord.sendMedia",
+            "discord.sendReaction",
             "discord.sendTyping",
         ];
     }
@@ -312,6 +313,50 @@ export class DiscordAdapter implements PlatformAdapter {
                     await channel.sendTyping();
                 }
                 log.info("discord.sendTyping:success", { requestId, channelId, durationMs: Date.now() - callStart });
+                return null;
+            }
+            case "discord.sendReaction": {
+                const target = this.parseTarget(this.stripDiscordMentionDisplayLabels(String(args[0] ?? "")));
+                const messageId = String(args[1] ?? "").trim();
+                const emoji = String(args[2] ?? "").trim();
+                if (!messageId) {
+                    throw new Error("sendReaction: messageId is required");
+                }
+                if (!emoji) {
+                    throw new Error("sendReaction: emoji is required");
+                }
+
+                log.info("discord.sendReaction:start", {
+                    requestId,
+                    target: target.raw,
+                    channelId: target.channelId,
+                    messageId,
+                    emoji,
+                });
+
+                const channel = await this.resolveTextChannel(target, "sendReaction", requestId);
+                const channelId = channel.id ?? target.channelId;
+                if (typeof channel?.messages?.fetch !== "function") {
+                    throw new Error(`sendReaction: channel ${channelId} does not support message fetching`);
+                }
+
+                const fetchStart = Date.now();
+                const message = await channel.messages.fetch(messageId);
+                if (!message || typeof message.react !== "function") {
+                    throw new Error(`sendReaction: message ${messageId} is not reactable`);
+                }
+
+                const reactStart = Date.now();
+                await message.react(emoji);
+                log.info("discord.sendReaction:success", {
+                    requestId,
+                    channelId,
+                    messageId,
+                    emoji,
+                    durationMs: Date.now() - callStart,
+                    fetchDurationMs: reactStart - fetchStart,
+                    reactDurationMs: Date.now() - reactStart,
+                });
                 return null;
             }
             case "discord.downloadMedia": {

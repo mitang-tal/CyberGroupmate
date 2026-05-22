@@ -12,6 +12,7 @@ discord.d.ts — Discord 平台 API 系统注入的 Discord host proxy 接口。
 
 - `sendText`: 发送文本消息到指定频道。
 - `sendMedia`: 发送媒体消息（附件）到指定频道。支持 URL 和本地文件路径（支持绝对路径或基于 cwd 工作区的相对路径）。
+- `sendReaction`: 对指定消息添加表情反应。支持 Unicode emoji、自定义 emoji ID、name:id 或 Discord emoji mention 格式。
 - `sendTyping`: 在频道中显示 "正在输入..." 状态。
 
 ## dispatch

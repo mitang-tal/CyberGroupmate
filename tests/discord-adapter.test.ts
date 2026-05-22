@@ -136,6 +136,49 @@ describe("DiscordAdapter", () => {
         }
     });
 
+    it("should react to fetched Discord messages", async () => {
+        const nc = makeNC();
+        const adapter = new DiscordAdapter({ botToken: "token" }, nc);
+        const fetchedMessageIds: string[] = [];
+        const reactions: string[] = [];
+
+        (adapter as any).client = {
+            channels: {
+                async fetch(id: string) {
+                    assert.equal(id, "channel-1");
+                    return {
+                        id: "channel-1",
+                        isTextBased: () => true,
+                        messages: {
+                            async fetch(messageId: string) {
+                                fetchedMessageIds.push(messageId);
+                                return {
+                                    id: messageId,
+                                    async react(emoji: string) {
+                                        reactions.push(emoji);
+                                    },
+                                };
+                            },
+                        },
+                    };
+                },
+            },
+        };
+
+        try {
+            await adapter.handleCall("discord.sendReaction", [
+                "discord:channel-1",
+                "msg-42",
+                "<:blobreach:123456789012345678>",
+            ]);
+
+            assert.deepEqual(fetchedMessageIds, ["msg-42"]);
+            assert.deepEqual(reactions, ["<:blobreach:123456789012345678>"]);
+        } finally {
+            nc.dispose();
+        }
+    });
+
     it("should fall back from a user id to a DM channel and upload local files as buffers", async () => {
         const nc = makeNC();
         const adapter = new DiscordAdapter({ botToken: "token" }, nc);
