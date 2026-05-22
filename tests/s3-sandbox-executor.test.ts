@@ -238,9 +238,12 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
             assert.match(nextTurn ?? "", /看一下我这条/);
         });
 
-        it("#6d buildAvailableStickers filters sendable stickers before truncating to 12", () => {
+        it("#6d buildAvailableStickers filters sendable stickers before randomly selecting 12", () => {
             const memory = createTestMemory("executor-sticker-availability");
+            const originalRandom = Math.random;
             try {
+                Math.random = () => 0;
+
                 const executor = new CodeActExecutor("chat1");
                 (executor as any).memory = memory;
                 (executor as any).mediaDownloader = {
@@ -251,7 +254,7 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
                     },
                 };
 
-                for (let i = 0; i < 12; i++) {
+                for (let i = 0; i < 16; i++) {
                     memory.setStickerDescription(`sendable-${i}`, `sendable ${i}`, ["🙏"], true);
                 }
                 for (let i = 0; i < 6; i++) {
@@ -266,11 +269,15 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
                 );
 
                 assert.equal(stickers?.length, 12);
-                assert.deepEqual(
+                assert.ok(
+                    stickers?.every((item: { uniqueFileId: string }) => item.uniqueFileId.startsWith("sendable-")),
+                );
+                assert.notDeepEqual(
                     stickers?.map((item: { uniqueFileId: string }) => item.uniqueFileId),
-                    Array.from({ length: 12 }, (_, index) => `sendable-${index}`),
+                    Array.from({ length: 12 }, (_, index) => `sendable-${15 - index}`),
                 );
             } finally {
+                Math.random = originalRandom;
                 cleanupTestMemory(memory, "executor-sticker-availability");
             }
         });

@@ -915,7 +915,7 @@ export class CodeActExecutor {
         const rawMatchLimit = Math.max(this.memory.getAllStickerDescriptions().length, 12);
         const matches = this.memory.searchStickersByEmoji(suggestedEmojis, rawMatchLimit);
         const seen = new Set<string>();
-        const stickers: Array<{ emoji?: string; emojis?: string[]; description: string; uniqueFileId: string }> = [];
+        const sendableStickers: Array<{ emoji?: string; emojis?: string[]; description: string; uniqueFileId: string }> = [];
 
         for (const match of matches) {
             if (!match.enabled || seen.has(match.uniqueFileId)) continue;
@@ -923,17 +923,25 @@ export class CodeActExecutor {
             if (!filePath || filePath.toLowerCase().endsWith(".webm")) continue;
 
             const cached = this.memory.getStickerDescription(match.uniqueFileId);
-            stickers.push({
+            sendableStickers.push({
                 uniqueFileId: match.uniqueFileId,
                 description: match.description,
                 emoji: match.emoji,
                 emojis: cached?.emojis?.length ? cached.emojis : [match.emoji],
             });
             seen.add(match.uniqueFileId);
-            if (stickers.length >= 12) break;
         }
 
-        return stickers.length > 0 ? stickers : undefined;
+        if (sendableStickers.length === 0) return undefined;
+        if (sendableStickers.length <= 12) return sendableStickers;
+
+        const shuffled = [...sendableStickers];
+        for (let index = shuffled.length - 1; index > 0; index--) {
+            const swapIndex = Math.floor(Math.random() * (index + 1));
+            [shuffled[index], shuffled[swapIndex]] = [shuffled[swapIndex], shuffled[index]];
+        }
+
+        return shuffled.slice(0, 12);
     }
 
     /**
