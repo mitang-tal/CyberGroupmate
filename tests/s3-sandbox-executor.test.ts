@@ -237,6 +237,43 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
             assert.match(nextTurn ?? "", /\[mid-turn direct attention: @mention\]/);
             assert.match(nextTurn ?? "", /看一下我这条/);
         });
+
+        it("#6d buildAvailableStickers filters sendable stickers before truncating to 12", () => {
+            const memory = createTestMemory("executor-sticker-availability");
+            try {
+                const executor = new CodeActExecutor("chat1");
+                (executor as any).memory = memory;
+                (executor as any).mediaDownloader = {
+                    getExistingPath(uniqueFileId: string) {
+                        if (uniqueFileId.startsWith("missing-")) return null;
+                        if (uniqueFileId.startsWith("video-")) return `/tmp/${uniqueFileId}.webm`;
+                        return `/tmp/${uniqueFileId}.webp`;
+                    },
+                };
+
+                for (let i = 0; i < 12; i++) {
+                    memory.setStickerDescription(`sendable-${i}`, `sendable ${i}`, ["🙏"], true);
+                }
+                for (let i = 0; i < 6; i++) {
+                    memory.setStickerDescription(`disabled-${i}`, `disabled ${i}`, ["🙏"], false);
+                }
+                for (let i = 0; i < 6; i++) {
+                    memory.setStickerDescription(`missing-${i}`, `missing ${i}`, ["🙏"], true);
+                }
+
+                const stickers = (executor as any).buildAvailableStickers(
+                    makeTask("chat1", [{ action: "REPLY", suggestedEmojis: ["🙏"] }]),
+                );
+
+                assert.equal(stickers?.length, 12);
+                assert.deepEqual(
+                    stickers?.map((item: { uniqueFileId: string }) => item.uniqueFileId),
+                    Array.from({ length: 12 }, (_, index) => `sendable-${index}`),
+                );
+            } finally {
+                cleanupTestMemory(memory, "executor-sticker-availability");
+            }
+        });
     });
 
 

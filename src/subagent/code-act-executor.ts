@@ -912,14 +912,15 @@ export class CodeActExecutor {
         const suggestedEmojis = task.decisions.flatMap(decision => decision.suggestedEmojis ?? []);
         if (suggestedEmojis.length === 0) return undefined;
 
-        const matches = this.memory.searchStickersByEmoji(suggestedEmojis, 12);
+        const rawMatchLimit = Math.max(this.memory.getAllStickerDescriptions().length, 12);
+        const matches = this.memory.searchStickersByEmoji(suggestedEmojis, rawMatchLimit);
         const seen = new Set<string>();
         const stickers: Array<{ emoji?: string; emojis?: string[]; description: string; uniqueFileId: string }> = [];
 
         for (const match of matches) {
             if (!match.enabled || seen.has(match.uniqueFileId)) continue;
             const filePath = this.mediaDownloader?.getExistingPath(match.uniqueFileId);
-            if (filePath && filePath.toLowerCase().endsWith(".webm")) continue;
+            if (!filePath || filePath.toLowerCase().endsWith(".webm")) continue;
 
             const cached = this.memory.getStickerDescription(match.uniqueFileId);
             stickers.push({
@@ -929,6 +930,7 @@ export class CodeActExecutor {
                 emojis: cached?.emojis?.length ? cached.emojis : [match.emoji],
             });
             seen.add(match.uniqueFileId);
+            if (stickers.length >= 12) break;
         }
 
         return stickers.length > 0 ? stickers : undefined;
