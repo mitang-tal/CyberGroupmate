@@ -37,6 +37,109 @@ Join our discussion on Telegram! [https://t.me/cybergroupmate](https://t.me/cybe
 
 但也请注意，Protmps 不能完全反映我们的设计，所以最好结合着来看。
 
+## 🖥️ 本机原生运行
+
+原生运行不依赖 Docker，适合直接在 Linux 主机上常驻服务。运行时数据默认写入项目根目录下的 `workspace/`。
+
+### 环境准备
+
+需要 Node.js 22 或更新版本，以及用于编译 native npm 模块的基础工具：
+
+```bash
+# Debian/Ubuntu 示例
+sudo apt-get update
+sudo apt-get install -y nodejs npm python3 make g++ \
+  ffmpeg zip unzip wget curl jq imagemagick git \
+  poppler-utils dnsutils
+
+# 推荐安装 uv；pandoc 仅在需要文档转换能力时安装
+sudo apt-get install -y uv pandoc
+```
+
+如果机器无法直连 npm 官方源，可以临时使用可访问的镜像：
+
+```bash
+npm config set registry https://registry.npmmirror.com
+```
+
+### 安装与构建
+
+```bash
+# 1. 准备配置文件
+cp config.example.yaml config.yaml
+# 编辑 config.yaml，填写平台凭据、LLM API Key、Dashboard 等配置
+
+# 2. 安装后端依赖
+npm ci
+
+# 3. 构建 Dashboard 静态资源
+npm --prefix src/dashboard/ui ci
+npm run dashboard:build
+
+# 4. 启动
+LOG_LEVEL=info npm start
+```
+
+启动后 Dashboard 默认监听 `config.yaml` 中配置的地址与端口；常见部署为 `http://<host>:6767`。
+
+### systemd 常驻
+
+生产环境建议用 systemd 托管进程。将 `WorkingDirectory` 和 `User` 改成实际部署路径与运行用户：
+
+```ini
+[Unit]
+Description=CyberGroupmate native service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aosc
+Group=aosc
+WorkingDirectory=/home/aosc/docker/CyberGroupmate
+Environment=NODE_ENV=production
+Environment=LOG_LEVEL=info
+Environment=PATH=/usr/bin:/bin:/usr/sbin:/sbin
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target
+```
+
+保存为 `/etc/systemd/system/cybergroupmate.service` 后：
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now cybergroupmate.service
+systemctl status cybergroupmate.service
+journalctl -u cybergroupmate.service -f
+```
+
+### 原生运行数据
+
+关键数据位于 `workspace/`，例如：
+
+* `workspace/memory.db*`：记忆数据库及 WAL/SHM。
+* `workspace/tg-session/`：Telegram userbot 登录会话。
+* `workspace/sessions/`：Subagent/CodeAct 会话状态。
+* `workspace/Downloads/`、`workspace/media/`：运行中保存和引用的媒体资产。
+* `workspace/skills/`、`workspace/.local/`、`workspace/lib/`：Agent 技能和持久化运行环境。
+
+备份或迁移时，通常可以排除这些可再生成的缓存目录：
+
+```text
+workspace/media-cache/
+workspace/.cache/
+workspace/tmp/
+**/__pycache__/
+*.pyc
+*.pyo
+```
+
 ## 🐳 Docker 部署
 
 ### 快速启动
@@ -64,7 +167,7 @@ docker attach cybergroupmate
 
 ### 数据持久化
 
-运行数据（SQLite 数据库、Telegram 会话、事件日志等）存储在 Docker named volume `cybergroupmate-data` 中。
+运行数据（SQLite 数据库、Telegram 会话、事件日志等）存储在 `workspace/` 或 `docker-compose.yaml` 中配置的 Docker volume 中。
 
 ```bash
 # 备份数据
