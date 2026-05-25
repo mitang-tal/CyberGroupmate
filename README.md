@@ -101,8 +101,8 @@ Environment=NODE_ENV=production
 Environment=LOG_LEVEL=info
 Environment=PATH=/usr/bin:/bin:/usr/sbin:/sbin
 ExecStart=/usr/bin/npm start
-Restart=on-failure
-RestartSec=10
+Restart=always
+RestartSec=5
 TimeoutStopSec=30
 KillSignal=SIGTERM
 
