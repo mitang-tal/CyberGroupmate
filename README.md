@@ -13,29 +13,75 @@ Join our discussion on Telegram! [https://t.me/cybergroupmate](https://t.me/cybe
 ![记忆面板](docs/images/image3.png)
 
 
+## 💡 What Makes This Different
+
+### Meta Agent / Subagent: Cross-Group Orchestration
+
+大多数聊天机器人是单群、被动响应的。CyberGroupmate 采用 **Meta Agent — Subagent** 分层架构，让 Agent 具备了跨群感知和跨群行动的能力。
+
+一个全局的 Meta Agent 通过编写 JavaScript 代码来调用编排 API（`dispatch.taskToGroup()`、`conversations.query()`、`memory.searchEntities()` 等），将任务分发到各个群的 Subagent Executor。Executor 完成任务后，执行结果通过 Callback Queue 回流到 Meta Agent，形成闭环反馈。Meta Agent 可以追踪任务状态、设置定时提醒、甚至在多个群之间协调行动。
+
+这不仅是”多群支持”——而是 Agent 能够真正理解”A 群有人提到了和 B 群相关的话题”并主动采取行动。
+
+### Context Engine: Structured Prompt Assembly with 90%+ Cache Rates
+
+我们没有手动拼接字符串来构建 Prompt。Context Engine 用结构化的代码声明上下文中每一部分的性质：
+- **static**: 不变的内容（系统指令），跨轮次缓存
+- **delta**: 只发送增量（消息按 ID diff，人物画像按 userId diff）
+- **ephemeral**: 仅当前轮可见（记忆搜索结果、贴纸目录）
+- **volatile**: 每轮重新生成
+
+Delta 计算发生在**类型化的结构数据层**，而不是文本层。渲染到自然语言只发生一次，在最末端。这意味着静态和未变化的 Prompt 前缀在多轮对话中保持字节级一致，LLM API 的 Prompt Cache 可以大面积命中。DeepSeek V4 Flash 在 Subagent 模块的实测缓存率达到 **90%+**。
+
+更重要的是，每次渲染都会生成一个 **Context Manifest**，可以直接在 Dashboard 的 LLM Log 面板中查看——哪些部分被缓存了、哪些是增量、哪些是临时内容，一目了然。
+
+### Progressive Disclosure: “npm as Skills”
+
+传统 Agent 要把 SDK 包装成 JSON Schema 的 Tool 定义。我们的方法是：**让 Agent 直接写 TypeScript，文档按需注入。**
+
+- **Pass 1**: System Prompt 只包含单行签名（`search: 搜索网页内容`），几十个模块只占数百 Token
+- **Pass 2**: 代码运行失败时，提取代码中的 API 调用意图，精准注入对应方法的完整 `.d.ts` 文档
+
+关键洞察：Agent 自己写出的代码就是最好的意图信号——不需要额外的 Router 模型或 RAG 检索。这让技能扩展变得极其廉价：写一个 `.d.ts` 和 `index.ts`，丢进 `workspace/skills/` 目录，下次对话 Agent 就能使用。
+
+详见 [Progressive Disclosure in CodeAct](docs/progressive-disclosure-in-codeact.md)。
+
+### Real-Time Observable Dashboard
+
+我们始终认为**可观测性和框架能力同等重要**。Dashboard 提供 13+ 个实时面板，覆盖系统的每一个层面：
+
+- **CodeAct 面板**: 实时查看 Agent 正在执行的代码、思考过程、每一步的 observation
+- **LLM Log 面板**: 完整的 LLM 调用日志，包括请求/响应、Token 用量、**Context Manifest**（缓存率可视化）
+- **Memory 面板**: 搜索、浏览、编辑记忆条目
+- **Config 面板**: 实时编辑配置并热重载，无需重启
+
+你几乎可以在 Dashboard 中理解 Agent 的每一个决策、每一次行动。
+
+---
+
 ## ✨ 核心特性
 
-* **“读空气”引擎（氛围感知）** — 智能的消息路由与话题级分类；确切知道何时该发言，何时该保持沉默。
-* **自然的对话流** — 模拟人类回复延迟、优雅地退出话题。
-* **主动话题介入** — Agent 能够在恰当的时候与恰当的人就恰当的话题进行互动。
-* **三层记忆系统** — 基于 Recording Pipeline 的背景记忆管线。带来短期记忆压缩、中期情景/社交记忆，以及语义召回能力。
-* **Main Agent/Sub Agent 架构** — 双层架构，Main Agent 负责宏观决策，Sub Agent 负责具体任务。→ 即将进化为三层架构，通过 Background Agent，让ta能处理更复杂的任务。 
-* **反馈循环** — 追踪每次回复后群组的反应，并据此调整未来的行为模式。
-* **CodeAct 执行机制** — Agent 会在沙盒环境中编写真实的 TypeScript 代码，从而实现灵活的多步推理与自我调试。
-* **NPM As Skills** — 通过我们创新性的 [渐进式披露 in CodeAct 和 TS Skills 机制](docs/progressive-disclosure-in-codeact.md)，只需要引入新 NPM 包，选择你想要暴露的 API，编写少量示例代码，并加上你所需的安全策略，把 d.ts 塞进去就可以快速接入新的平台和技能。
-* **反思引擎** — 由 LLM 周期性驱动的自我反思机制，用于巩固情景记忆、更新人物画像并提取核心事实。
-* **原生多模态能力** — 支持图片、贴纸、视频、动图等媒体的识别与理解，根据模型能力，自动选择使用 Vision Agent 或直接使用主模型进行处理。
-* **完善的可视化面板** — 我们始终将行为可视化与框架能力视为同等重要的开发事项，通过面板你能够实现几乎所有操作，实时看到并理解 Agent 如何决策、如何行动、执行了什么代码
+* **Meta Agent / Subagent 架构** — 全局 Meta Agent 编写代码进行跨群编排，per-group Subagent Executor 执行具体任务，Callback Queue 闭环反馈。
+* **CodeAct 执行** — Agent 在隔离沙盒中编写真实的 TypeScript 代码，Notebook 式变量持久化，Promise 自动追踪，30+ 内置模块。
+* **Context Engine** — 结构化 Prompt 组装，类型化 delta 计算，四种缓存策略 × 四种历史策略，Manifest 可视化，90%+ 缓存命中率。
+* **渐进式文档披露** — 两阶段文档注入（轻量概览 → 错误后完整文档），NPM 包即技能，零封装成本。
+* **Attention Accumulator** — 三层优先级（直接提及 > 回调/定时 > 话题信号），Pressure 评分（活跃度 × Dunbar 亲密度 × 时间衰减）。
+* **三层记忆** — 短期工作记忆 + 中期情景/社交记忆（SQLite）+ 长期语义记忆（向量检索），Dunbar 分层，周期性反思引擎。
+* **Recording Pipeline** — 后台持续分析消息流，自动聚类话题、追踪生命周期、生成信号。
+* **多平台** — Telegram（Bot + Userbot）、Discord、QQ（OneBot/NapCat），统一适配层。
+* **多模型路由** — 按组件分配不同 LLM（编排用高端模型，对话用中端，后台分析用廉价模型），API Key 池化负载均衡。
+* **实时 Dashboard** — 13+ 面板，WebSocket 推送，CodeAct 实时调试，LLM 调用追踪，记忆搜索编辑，配置热重载。
+* **原生多模态** — 图片、贴纸、视频、动图的识别与理解。
+* **反思引擎** — 周期性 LLM 自我反思，巩固情景记忆、更新人物画像、提取核心事实。
+* **Prometheus 指标** — Token 用量、请求延迟、TPS、群组统计、系统健康，兼容标准 scraper。
 
-当前支持平台：Discord、Telegram
+支持平台：Telegram、Discord、QQ (OneBot)
 
 ## 🏗 系统架构​
 
-请参考 [docs/architecture_v3.md](docs/architecture_v3.md) 获取详细信息。
+请参考 [docs/architecture_v4.md](docs/architecture_v4.md) 获取详细的架构文档。
 
-也许您会更喜欢[直接阅读我们所有的 Prompts](system-prompts)，这是个好主意——我们对 Prompts 的更新频率远高于架构文档。事实上，架构文档不能完全反映当前的架构。我们总是有很多新想法在路上、在测试。
-
-但也请注意，Protmps 不能完全反映我们的设计，所以最好结合着来看。
+也可以[直接阅读我们的 Prompts](system-prompts)，它们的更新频率高于架构文档，能反映最新的设计意图。建议结合架构文档和 Prompts 一起阅读。
 
 ## 🖥️ 本机原生运行
 
