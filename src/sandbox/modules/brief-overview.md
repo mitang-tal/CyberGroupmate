@@ -153,7 +153,8 @@ telegram.d.ts — Telegram 平台 API 这是系统注入的 Telegram host proxy 
 - `getChatMembers`: 分页拉取群组成员列表
 - `getMessages`: 按消息 ID 精确获取一条或多条消息。（在别人回复或者提及某消息但是你看不见的时候，善用该函数爬楼获取上下文）
 - `getMessageReactions`: 主动拉取某条消息的表态（Reaction）汇总数据。
-- `downloadMedia`: 下载媒体文件的二进制数据。返回 base64 编码的 buffer 和文件大小。 需要传入通过 mediaInfo.fileId 获取的文件标识符。
+- `downloadMedia`: 下载媒体文件的二进制数据。返回 base64 编码的 buffer 和文件大小。 可以传入通过 mediaInfo.fileId 获取的 TDLib/Bot API file_id，也可以直接传 mtcute 返回的 Photo/FileLocation 等带 __mtcuteRef 的对象。
+- `downloadAsBuffer`: mtcute 原生 downloadAsBuffer 透传。返回值在 sandbox 中表示为 base64 buffer。
 - `joinChat`: 加入一个群聊或频道
 - `leaveChat`: 退出一个群聊或频道
 - `readHistory`: 将指定会话的所有未读消息标记为已读

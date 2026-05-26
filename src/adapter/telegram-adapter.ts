@@ -233,6 +233,19 @@ type PreparedTelegramSticker =
     | { kind: "static"; path: string; buffer: Buffer; fileName: string; mimeType: "image/webp" }
     | { kind: "video"; path: string; fileName: string; mimeType: "video/webm" };
 
+interface MtcuteObjectRefRecord {
+    value: object;
+    createdAt: number;
+    lastAccessAt: number;
+    type?: string;
+}
+
+const MTCUTE_OBJECT_REF_KEY = "__mtcuteRef";
+const MTCUTE_OBJECT_TYPE_KEY = "__mtcuteType";
+const MTCUTE_BYTES_KEY = "__mtcuteBytes";
+const MTCUTE_LONG_KEY = "__mtcuteLong";
+const MAX_MTCUTE_OBJECT_REFS = 1000;
+
 export class TelegramAdapter implements PlatformAdapter {
     readonly platform = "telegram";
 
@@ -240,6 +253,9 @@ export class TelegramAdapter implements PlatformAdapter {
     private selfUser: PlainUser | null = null;
     private messageHandler: ((msg: any) => Promise<void>) | null = null;
     private mediaCache = new MediaFileCache();
+    private mtcuteObjectRefCounter = 0;
+    private mtcuteObjectRefs = new Map<string, MtcuteObjectRefRecord>();
+    private mtcuteObjectRefByValue = new WeakMap<object, string>();
 
     // ─── 拟人化延迟状态 ───
     private lastSendTimes = new Map<string, number>();
@@ -945,39 +961,13 @@ export class TelegramAdapter implements PlatformAdapter {
                 return null;
             }
             case "telegram.canSendStory": {
-                if (typeof this.client.canSendStory !== "function") {
-                    throw new Error("canSendStory is not supported by the current Telegram client");
-                }
-                const storyPeer = await this.resolveStoryPeer(args[0] ?? "me");
-                return this.toPlainTelegramValue(await this.client.canSendStory(storyPeer));
+                return this.handleMtcutePassthrough(["canSendStory", ...args]);
             }
             case "telegram.sendStory": {
-                if (typeof this.client.sendStory !== "function") {
-                    throw new Error("sendStory is not supported by the current Telegram client");
-                }
-                const rawStoryParams = args.length > 1 && args[1] && typeof args[1] === "object"
-                    ? { ...(args[1] as Record<string, unknown>), peer: args[0] }
-                    : args[0];
-                const storyParams = await this.prepareSendStoryParams(rawStoryParams);
-                const story = await this.client.sendStory(storyParams);
-                return this.toPlainTelegramValue(story);
+                return this.handleMtcutePassthrough(["sendStory", ...args]);
             }
             case "telegram.sendStoryReaction": {
-                if (typeof this.client.sendStoryReaction !== "function") {
-                    throw new Error("sendStoryReaction is not supported by the current Telegram client");
-                }
-                const storyPeer = await this.resolveStoryPeer(args[0]);
-                const storyId = Number(args[1]);
-                if (!Number.isFinite(storyId)) throw new Error("sendStoryReaction: storyId must be a number");
-                const reaction = this.normalizeStoryReaction(args[2]);
-                const storyReactionOpts = (args[3] ?? {}) as Record<string, unknown>;
-                await this.client.sendStoryReaction({
-                    peerId: storyPeer,
-                    storyId,
-                    reaction,
-                    addToRecent: storyReactionOpts.addToRecent === true,
-                });
-                return null;
+                return this.handleMtcutePassthrough(["sendStoryReaction", ...args]);
             }
             default:
                 throw new Error(`Unsupported TelegramAdapter call: ${method}`);
@@ -1006,11 +996,30 @@ export class TelegramAdapter implements PlatformAdapter {
             throw new Error(`mtcute client does not support ${methodName}`);
         }
 
-        const callArgs = await Promise.all(
-            args.slice(1).map(arg => this.prepareMtcutePassthroughArg(arg)),
-        );
-        const result = (fn as (...callArgs: unknown[]) => unknown).apply(this.client, callArgs);
-        return this.toPlainTelegramValue(await this.materializeMtcutePassthroughResult(result));
+        const rawArgs = args.slice(1);
+        const primaryArgs = rawArgs.map(arg => this.hydrateMtcuteArg(arg));
+
+        try {
+            const result = await this.invokeMtcuteMethod(fn as (...callArgs: unknown[]) => unknown, primaryArgs);
+            return this.toSandboxMtcuteValue(result);
+        } catch (primaryErr) {
+            const fallbackArgs = await Promise.all(
+                rawArgs.map(arg => this.prepareMtcutePassthroughArg(arg)),
+            );
+            try {
+                const result = await this.invokeMtcuteMethod(fn as (...callArgs: unknown[]) => unknown, fallbackArgs);
+                return this.toSandboxMtcuteValue(result);
+            } catch (fallbackErr) {
+                const primaryMsg = primaryErr instanceof Error ? primaryErr.message : String(primaryErr);
+                const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+                throw new Error(`${fallbackMsg}\n\n[原始 mtcute 调用错误] ${primaryMsg}`);
+            }
+        }
+    }
+
+    private async invokeMtcuteMethod(fn: (...callArgs: unknown[]) => unknown, callArgs: unknown[]): Promise<unknown> {
+        const result = fn.apply(this.client, callArgs);
+        return this.materializeMtcutePassthroughResult(result);
     }
 
     private async materializeMtcutePassthroughResult(result: unknown): Promise<unknown> {
@@ -1027,7 +1036,78 @@ export class TelegramAdapter implements PlatformAdapter {
         return items;
     }
 
+    private hydrateMtcuteArg(value: unknown, key?: string): unknown {
+        if (!value || typeof value !== "object") return value;
+        if (value instanceof Date || Buffer.isBuffer(value) || value instanceof Uint8Array || Long.isLong(value)) {
+            return value;
+        }
+        if (Array.isArray(value)) {
+            let changed = false;
+            const hydrated = value.map((item) => {
+                const next = this.hydrateMtcuteArg(item, key);
+                if (next !== item) changed = true;
+                return next;
+            });
+            return changed ? hydrated : value;
+        }
+
+        const raw = value as Record<string, unknown>;
+        const ref = raw[MTCUTE_OBJECT_REF_KEY];
+        if (typeof ref === "string") {
+            const found = this.mtcuteObjectRefs.get(ref);
+            if (!found) {
+                throw new Error(`mtcute object ref expired or unknown: ${ref}`);
+            }
+            found.lastAccessAt = Date.now();
+            return found.value;
+        }
+
+        const bytes = raw[MTCUTE_BYTES_KEY];
+        if (typeof bytes === "string") {
+            return Buffer.from(bytes, "base64");
+        }
+        if (
+            typeof raw.buffer === "string"
+            && (key === "fileReference" || key === "bytes")
+            && (raw.size == null || Number(raw.size) === Buffer.from(raw.buffer, "base64").length)
+        ) {
+            return Buffer.from(raw.buffer, "base64");
+        }
+
+        const longString = raw[MTCUTE_LONG_KEY];
+        if (typeof longString === "string" && longString.trim()) {
+            return Long.fromString(longString.trim(), false, 10);
+        }
+        if (
+            typeof raw.low === "number"
+            && typeof raw.high === "number"
+            && Object.keys(raw).every(k => k === "low" || k === "high" || k === "unsigned")
+        ) {
+            return Long.fromBits(raw.low, raw.high, raw.unsigned === true);
+        }
+
+        let changed = false;
+        const output: Record<string, unknown> = {};
+        for (const [childKey, childValue] of Object.entries(raw)) {
+            const next = this.hydrateMtcuteArg(childValue, childKey);
+            if (next !== childValue) changed = true;
+            output[childKey] = next;
+        }
+        return changed ? output : value;
+    }
+
     private async prepareMtcutePassthroughArg(value: unknown, key?: string): Promise<unknown> {
+        const hydrated = this.hydrateMtcuteArg(value, key);
+        if (
+            value
+            && typeof value === "object"
+            && !Array.isArray(value)
+            && typeof (value as Record<string, unknown>)[MTCUTE_OBJECT_REF_KEY] === "string"
+        ) {
+            return hydrated;
+        }
+        value = hydrated;
+
         if (typeof value === "string") {
             const normalized = this.normalizeMtcuteStringArg(value, key);
             return this.isFileLikeKey(key) ? this.prepareMtcuteFileLike(normalized) : normalized;
@@ -1040,9 +1120,6 @@ export class TelegramAdapter implements PlatformAdapter {
             return value;
         }
         const raw = value as Record<string, unknown>;
-        if (typeof raw.low === "number" && typeof raw.high === "number" && Object.keys(raw).every(k => k === "low" || k === "high" || k === "unsigned")) {
-            return Long.fromBits(raw.low, raw.high, raw.unsigned === true);
-        }
 
         const output: Record<string, unknown> = {};
         for (const [childKey, childValue] of Object.entries(raw)) {
@@ -1143,44 +1220,6 @@ export class TelegramAdapter implements PlatformAdapter {
         return "";
     }
 
-    private async resolveStoryPeer(peer: unknown): Promise<unknown> {
-        if (peer == null) return "me";
-        if (typeof peer === "string") {
-            const trimmed = peer.trim();
-            if (!trimmed || trimmed === "me" || trimmed === "self") return "me";
-        }
-        return this.ensurePeerCached(peer);
-    }
-
-    private async prepareSendStoryParams(rawParams: unknown): Promise<Record<string, unknown>> {
-        if (!rawParams || typeof rawParams !== "object" || Array.isArray(rawParams)) {
-            throw new Error("sendStory: params object is required");
-        }
-        const params = rawParams as Record<string, unknown>;
-        if (!("media" in params)) throw new Error("sendStory: media is required");
-        return {
-            ...params,
-            peer: await this.resolveStoryPeer(params.peer ?? "me"),
-            media: this.prepareMtcuteMediaLike(params.media),
-        };
-    }
-
-    private prepareMtcuteMediaLike(media: unknown): unknown {
-        if (typeof media === "string") {
-            return this.prepareMtcuteFileLike(media);
-        }
-        if (media && typeof media === "object" && !Array.isArray(media)) {
-            const input = media as Record<string, unknown>;
-            return {
-                ...input,
-                file: this.prepareMtcuteFileLike(input.file),
-                thumb: this.prepareMtcuteFileLike(input.thumb),
-                videoCover: this.prepareMtcuteFileLike(input.videoCover),
-            };
-        }
-        return media;
-    }
-
     private prepareMtcuteFileLike(file: unknown): unknown {
         if (typeof file !== "string") return file;
         const trimmed = file.trim();
@@ -1243,13 +1282,87 @@ export class TelegramAdapter implements PlatformAdapter {
         return [...new Set(candidates)];
     }
 
-    private normalizeStoryReaction(reaction: unknown): unknown {
-        if (reaction && typeof reaction === "object" && !Array.isArray(reaction)) {
-            const raw = reaction as Record<string, unknown>;
-            if (typeof raw.emoji === "string") return raw.emoji;
-            if (typeof raw.emoticon === "string") return raw.emoticon;
+    private rememberMtcuteObjectRef(value: object): string {
+        const existing = this.mtcuteObjectRefByValue.get(value);
+        if (existing && this.mtcuteObjectRefs.has(existing)) {
+            const found = this.mtcuteObjectRefs.get(existing);
+            if (found) found.lastAccessAt = Date.now();
+            return existing;
         }
-        return reaction;
+        if (existing) this.mtcuteObjectRefByValue.delete(value);
+
+        this.pruneMtcuteObjectRefs();
+        const ref = `mtcute_${Date.now().toString(36)}_${++this.mtcuteObjectRefCounter}`;
+        const now = Date.now();
+        this.mtcuteObjectRefByValue.set(value, ref);
+        this.mtcuteObjectRefs.set(ref, {
+            value,
+            createdAt: now,
+            lastAccessAt: now,
+            type: this.describeMtcuteObjectType(value),
+        });
+        return ref;
+    }
+
+    private pruneMtcuteObjectRefs(): void {
+        if (this.mtcuteObjectRefs.size < MAX_MTCUTE_OBJECT_REFS) return;
+        const overflow = this.mtcuteObjectRefs.size - MAX_MTCUTE_OBJECT_REFS + 100;
+        const oldest = [...this.mtcuteObjectRefs.entries()]
+            .sort((a, b) => a[1].lastAccessAt - b[1].lastAccessAt)
+            .slice(0, Math.max(overflow, 1));
+        for (const [ref] of oldest) {
+            this.mtcuteObjectRefs.delete(ref);
+        }
+    }
+
+    private describeMtcuteObjectType(value: object): string | undefined {
+        const raw = value as Record<string, unknown>;
+        if (typeof raw.type === "string") return raw.type;
+        if (typeof raw._ === "string") return raw._;
+        const ctorName = value.constructor?.name;
+        return ctorName && ctorName !== "Object" ? ctorName : undefined;
+    }
+
+    private toSandboxMtcuteValue(value: unknown, seen = new WeakMap<object, string>()): unknown {
+        if (value == null) return value;
+        if (Long.isLong(value)) {
+            const text = value.toString();
+            return { [MTCUTE_LONG_KEY]: text, value: text };
+        }
+        if (typeof value === "bigint") return value.toString();
+        if (typeof value !== "object") return value;
+        if (value instanceof Date) return value.toISOString();
+        if (Buffer.isBuffer(value)) {
+            const text = value.toString("base64");
+            return { [MTCUTE_BYTES_KEY]: text, buffer: text, size: value.length };
+        }
+        if (value instanceof Uint8Array) {
+            const buffer = Buffer.from(value);
+            const text = buffer.toString("base64");
+            return { [MTCUTE_BYTES_KEY]: text, buffer: text, size: value.byteLength };
+        }
+        if (Array.isArray(value)) {
+            return value.map(item => this.toSandboxMtcuteValue(item, seen));
+        }
+
+        const circularRef = seen.get(value);
+        if (circularRef) {
+            return { [MTCUTE_OBJECT_REF_KEY]: circularRef, circular: true };
+        }
+
+        const ref = this.rememberMtcuteObjectRef(value);
+        seen.set(value, ref);
+        const output: Record<string, unknown> = {
+            [MTCUTE_OBJECT_REF_KEY]: ref,
+        };
+        const type = this.mtcuteObjectRefs.get(ref)?.type;
+        if (type) output[MTCUTE_OBJECT_TYPE_KEY] = type;
+
+        for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+            if (typeof item === "function" || typeof item === "symbol") continue;
+            output[key] = this.toSandboxMtcuteValue(item, seen);
+        }
+        return output;
     }
 
     private toPlainTelegramValue(value: unknown, seen = new WeakSet<object>()): unknown {
@@ -2091,8 +2204,10 @@ export class TelegramAdapter implements PlatformAdapter {
             }
         }
 
+        const downloadLocation = this.hydrateMtcuteArg(fileIdOrMedia);
+
         try {
-            const uint8 = await this.client.downloadAsBuffer(fileIdOrMedia);
+            const uint8 = await this.client.downloadAsBuffer(downloadLocation);
             const buffer = Buffer.from(uint8);
             if (uniqueFileId) this.mediaCache.set(uniqueFileId, buffer);
             return buffer;

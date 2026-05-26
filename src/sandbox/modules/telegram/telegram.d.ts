@@ -34,6 +34,13 @@ type TelegramMessage = {
     forwardFromUrl?: string;
 };
 
+type TelegramMtcuteRef = {
+    /** Host-side mtcute object reference. Pass this object back to telegram mtcute methods to preserve native object identity. */
+    __mtcuteRef: string;
+    __mtcuteType?: string;
+    [key: string]: unknown;
+};
+
 declare const telegram: {
     // ─── 按需能力指南 ───
     /** 加载 inline bot 使用指南。用于像 Telegram 客户端输入 `@bot query` 一样查询 inline bot 并发送某个结果；调用本方法只披露指南，不会执行实际发送。 */
@@ -144,8 +151,8 @@ declare const telegram: {
     getMessageReactions(chatId: number | string, messageIds: number[]): Promise<Array<{ emoji: string; count: number; }>>;
     /**
      * 下载媒体文件的二进制数据。返回 base64 编码的 buffer 和文件大小。
-     * 需要传入通过 mediaInfo.fileId 获取的文件标识符。
-     * @param fileId TDLib/Bot API 兼容的文件 ID
+     * 可以传入通过 mediaInfo.fileId 获取的 TDLib/Bot API file_id，也可以直接传 mtcute 返回的 Photo/FileLocation 等带 __mtcuteRef 的对象。
+     * @param location TDLib/Bot API 兼容 file_id、mtcute FileDownloadLocation、或带 __mtcuteRef 的 mtcute 对象
      * @param chatId  可选，用于 file reference 过期时自动 refetch
      * @param messageId 可选，同上
      * @param uniqueFileId 可选，用于缓存命中
@@ -156,7 +163,14 @@ declare const telegram: {
      *   // data.buffer 是 base64 编码的文件内容, data.size 是字节数
      * }
      */
-    downloadMedia(fileId: string, chatId?: number | string, messageId?: number, uniqueFileId?: string): Promise<{ buffer: string; size: number; }>;
+    downloadMedia(location: string | TelegramMtcuteRef | Record<string, unknown>, chatId?: number | string, messageId?: number, uniqueFileId?: string): Promise<{ buffer: string; size: number; }>;
+    /**
+     * mtcute 原生 downloadAsBuffer 透传。返回值在 sandbox 中表示为 base64 buffer。
+     * @example
+     * const [photo] = await telegram.getProfilePhotos(userId, { limit: 1 });
+     * const data = await telegram.downloadAsBuffer(photo);
+     */
+    downloadAsBuffer(location: string | TelegramMtcuteRef | Record<string, unknown>, params?: { fileSize?: number; partSize?: number; dcId?: number; offset?: number; limit?: number }): Promise<{ buffer: string; size: number; }>;
 
     // ─── 群组管理 ───
     /** 加入一个群聊或频道 */

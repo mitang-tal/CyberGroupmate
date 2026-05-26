@@ -606,8 +606,13 @@
       },
       {
         "name": "downloadMedia",
-        "brief": "下载媒体文件的二进制数据。返回 base64 编码的 buffer 和文件大小。 需要传入通过 mediaInfo.fileId 获取的文件标识符。",
-        "fullDoc": "```typescript\ndownloadMedia(fileId: string, chatId?: number | string, messageId?: number, uniqueFileId?: string): Promise<{ buffer: string; size: number; }>\n```\n\n\n下载媒体文件的二进制数据。返回 base64 编码的 buffer 和文件大小。\n需要传入通过 mediaInfo.fileId 获取的文件标识符。\n\n**参数：**\n- `fileId`: TDLib/Bot API 兼容的文件 ID\n- `chatId`: 可选，用于 file reference 过期时自动 refetch\n- `messageId`: 可选，同上\n- `uniqueFileId`: 可选，用于缓存命中\n\n**示例：**\n```typescript\nconst msg = messages[0];\nif (msg.mediaInfo?.fileId) {\n  const data = await telegram.downloadMedia(msg.mediaInfo.fileId, chatId, msg.id, msg.mediaInfo.uniqueFileId);\n  // data.buffer 是 base64 编码的文件内容, data.size 是字节数\n}\n```"
+        "brief": "下载媒体文件的二进制数据。返回 base64 编码的 buffer 和文件大小。 可以传入通过 mediaInfo.fileId 获取的 TDLib/Bot API file_id，也可以直接传 mtcute 返回的 Photo/FileLocation 等带 __mtcuteRef 的对象。",
+        "fullDoc": "```typescript\ndownloadMedia(location: string | TelegramMtcuteRef | Record<string, unknown>, chatId?: number | string, messageId?: number, uniqueFileId?: string): Promise<{ buffer: string; size: number; }>\n```\n\n\n下载媒体文件的二进制数据。返回 base64 编码的 buffer 和文件大小。\n可以传入通过 mediaInfo.fileId 获取的 TDLib/Bot API file_id，也可以直接传 mtcute 返回的 Photo/FileLocation 等带 __mtcuteRef 的对象。\n\n**参数：**\n- `location`: TDLib/Bot API 兼容 file_id、mtcute FileDownloadLocation、或带 __mtcuteRef 的 mtcute 对象\n- `chatId`: 可选，用于 file reference 过期时自动 refetch\n- `messageId`: 可选，同上\n- `uniqueFileId`: 可选，用于缓存命中\n\n**示例：**\n```typescript\nconst msg = messages[0];\nif (msg.mediaInfo?.fileId) {\n  const data = await telegram.downloadMedia(msg.mediaInfo.fileId, chatId, msg.id, msg.mediaInfo.uniqueFileId);\n  // data.buffer 是 base64 编码的文件内容, data.size 是字节数\n}\n```"
+      },
+      {
+        "name": "downloadAsBuffer",
+        "brief": "mtcute 原生 downloadAsBuffer 透传。返回值在 sandbox 中表示为 base64 buffer。",
+        "fullDoc": "```typescript\ndownloadAsBuffer(location: string | TelegramMtcuteRef | Record<string, unknown>, params?: { fileSize?: number; partSize?: number; dcId?: number; offset?: number; limit?: number }): Promise<{ buffer: string; size: number; }>\n```\n\n\nmtcute 原生 downloadAsBuffer 透传。返回值在 sandbox 中表示为 base64 buffer。\n\n**示例：**\n```typescript\nconst [photo] = await telegram.getProfilePhotos(userId, { limit: 1 });\nconst data = await telegram.downloadAsBuffer(photo);\n```"
       },
       {
         "name": "joinChat",
@@ -630,7 +635,7 @@
         "fullDoc": "```typescript\nsendTyping(chatId: number | string): Promise<void>\n```\n\n\n触发短暂的 `Typing` 正在输入反馈状态"
       }
     ],
-    "typeDefs": "type TelegramMessage = {\n    id: number;\n    text: string;\n    date: Date;\n    chat: { id: number; title?: string; username?: string; type: \"private\" | \"group\" | \"supergroup\" | \"channel\"; };\n    sender: { id: number; displayName?: string; title?: string; username?: string; } | null;\n    isMention: boolean;\n    replyToMessage?: { id: number } | null;\n    media?: unknown;\n    mediaInfo?: {\n        type: \"photo\" | \"sticker\" | \"video\" | \"document\" | \"animation\" | \"audio\" | \"other\";\n        rawType?: string;\n        fileId?: string;\n        uniqueFileId?: string;\n        emoji?: string;\n        mimeType?: string;\n        fileName?: string;\n        width?: number;\n        height?: number;\n        fileSize?: number;\n        filePath?: string;\n        downloadStatus?: \"downloaded\" | \"cached\" | \"too_large\" | \"failed\";\n        downloadError?: string;\n    };\n    forwardFrom?: string;\n    forwardFromUrl?: string;\n};"
+    "typeDefs": "type TelegramMessage = {\n    id: number;\n    text: string;\n    date: Date;\n    chat: { id: number; title?: string; username?: string; type: \"private\" | \"group\" | \"supergroup\" | \"channel\"; };\n    sender: { id: number; displayName?: string; title?: string; username?: string; } | null;\n    isMention: boolean;\n    replyToMessage?: { id: number } | null;\n    media?: unknown;\n    mediaInfo?: {\n        type: \"photo\" | \"sticker\" | \"video\" | \"document\" | \"animation\" | \"audio\" | \"other\";\n        rawType?: string;\n        fileId?: string;\n        uniqueFileId?: string;\n        emoji?: string;\n        mimeType?: string;\n        fileName?: string;\n        width?: number;\n        height?: number;\n        fileSize?: number;\n        filePath?: string;\n        downloadStatus?: \"downloaded\" | \"cached\" | \"too_large\" | \"failed\";\n        downloadError?: string;\n    };\n    forwardFrom?: string;\n    forwardFromUrl?: string;\n};\n\ntype TelegramMtcuteRef = {\n    /** Host-side mtcute object reference. Pass this object back to telegram mtcute methods to preserve native object identity. */\n    __mtcuteRef: string;\n    __mtcuteType?: string;\n    [key: string]: unknown;\n};"
   },
   {
     "name": "vision",

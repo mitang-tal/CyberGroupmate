@@ -416,8 +416,8 @@ export function createTelegramClientProxy(
             callTelegramHost("telegram.getPollResults", [chatId, messageId]),
         getMessageReactions: async (chatId: number | string, messageIds: number[]) =>
             callTelegramHost("telegram.getMessageReactions", [chatId, messageIds]),
-        downloadMedia: async (fileId: string, chatId?: number | string, messageId?: number, uniqueFileId?: string) =>
-            callTelegramHost("telegram.downloadMedia", [fileId, chatId, messageId, uniqueFileId]),
+        downloadMedia: async (location: unknown, chatId?: number | string, messageId?: number, uniqueFileId?: string) =>
+            callTelegramHost("telegram.downloadMedia", [location, chatId, messageId, uniqueFileId]),
 
         // ─── 扩展: 发送与交互 ───
 
@@ -552,4 +552,3 @@ export function createTelegramClientProxy(
         },
     });
 }
-
