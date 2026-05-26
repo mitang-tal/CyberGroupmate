@@ -32,6 +32,7 @@ import {
 } from "../meta-sandbox/meta-session-runner.js";
 import { getMetaHistoryWindowStatus } from "../main-agent/meta-history-retention.js";
 import { getPlatform } from "../core/chat-id.js";
+import type { MainAgentGlobalState } from "../subagent/types.js";
 
 const log = createLogger("dashboard-api");
 const SKILLS_ROOT = join(process.cwd(), "workspace", "skills");
@@ -210,6 +211,108 @@ function serializeTopic(topic: any): Record<string, unknown> | null {
             chatId: String(msg.chatId),
             senderId: String(msg.senderId),
         })),
+    };
+}
+
+function previewText(value: unknown, limit = 180): string {
+    let text: string;
+    if (typeof value === "string") {
+        text = value;
+    } else {
+        try {
+            text = JSON.stringify(value);
+        } catch {
+            text = String(value ?? "");
+        }
+    }
+    text = text.replace(/\s+/g, " ").trim();
+    return text.length > limit ? `${text.slice(0, limit)}...` : text;
+}
+
+function buildGlobalStateSummary(state: Readonly<MainAgentGlobalState>): Record<string, unknown> {
+    const schedulerEvents = state.schedulerEvents ?? [];
+    const reminders = schedulerEvents.filter((event) => event.type === "reminder");
+    const crons = schedulerEvents.filter((event) => event.type === "cron");
+    const activeReminders = reminders.filter((event) => !event.triggered);
+    const triggeredReminders = reminders.length - activeReminders.length;
+    const memos = state.memos ?? [];
+    const sessionDigests = state.sessionDigests ?? [];
+    const metaSessionHistory = state.metaSessionHistory ?? [];
+    const signalPool = state.signalPool ?? [];
+    const wakeConditions = state.wakeConditions ?? [];
+    const dispatchedSubagentTasks = state.dispatchedSubagentTasks ?? [];
+    const taskStatusCounts = dispatchedSubagentTasks.reduce<Record<string, number>>((counts, task) => {
+        counts[task.status] = (counts[task.status] ?? 0) + 1;
+        return counts;
+    }, {});
+
+    return {
+        generatedAt: new Date().toISOString(),
+        sections: [
+            {
+                key: "schedulerEvents",
+                label: "调度事件",
+                count: schedulerEvents.length,
+                detail: `${activeReminders.length} active reminders, ${triggeredReminders} triggered, ${crons.length} crons`,
+            },
+            {
+                key: "memos",
+                label: "全局备忘录",
+                count: memos.length,
+                detail: `${memos.filter((memo) => !!memo.expiresAt).length} with expiry`,
+            },
+            {
+                key: "sessionDigests",
+                label: "Session Digests",
+                count: sessionDigests.length,
+            },
+            {
+                key: "metaSessionHistory",
+                label: "Meta History",
+                count: metaSessionHistory.length,
+                detail: getMetaHistoryWindowStatus(metaSessionHistory).currentChars + " chars",
+            },
+            {
+                key: "signalPool",
+                label: "Signal Pool",
+                count: signalPool.length,
+            },
+            {
+                key: "wakeConditions",
+                label: "Wake Conditions",
+                count: wakeConditions.length,
+            },
+            {
+                key: "dispatchedSubagentTasks",
+                label: "Dispatch Tasks",
+                count: dispatchedSubagentTasks.length,
+                detail: Object.entries(taskStatusCounts).map(([status, count]) => `${status}:${count}`).join(", "),
+            },
+        ],
+        recent: {
+            memos: memos.slice(-5).reverse().map((memo) => ({
+                key: memo.key,
+                createdAt: memo.createdAt,
+                expiresAt: memo.expiresAt,
+                value: previewText(memo.value),
+            })),
+            sessionDigests: sessionDigests.slice(-5).reverse().map((digest) => ({
+                createdAt: digest.createdAt,
+                content: previewText(digest.content),
+            })),
+            metaSessionHistory: metaSessionHistory.slice(-5).reverse().map((entry) => ({
+                role: entry.role,
+                timestamp: entry.timestamp,
+                content: previewText(entry.content),
+            })),
+            dispatchedSubagentTasks: dispatchedSubagentTasks.slice(-5).reverse().map((task) => ({
+                taskId: task.taskId,
+                chatId: task.chatId,
+                status: task.status,
+                updatedAt: task.updatedAt,
+                summary: previewText(task.summary ?? task.error ?? task.contentDirection),
+            })),
+        },
     };
 }
 
@@ -650,6 +753,10 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
                 timestamp: digest.createdAt,
             }))
         );
+    });
+
+    router.get("/global-state/summary", (_req, res) => {
+        res.json(buildGlobalStateSummary(deps.globalState.getState()));
     });
 
     router.get("/global-state", (_req, res) => {
