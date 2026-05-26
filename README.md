@@ -2,7 +2,7 @@
 
 > **一个由代码驱动的群聊社交 Agent**
 
-CyberGroupmate 是一个能够以自然、拟人的行为模式参与群聊的自主 AI Agent。基于 [CodeAct](https://arxiv.org/abs/2402.01030) 范式构建，该 Agent 通过编写并执行 TypeScript 代码和 Shell 命令来进行感知、推理和行动——而不是依赖死板的 Tool Call。
+CyberGroupmate 是一个能够以自然、拟人的行为模式参与群聊的自主 AI Agent。基于 [CodeAct](https://arxiv.org/abs/2402.01030) 范式构建，该 Agent 通过编写并执行代码和 Shell 命令来进行感知、推理和行动。
 
 Join our discussion on Telegram! [https://t.me/cybergroupmate](https://t.me/cybergroupmate)
 
@@ -19,9 +19,9 @@ Join our discussion on Telegram! [https://t.me/cybergroupmate](https://t.me/cybe
 
 大多数聊天机器人是单群、被动响应的。CyberGroupmate 采用 **Meta Agent — Subagent** 分层架构，让 Agent 具备了跨群感知和跨群行动的能力。
 
-一个全局的 Meta Agent 通过编写 JavaScript 代码来调用编排 API（`dispatch.taskToGroup()`、`conversations.query()`、`memory.searchEntities()` 等），将任务分发到各个群的 Subagent Executor。Executor 完成任务后，执行结果通过 Callback Queue 回流到 Meta Agent，形成闭环反馈。Meta Agent 可以追踪任务状态、设置定时提醒、甚至在多个群之间协调行动。
+一个全局的 Meta Agent 通过编写 JavaScript 代码来调用编排 API（`dispatch.taskToGroup()`、`conversations.query()`、`memory.searchEntities()` 等），将任务分发到各个群的 Subagent Executor。Executor 完成任务后，执行结果通过 Callback Queue 回流到 Meta Agent，形成闭环反馈。Meta Agent 可以追踪任务状态、设置定时提醒、甚至在多个群之间协调行动。而且，Subagent 之间也可以互相 dispatch 任务并且收到 callback。
 
-这不仅是”多群支持”——而是 Agent 能够真正理解”A 群有人提到了和 B 群相关的话题”并主动采取行动。
+通过 Callback 闭环，Agent 内部始终能掌握自己刚刚做了什么，还能够真正理解“A 群/私聊有人提到了和 B 群相关的话题”并主动采取行动，给群友们带来一种“和我聊天的始终都是一个人”的整体感。
 
 ### Context Engine: Structured Prompt Assembly with 90%+ Cache Rates
 
@@ -31,7 +31,7 @@ Join our discussion on Telegram! [https://t.me/cybergroupmate](https://t.me/cybe
 - **ephemeral**: 仅当前轮可见（记忆搜索结果、贴纸目录）
 - **volatile**: 每轮重新生成
 
-Delta 计算发生在**类型化的结构数据层**，而不是文本层。渲染到自然语言只发生一次，在最末端。这意味着静态和未变化的 Prompt 前缀在多轮对话中保持字节级一致，LLM API 的 Prompt Cache 可以大面积命中。DeepSeek V4 Flash 在 Subagent 模块的实测缓存率达到 **90%+**。
+Delta 计算发生在类型化的结构数据层，从各个数据源获取的结构化数据到渲染到自然语言只会在最末端发生一次。这意味着静态和未变化的 Prompt 前缀在多轮对话中保持字节级一致，LLM API 的 Prompt Cache 可以大面积命中。DeepSeek V4 Flash 在 Subagent 模块的实测缓存率达到 **90%+**。
 
 更重要的是，每次渲染都会生成一个 **Context Manifest**，可以直接在 Dashboard 的 LLM Log 面板中查看——哪些部分被缓存了、哪些是增量、哪些是临时内容，一目了然。
 
