@@ -31,7 +31,14 @@ import { ContextEngine } from "../context-engine/context-engine.js";
 import { EXECUTOR_FOOTER_TEXT, getExecutorTaskProviders, type ExecutorResolveContext } from "../context-engine/providers/executor-providers.js";
 import type { LLMConfig, VisionConfig } from "../core/config.js";
 import { resolveComponentProfiles, loadConfig } from "../core/config.js";
-import { enrichMessages, formatMessageLine, resolveReplyText } from "../core/message-enricher.js";
+import {
+    enrichMessages,
+    formatMessageLine,
+    resolveReplyText,
+    type EnrichedResult,
+    type RawMessage,
+    type StickerDescriptionLookup,
+} from "../core/message-enricher.js";
 import type { MediaDownloader } from "../core/media-downloader.js";
 import type { ChatMessage } from "../core/llm.js";
 import { createLogger } from "../core/logger.js";
@@ -118,13 +125,20 @@ function looksLikePersonProfileContext(rawContext: string | undefined): boolean 
     }
 }
 
-function formatPendingMessageLine(message: PostTaskReactionMessage): string {
-    const mediaSuffix = message.mediaType
-        ? ` [${message.mediaType}${message.mediaInfo ? ` ${message.mediaInfo}` : ""}]`
-        : "";
-    const replySuffix = message.replyToMessageId ? ` (replyTo=${message.replyToMessageId})` : "";
-    const text = message.text || "[non-text message]";
-    return `[${formatTsForPrompt(message.timestamp)}] [msgId:${message.messageId}] ${message.sender}${replySuffix}: ${text}${mediaSuffix}`;
+function formatPendingMessageLine(message: PostTaskReactionMessage, stickerDescriptionLookup?: StickerDescriptionLookup): string {
+    return formatMessageLine({
+        id: message.messageId,
+        sender: message.sender,
+        text: message.text,
+        timestamp: message.timestamp,
+        replyTo: message.replyToMessageId ? `msg#${message.replyToMessageId}` : undefined,
+        replyToMsgId: message.replyToMessageId,
+        mediaType: message.mediaType,
+        mediaInfo: message.mediaInfo,
+    }, {
+        includeMediaTags: true,
+        stickerDescriptionLookup,
+    });
 }
 
 function findLatestDirectAttentionMessage(messages: PostTaskReactionMessage[]): PostTaskReactionMessage | undefined {
@@ -136,27 +150,46 @@ function findLatestDirectAttentionMessage(messages: PostTaskReactionMessage[]): 
     return undefined;
 }
 
-function formatPendingMessages(messages: PostTaskReactionMessage[]): string {
+function formatPendingMessages(messages: PostTaskReactionMessage[], stickerDescriptionLookup?: StickerDescriptionLookup): string {
     const lines = messages.map((message) =>
         formatMessageLine({
             id: message.messageId,
             sender: message.sender,
             text: message.text,
             timestamp: message.timestamp,
+            replyTo: message.replyToMessageId ? `msg#${message.replyToMessageId}` : undefined,
+            replyToMsgId: message.replyToMessageId,
             mediaType: message.mediaType,
             mediaInfo: message.mediaInfo,
-        }, { includeMediaTags: true })
+        }, { includeMediaTags: true, stickerDescriptionLookup })
     ).join("\n");
     return `[📩 新消息到达]\n${lines}`;
 }
 
-function formatMidTurnDirectAttentionPrompt(messages: PostTaskReactionMessage[], directReason: string): string {
-    const lines = messages.map((message) => formatPendingMessageLine(message));
+function formatMidTurnDirectAttentionPrompt(
+    messages: PostTaskReactionMessage[],
+    directReason: string,
+    stickerDescriptionLookup?: StickerDescriptionLookup,
+): string {
+    const lines = messages.map((message) => formatPendingMessageLine(message, stickerDescriptionLookup));
     return [
         "[📩 新消息到达]",
         ...lines,
         "",
         `[mid-turn direct attention: ${directReason}] 这些消息发生在你处理当前任务期间，其中有人直接叫住你、回复你或提及你。请结合当前会话、刚才的执行结果和上面所有尚未处理的新消息判断是否需要调整下一步行动或直接回复；需要时在下一轮自然处理，不需要则继续当前任务。`,
+    ].join("\n");
+}
+
+function formatContinuationPromptFromEnrichedMessages(
+    formattedMessages: string,
+    directReason: string,
+    classifierReason?: string,
+): string {
+    return [
+        "[📩 新消息到达]",
+        formattedMessages,
+        "",
+        `[post-task direct attention: ${directReason}]${classifierReason ? ` 判定原因: ${classifierReason}` : ""} 请基于上下文决定如何行动。`,
     ].join("\n");
 }
 
@@ -655,7 +688,15 @@ export class CodeActExecutor {
         let imageParts: ChatMessage["imageParts"] = [];
         let renderResult: ReturnType<ContextEngine["render"]> | null = null;
 
-        if (!isContinuation) {
+        if (isContinuation && task.continuationMessages?.length) {
+            const enriched = await this.enrichReactionMessages(task.continuationMessages);
+            taskPrompt = formatContinuationPromptFromEnrichedMessages(
+                enriched.formattedText,
+                task.continuationReason ?? "post-task",
+                task.continuationClassifierReason,
+            );
+            imageParts = enriched.imageParts;
+        } else if (!isContinuation) {
             const topicSummary = ctx.topicSummary ?? "";
             const toneGuidance = ctx.toneGuidance ?? "";
             const memoryContext = task.memoryContext;
@@ -1063,6 +1104,62 @@ export class CodeActExecutor {
         });
     }
 
+    private async enrichReactionMessages(messages: PostTaskReactionMessage[]): Promise<EnrichedResult> {
+        const messagesById = new Map(messages.map((message) => [message.messageId, message]));
+        const rawMessages: RawMessage[] = await Promise.all(messages.map(async (message) => {
+            const replyToMsgId = message.replyToMessageId;
+            const inBatchReply = replyToMsgId ? messagesById.get(replyToMsgId) : undefined;
+            let replyTo = inBatchReply?.sender;
+            let replyToText: string | undefined;
+
+            if (replyToMsgId && !inBatchReply && this.memory) {
+                try {
+                    const original = this.memory.getMessageById(this.chatId, replyToMsgId);
+                    if (original) {
+                        replyTo = original.displayName || original.userId || `msg#${replyToMsgId}`;
+                        replyToText = await resolveReplyText(original, {
+                            stickerCache: this.memory,
+                            visionConfig: this.visionConfig,
+                            llmConfig: resolveComponentProfiles("session")[0] ?? undefined,
+                            visionLlmConfig: this.visionLlmConfig,
+                            downloadFn: this.downloadFn,
+                            chatId: this.chatId,
+                        });
+                    }
+                } catch (error) {
+                    log.debug("enrichReactionMessages: reply target lookup failed", {
+                        chatId: this.chatId,
+                        replyToMsgId,
+                        error: String(error),
+                    });
+                }
+            }
+
+            return {
+                id: message.messageId,
+                sender: message.sender,
+                text: message.text,
+                timestamp: message.timestamp,
+                replyTo: replyTo ?? (replyToMsgId ? `msg#${replyToMsgId}` : undefined),
+                replyToMsgId,
+                replyToText,
+                mediaType: message.mediaType,
+                mediaInfo: message.mediaInfo,
+                chatId: this.chatId,
+            };
+        }));
+
+        return enrichMessages(rawMessages, {
+            visionConfig: this.visionConfig,
+            llmConfig: resolveComponentProfiles("session")[0],
+            visionLlmConfig: this.visionLlmConfig,
+            downloadFn: this.downloadFn,
+            stickerCache: this.memory ?? undefined,
+            chatId: this.chatId,
+            mediaDownloader: this.mediaDownloader,
+        });
+    }
+
     /**
      * 层 2: 在当前 turn 的 observation 前优先抽取 direct attention 消息
      * 仅当有人直接叫住 agent 时才清空 buffer 并立即反馈给模型。
@@ -1078,7 +1175,7 @@ export class CodeActExecutor {
             count: drained.length,
             directReason,
         });
-        return formatMidTurnDirectAttentionPrompt(drained, directReason);
+        return formatMidTurnDirectAttentionPrompt(drained, directReason, this.memory ?? undefined);
     }
 
     /**
@@ -1096,9 +1193,9 @@ export class CodeActExecutor {
             hasDirectAttention: !!trigger,
         });
         if (trigger) {
-            return formatMidTurnDirectAttentionPrompt(drained, trigger.directReason ?? "direct-address");
+            return formatMidTurnDirectAttentionPrompt(drained, trigger.directReason ?? "direct-address", this.memory ?? undefined);
         }
-        return formatPendingMessages(drained);
+        return formatPendingMessages(drained, this.memory ?? undefined);
     }
 
     /**

@@ -197,7 +197,7 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
             assert.match(observation ?? "", /\[📩 新消息到达\]/);
             assert.match(observation ?? "", /前面这句也要一起看/);
             assert.match(observation ?? "", /你在吗/);
-            assert.match(observation ?? "", /replyTo=sent-1/);
+            assert.match(observation ?? "", /reply to msg#sent-1 #sent-1/);
             assert.match(observation ?? "", /\[mid-turn direct attention: reply-to-agent\]/);
             assert.equal(executor.drainPendingMessages(), null);
         });
@@ -237,6 +237,35 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
 
             assert.match(nextTurn ?? "", /\[mid-turn direct attention: @mention\]/);
             assert.match(nextTurn ?? "", /看一下我这条/);
+        });
+
+        it("#6c.1 pending sticker messages use cached descriptions", () => {
+            const executor = new CodeActExecutor("chat1");
+            (executor as any).memory = {
+                getStickerDescription: (uniqueFileId: string) => uniqueFileId === "sticker-known"
+                    ? { description: "比心示好的温柔贴纸", emojis: ["🫶"] }
+                    : null,
+            };
+
+            executor.pushPendingMessage({
+                messageId: "msg-sticker",
+                sender: "Alice",
+                text: "[🎭 贴纸: 🫶]",
+                timestamp: "2026-05-13T10:00:01.000Z",
+                mediaType: "sticker",
+                mediaInfo: JSON.stringify({
+                    type: "sticker",
+                    fileId: "file-sticker",
+                    uniqueFileId: "sticker-known",
+                    emoji: "🫶",
+                }),
+            });
+
+            const nextTurn = executor.drainPendingMessages();
+
+            assert.match(nextTurn ?? "", /贴纸 🫶: 比心示好的温柔贴纸/);
+            assert.doesNotMatch(nextTurn ?? "", /file-sticker/);
+            assert.doesNotMatch(nextTurn ?? "", /uniqueFileId/);
         });
 
         it("#6d buildAvailableStickers filters sendable stickers before randomly selecting 12", () => {

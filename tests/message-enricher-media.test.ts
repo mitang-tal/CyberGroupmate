@@ -83,4 +83,40 @@ describe("message-enricher media downloads", () => {
             downloader.dispose();
         }
     });
+
+    it("uses cached sticker descriptions without leaking raw mediaInfo", async () => {
+        const result = await enrichMessages([
+            {
+                id: "1167459",
+                sender: "莫思奇多",
+                text: "[🎭 贴纸: 🫶]",
+                timestamp: "2026-05-27T03:51:00.000Z",
+                chatId: "telegram:-100",
+                mediaType: "sticker",
+                mediaInfo: JSON.stringify({
+                    type: "sticker",
+                    fileId: "file-sticker",
+                    uniqueFileId: "AgADzw4AAs9qqFY",
+                    emoji: "🫶",
+                    mimeType: "image/webp",
+                }),
+            },
+        ], {
+            llmConfig,
+            visionConfig: { stickerMode: "vision_cache" },
+            stickerCache: {
+                getStickerDescription: (uniqueFileId: string) => uniqueFileId === "AgADzw4AAs9qqFY"
+                    ? { description: "比心示好的温柔贴纸", emojis: ["🫶"] }
+                    : null,
+                setStickerDescription: () => {},
+            },
+            chatId: "telegram:-100",
+            enableOgPreview: false,
+        });
+
+        assert.match(result.formattedText, /贴纸 🫶: 比心示好的温柔贴纸/);
+        assert.doesNotMatch(result.formattedText, /fileId/);
+        assert.doesNotMatch(result.formattedText, /AgADzw4AAs9qqFY/);
+        assert.doesNotMatch(result.formattedText, /图片描述: \[🎭 贴纸/);
+    });
 });

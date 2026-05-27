@@ -161,7 +161,9 @@ export async function enrichMessages(
 
     // ─── 3. 格式化消息文本 ───
     const imageParts: Array<{ url: string }> = [];
-    const formattedText = formatMessages(messages, imageParts);
+    const formattedText = formatMessages(messages, imageParts, {
+        stickerDescriptionLookup: options.stickerCache,
+    });
 
     return { formattedText, imageParts };
 }
@@ -418,6 +420,7 @@ function parseMediaAttachments(messages: RawMessage[], fallbackChatId?: string):
 export function formatMessages(
     messages: RawMessage[],
     imageParts: Array<{ url: string }>,
+    options?: { stickerDescriptionLookup?: StickerDescriptionLookup },
 ): string {
     const lines: string[] = [];
     let prevTimestamp: number | undefined;
@@ -468,7 +471,10 @@ export function formatMessages(
                     textPart = textPart ? `${textPart} [📎 文件: ${pm.filePath}]` : `[📎 文件: ${pm.filePath}]`;
                 } else if (pm.description) {
                     // 路径 B/C: 文本描述
-                    textPart = textPart ? `${textPart} [📷 图片描述: ${pm.description}]` : `[📷 图片描述: ${pm.description}]`;
+                    const mediaText = pm.description.startsWith("[")
+                        ? pm.description
+                        : `[📷 图片描述: ${pm.description}]`;
+                    textPart = textPart ? `${textPart} ${mediaText}` : mediaText;
                 }
             }
         }
@@ -476,7 +482,9 @@ export function formatMessages(
         // 如果有 processedMedia 就不再追加 mediaTag（已处理），否则追加 mediaTag 作兜底
         const hasProcessedMedia = m.processedMedia && m.processedMedia.length > 0;
         if (!hasProcessedMedia && m.mediaType) {
-            const tag = mediaTagFromType(m.mediaType, m.mediaInfo);
+            const tag = mediaTagFromType(m.mediaType, m.mediaInfo, {
+                stickerDescriptionLookup: options?.stickerDescriptionLookup,
+            });
             if (tag && !textPart.includes(tag)) {
                 textPart = textPart ? `${textPart} ${tag}` : tag;
             }

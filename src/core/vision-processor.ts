@@ -506,16 +506,6 @@ async function processSingleSticker(
 ): Promise<ProcessedMedia> {
     const mode = config?.stickerMode ?? "emoji_only";
 
-    // emoji_only 或无 vision 能力
-    if (mode === "emoji_only" || !hasVision || !downloadFn || !visionLlmConfigs?.length) {
-        return {
-            index: sticker.messageIndex,
-            description: sticker.emoji
-                ? `[🎭 贴纸: ${sticker.emoji}]`
-                : "[🎭 贴纸]",
-        };
-    }
-
     // vision_cache: 查缓存
     if (mode === "vision_cache" && stickerCache) {
         const cached = stickerCache.getStickerDescription(sticker.uniqueFileId);
@@ -527,6 +517,16 @@ async function processSingleSticker(
                 description: `[🎭 贴纸${emojiTag}: ${cached.description}]`,
             };
         }
+    }
+
+    // emoji_only 或无 vision 能力
+    if (mode === "emoji_only" || !hasVision || !downloadFn || !visionLlmConfigs?.length) {
+        return {
+            index: sticker.messageIndex,
+            description: sticker.emoji
+                ? `[🎭 贴纸: ${sticker.emoji}]`
+                : "[🎭 贴纸]",
+        };
     }
 
     // vision_each 或 vision_cache miss: 下载+识别
