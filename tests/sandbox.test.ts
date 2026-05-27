@@ -220,6 +220,26 @@ describe("Sandbox", () => {
         assert.equal(parsed.topic.label, "测试话题");
     });
 
+    it("should include host call method and stack in proxied errors", async () => {
+        const sb = await makeSandbox();
+
+        sb.setHostCallHandler(async (method) => {
+            if (method === "mcp.list") {
+                return [];
+            }
+            if (method === "memory.searchFacts") {
+                throw new Error("boom from host");
+            }
+            throw new Error(`unexpected method: ${method}`);
+        });
+
+        const result = await sb.execute(`await memory.searchFacts("京都");`);
+
+        assert.equal(result.error, true);
+        assert.match(result.output, /\[host_call:memory\.searchFacts\] boom from host/);
+        assert.match(result.output, /--- Host stack ---/);
+    });
+
     it("should expose code-based social skill helpers", async () => {
         const sb = await makeSandbox();
         sb.setHostCallHandler(async (method, args) => {

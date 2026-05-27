@@ -554,7 +554,9 @@ export class Sandbox extends EventEmitter {
                 type: "host_call_result",
                 id,
                 ok: false,
+                method,
                 error: err instanceof Error ? err.message : String(err),
+                ...(err instanceof Error && err.stack ? { stack: err.stack } : {}),
             });
             this.child.stdin.write(msg + "\n");
         }

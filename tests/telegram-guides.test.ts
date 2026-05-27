@@ -537,6 +537,42 @@ describe("Telegram builtin guides", () => {
         }
     });
 
+    it("treats accidental mediaInfo objects as their fileId for downloadMedia", async () => {
+        const nc = makeNC();
+        const downloadTargets: unknown[] = [];
+        const fakeClient = {
+            async start() {
+                return { id: 99, displayName: "Userbot", isBot: false };
+            },
+            onNewMessage: { add() {}, remove() {} },
+            async downloadAsBuffer(location: unknown) {
+                downloadTargets.push(location);
+                return Buffer.from("image-bytes");
+            },
+            async destroy() {},
+        };
+
+        const adapter = new TelegramAdapter(makeConfig(), nc, async () => "", () => {}, async () => fakeClient);
+        try {
+            await adapter.start();
+
+            const result = await adapter.handleCall("telegram.downloadMedia", [{
+                type: "photo",
+                fileId: "AgAC-media-file-id",
+                uniqueFileId: `AQAD-${randomUUID()}`,
+                downloadStatus: "too_large",
+            }]) as any;
+
+            assert.equal(downloadTargets.length, 1);
+            assert.equal(downloadTargets[0], "AgAC-media-file-id");
+            assert.equal(result.buffer, Buffer.from("image-bytes").toString("base64"));
+            assert.equal(result.size, Buffer.byteLength("image-bytes"));
+        } finally {
+            await adapter.stop();
+            nc.dispose();
+        }
+    });
+
     it("rejects missing file: mtcute media before the client can create a read stream", async () => {
         const nc = makeNC();
         const calls: Array<Record<string, unknown>> = [];

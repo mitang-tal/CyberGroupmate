@@ -86,6 +86,8 @@ interface HostCallResultMessage {
     ok: boolean;
     value?: unknown;
     error?: string;
+    method?: string;
+    stack?: string;
 }
 
 /** Worker → Host: 代码执行结果 */
@@ -412,6 +414,16 @@ function callHost(method: string, args: unknown[] = []): Promise<unknown> {
     });
 }
 
+function buildHostCallError(msg: HostCallResultMessage): Error {
+    const method = msg.method ?? "unknown";
+    const message = msg.error ?? "Unknown host call error";
+    const err = new Error(`[host_call:${method}] ${message}`);
+    if (msg.stack) {
+        err.stack = `${err.name}: ${err.message}\n--- Host stack ---\n${msg.stack}`;
+    }
+    return err;
+}
+
 function getExecutionOutput(index: number): SandboxQuoteOutput | null {
     const found = outputLedger.find((item) => item.index === index);
     return found ? { ...found } : null;
@@ -727,7 +739,7 @@ rl.on("line", async (line: string) => {
                 if (msg.ok) {
                     pending.resolve(msg.value);
                 } else {
-                    pending.reject(new Error(msg.error ?? "Unknown host call error"));
+                    pending.reject(buildHostCallError(msg));
                 }
             }
         }

@@ -151,8 +151,8 @@ declare const telegram: {
     getMessageReactions(chatId: number | string, messageIds: number[]): Promise<Array<{ emoji: string; count: number; }>>;
     /**
      * 下载媒体文件的二进制数据。返回 base64 编码的 buffer 和文件大小。
-     * 可以传入通过 mediaInfo.fileId 获取的 TDLib/Bot API file_id，也可以直接传 mtcute 返回的 Photo/FileLocation 等带 __mtcuteRef 的对象。
-     * @param location TDLib/Bot API 兼容 file_id、mtcute FileDownloadLocation、或带 __mtcuteRef 的 mtcute 对象
+     * 优先传入 msg.mediaInfo.fileId，不要把整个 msg.mediaInfo 当作 location 传入；也可以直接传 mtcute 返回的 Photo/FileLocation 等带 __mtcuteRef 的对象。
+     * @param location TDLib/Bot API 兼容 file_id、mtcute FileDownloadLocation、或带 __mtcuteRef 的 mtcute 对象。通常使用 msg.mediaInfo.fileId。
      * @param chatId  可选，用于 file reference 过期时自动 refetch
      * @param messageId 可选，同上
      * @param uniqueFileId 可选，用于缓存命中
@@ -162,6 +162,9 @@ declare const telegram: {
      *   const data = await telegram.downloadMedia(msg.mediaInfo.fileId, chatId, msg.id, msg.mediaInfo.uniqueFileId);
      *   // data.buffer 是 base64 编码的文件内容, data.size 是字节数
      * }
+     * @example
+     * // 错误：await telegram.downloadMedia(msg.mediaInfo)
+     * // 正确：await telegram.downloadMedia(msg.mediaInfo.fileId, msg.chat.id, msg.id, msg.mediaInfo.uniqueFileId)
      */
     downloadMedia(location: string | TelegramMtcuteRef | Record<string, unknown>, chatId?: number | string, messageId?: number, uniqueFileId?: string): Promise<{ buffer: string; size: number; }>;
     /**
