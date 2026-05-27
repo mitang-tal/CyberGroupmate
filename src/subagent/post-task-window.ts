@@ -20,7 +20,7 @@ import type {
 import { createLogger } from "../core/logger.js";
 import { prefixedShortUuid } from "../core/ids.js";
 import { callLLMWithFallback, type ChatMessage } from "../core/llm.js";
-import { loadConfig, resolveComponentProfiles, resolveComponentTimeout, type LLMConfig } from "../core/config.js";
+import { loadConfig, resolveComponentProfiles, resolveComponentTimeout, type AppConfig, type LLMConfig, type VisionConfig } from "../core/config.js";
 import { loadPromptFile } from "../core/prompt-loader.js";
 import { renderTemplate } from "../context-engine/template-engine.js";
 import {
@@ -38,15 +38,6 @@ const IDLE_RECHECK_MS = 2_000;
 const MIN_MAX_WINDOW_MS = 5 * 60_000;
 const FOLLOW_UP_CONTEXT_MESSAGE_LIMIT = 20;
 const POST_TASK_FOLLOWUP_PROMPT_PATH = "subagent/post-task-followup.md";
-const FORMAT_ONLY_LLM_CONFIG: LLMConfig = {
-    provider: "openai",
-    baseUrl: "",
-    apiKey: "",
-    model: "format-only",
-    temperature: 0,
-    maxTokens: 1,
-    vision: false,
-};
 
 const DEFAULT_POST_TASK_FOLLOWUP_PROMPT = [
     "你是一个极轻量的 post-task follow-up 判定器。",
@@ -97,6 +88,12 @@ export interface PostTaskFollowUpJudgeResult {
     hasFollowUp: boolean;
     reason?: string;
     triggerMessageId?: string;
+}
+
+export interface PostTaskFollowUpEnrichConfig {
+    llmConfig: LLMConfig;
+    visionConfig?: VisionConfig;
+    visionLlmConfig?: LLMConfig[];
 }
 
 export type PostTaskFollowUpJudge = (input: PostTaskFollowUpJudgeInput) => Promise<PostTaskFollowUpJudgeResult>;
@@ -765,10 +762,11 @@ async function judgePostTaskFollowUpWithLLM(input: PostTaskFollowUpJudgeInput): 
         ? (resolveComponentTimeout("post_task_followup", config) ?? 15_000)
         : (resolveComponentTimeout("recording_triage", config) ?? 15_000);
     const personaName = config.persona?.name ?? "agent";
+    const enrichConfig = resolvePostTaskFollowUpEnrichConfig(config, profiles);
 
     const llmMessages: ChatMessage[] = [
         { role: "system", content: getPostTaskFollowUpPrompt(personaName) },
-        { role: "user", content: await formatFollowUpJudgeInput(input, profiles[0] ?? FORMAT_ONLY_LLM_CONFIG) },
+        { role: "user", content: await formatFollowUpJudgeInput(input, enrichConfig) },
     ];
     const response = await callLLMWithFallback(llmMessages, profiles, {
         caller: "post-task-followup",
@@ -786,13 +784,13 @@ function getPostTaskFollowUpPrompt(personaName: string): string {
 
 export async function formatFollowUpJudgeInput(
     input: PostTaskFollowUpJudgeInput,
-    llmConfig: LLMConfig = FORMAT_ONLY_LLM_CONFIG,
+    enrichConfig: PostTaskFollowUpEnrichConfig = resolvePostTaskFollowUpEnrichConfig(),
 ): Promise<string> {
     const recentLines = input.recentMessages?.length
         ? await enrichFollowUpJudgeMessages(
             input.recentMessages.slice(-FOLLOW_UP_CONTEXT_MESSAGE_LIMIT),
             input,
-            llmConfig,
+            enrichConfig,
         )
         : "(无可用上下文)";
     const callbackLines = input.callbacks.length > 0
@@ -803,7 +801,7 @@ export async function formatFollowUpJudgeInput(
         ].filter(Boolean).join("\n")).join("\n")
         : "(暂无 callback)";
     const messageLines = input.messages.length
-        ? await enrichFollowUpJudgeMessages(input.messages, input, llmConfig)
+        ? await enrichFollowUpJudgeMessages(input.messages, input, enrichConfig)
         : "(无新消息)";
     return [
         `chatId: ${input.chatId}`,
@@ -823,10 +821,30 @@ export async function formatFollowUpJudgeInput(
     ].filter(Boolean).join("\n");
 }
 
+function resolvePostTaskFollowUpEnrichConfig(
+    config: AppConfig = loadConfig(),
+    judgeProfiles?: LLMConfig[],
+): PostTaskFollowUpEnrichConfig {
+    const llmConfig = judgeProfiles?.[0]
+        ?? (config.llmRouting.post_task_followup != null
+            ? resolveComponentProfiles("post_task_followup", config)[0]
+            : resolveComponentProfiles("recording_triage", config)[0]);
+    if (!llmConfig) {
+        throw new Error("No LLM profile configured for post-task follow-up formatting");
+    }
+    return {
+        llmConfig,
+        visionConfig: config.vision,
+        visionLlmConfig: config.llmRouting.vision
+            ? resolveComponentProfiles("vision", config)
+            : undefined,
+    };
+}
+
 async function enrichFollowUpJudgeMessages(
     messages: PostTaskReactionMessage[],
     input: PostTaskFollowUpJudgeInput,
-    llmConfig: LLMConfig,
+    enrichConfig: PostTaskFollowUpEnrichConfig,
 ): Promise<string> {
     const rawMessages = messages.map((message): RawMessage => ({
         id: message.messageId,
@@ -840,7 +858,9 @@ async function enrichFollowUpJudgeMessages(
         chatId: input.chatId,
     }));
     const enriched = await enrichMessages(rawMessages, {
-        llmConfig,
+        llmConfig: enrichConfig.llmConfig,
+        visionConfig: enrichConfig.visionConfig,
+        visionLlmConfig: enrichConfig.visionLlmConfig,
         chatId: input.chatId,
         stickerDescriptionLookup: input.stickerDescriptionLookup,
         enableMediaProcessing: false,

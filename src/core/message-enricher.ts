@@ -122,6 +122,11 @@ function inferStickerIdFromText(text?: string): string | undefined {
     return undefined;
 }
 
+function inferStickerFallbackLabelFromText(text?: string): string | undefined {
+    const match = /\[🎭\s*贴纸:\s*([^\]\n]+)\]/.exec(text ?? "");
+    return match?.[1]?.trim();
+}
+
 function addStringCandidate(target: string[], value: unknown): void {
     if (typeof value !== "string") return;
     const trimmed = value.trim();
@@ -304,6 +309,7 @@ function mediaTagFromType(
                     return `[🎭 贴纸${emojiTag}: ${cached.description}]`;
                 }
             }
+            emoji ||= inferStickerFallbackLabelFromText(options?.text) ?? "";
             return emoji ? `[🎭 贴纸: ${emoji}]` : "[🎭 贴纸]";
         }
         case "video": return "[📹 视频]";
@@ -326,7 +332,7 @@ function formatCachedEmojiTag(value?: string | string[]): string {
 
 function existingMediaTagPattern(mediaType?: string): RegExp | undefined {
     switch (mediaType) {
-        case "photo": return /\[📷 图片\]\s*/;
+        case "photo": return /\[📷 图片[^\]]*\]\s*/;
         case "sticker": return /\[🎭 贴纸[^\]]*\]\s*/;
         case "video": return /\[📹 视频\]\s*/;
         case "animation": return /\[(?:🎬|🎞) (?:视频|GIF)\]\s*/;
