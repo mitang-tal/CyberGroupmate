@@ -1595,18 +1595,22 @@ export class CodeActExecutor {
 
         // ═══ Layer 2: token-budget LLM compact (context-manager) ═══
         const sessionConfigs = resolveComponentProfiles("session");
-        if (sessionConfigs.length > 0) {
+        const compactConfigs = resolveComponentProfiles("compact");
+        const targetSessionConfig = sessionConfigs[0];
+        if (targetSessionConfig && compactConfigs.length > 0) {
             const chatMessages: ChatMessage[] = this.session.map(m => ({
                 role: m.role,
                 content: m.content,
             }));
-            if (shouldCompact(chatMessages, undefined, sessionConfigs[0])) {
+            if (shouldCompact(chatMessages, undefined, targetSessionConfig)) {
                 log.info("compactSession Layer 2: token 仍超预算，调用 context-manager compact", {
                     chatId: this.chatId,
                     messageCount: chatMessages.length,
                 });
                 try {
-                    const compacted = await contextManagerCompact(chatMessages, sessionConfigs);
+                    const compacted = await contextManagerCompact(chatMessages, compactConfigs, undefined, {
+                        targetLlmConfig: targetSessionConfig,
+                    });
                     this.session = compacted.map(m => ({
                         role: m.role as SessionMessage["role"],
                         content: m.content,

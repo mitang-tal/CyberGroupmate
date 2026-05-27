@@ -157,6 +157,15 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
             }
         });
 
+        it("#5c Layer 2 context-manager 使用 compact 路由生成摘要", async () => {
+            const { readFileSync } = await import("node:fs");
+            const source = readFileSync("src/subagent/code-act-executor.ts", "utf-8");
+
+            assert.match(source, /const compactConfigs = resolveComponentProfiles\("compact"\)/);
+            assert.match(source, /contextManagerCompact\(chatMessages, compactConfigs/);
+            assert.doesNotMatch(source, /contextManagerCompact\(chatMessages, sessionConfigs/);
+        });
+
         it("#6 callbackHandler 在执行后被调用", async () => {
             const executor = new CodeActExecutor("chat1");
             const callbacks: SubagentCallback[] = [];
