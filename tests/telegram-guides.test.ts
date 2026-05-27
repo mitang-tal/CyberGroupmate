@@ -266,6 +266,41 @@ describe("Telegram builtin guides", () => {
         assert.equal(notifications[0].text, "[forward:-100:123]");
     });
 
+    it("emits sticker mediaInfo even when the host ack omits it", async () => {
+        const notifications: Array<Record<string, unknown>> = [];
+        const env: CapabilityRegistryEnv = {
+            ctx: {},
+            emitOutput: () => {},
+            notifyHost: (event) => notifications.push(event as Record<string, unknown>),
+            requestInput: async () => "",
+            printToHost: () => {},
+            spawnTask: () => {},
+            killTask: () => {},
+            listTasks: () => [],
+            callHost: async () => ({
+                id: "4014",
+                text: "",
+                date: "2026-05-27T12:17:00.000Z",
+                chat: { id: "-1002450361141", type: "supergroup" },
+                sender: { id: "99", isBot: false },
+                isMention: false,
+            }),
+        };
+
+        const telegram = createTelegramClientProxy(env, new Map()) as {
+            sendSticker(chatId: string, uniqueFileId: string): Promise<any>;
+        };
+        await telegram.sendSticker("-1002450361141", "AgADdg0AAvE2QVQ");
+
+        assert.equal(notifications[0].type, "system.agent_message_sent");
+        assert.equal(notifications[0].text, "[🎭 贴纸: AgADdg0AAvE2QVQ]");
+        assert.deepEqual(notifications[0].mediaInfo, {
+            type: "sticker",
+            fileId: "AgADdg0AAvE2QVQ",
+            uniqueFileId: "AgADdg0AAvE2QVQ",
+        });
+    });
+
     it("supports guide-only story calls and local media paths", async () => {
         const nc = makeNC();
         const tempDir = join(tmpdir(), `tg-story-${randomUUID()}`);

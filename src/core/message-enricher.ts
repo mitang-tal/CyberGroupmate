@@ -105,6 +105,72 @@ export interface EnrichedResult {
     imageParts: Array<{ url: string }>;
 }
 
+// ─── 媒体字段归一化 ───
+
+const SENT_STICKER_TEXT_PATTERNS = [
+    /\[🎭\s*贴纸:\s*([A-Za-z0-9_-]{8,})\]/,
+    /\[sticker:([A-Za-z0-9._/-]{3,})\]/i,
+];
+
+function inferStickerIdFromText(text?: string): string | undefined {
+    if (!text) return undefined;
+    for (const pattern of SENT_STICKER_TEXT_PATTERNS) {
+        const match = pattern.exec(text);
+        const id = match?.[1]?.trim();
+        if (id) return id;
+    }
+    return undefined;
+}
+
+function mediaInfoToPlainObject(mediaInfo: unknown): Record<string, unknown> | undefined {
+    if (!mediaInfo) return undefined;
+    if (typeof mediaInfo === "string") {
+        try {
+            const parsed = JSON.parse(mediaInfo);
+            return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+                ? parsed as Record<string, unknown>
+                : undefined;
+        } catch {
+            return undefined;
+        }
+    }
+    return typeof mediaInfo === "object" && !Array.isArray(mediaInfo)
+        ? { ...(mediaInfo as Record<string, unknown>) }
+        : undefined;
+}
+
+export function normalizeMessageMediaFields(
+    mediaInfo: unknown,
+    text?: string,
+): { mediaType?: string; mediaInfo?: string } {
+    const info = mediaInfoToPlainObject(mediaInfo);
+    const inferredStickerId = inferStickerIdFromText(text);
+    const normalized = info ?? (inferredStickerId ? {} : undefined);
+
+    if (normalized && inferredStickerId) {
+        normalized.type ??= "sticker";
+        normalized.fileId ??= inferredStickerId;
+        normalized.uniqueFileId ??= inferredStickerId;
+    }
+
+    const mediaType = typeof normalized?.type === "string"
+        ? normalized.type
+        : inferredStickerId
+            ? "sticker"
+            : undefined;
+
+    if (!normalized) return { mediaType };
+
+    try {
+        return {
+            mediaType,
+            mediaInfo: JSON.stringify(normalized),
+        };
+    } catch {
+        return { mediaType };
+    }
+}
+
 // ─── 核心函数 ───
 
 /**

@@ -23,6 +23,11 @@ import { createLogger } from "../core/logger.js";
 import { EventEmitter } from "node:events";
 import { extractApiCalls, getDocLookupMethods } from "./api-intent-extractor.js";
 import { sanitizePromptTimestamps } from "../core/timezone.js";
+import {
+    formatMessageLine,
+    normalizeMessageMediaFields,
+    type StickerDescriptionLookup,
+} from "../core/message-enricher.js";
 
 // ─── CodeAct Progress Events ───
 
@@ -56,6 +61,8 @@ export interface SentMessageRecord {
     text: string;
     messageId?: string;
     timestamp: string;
+    mediaType?: string;
+    mediaInfo?: string;
 }
 
 /**
@@ -74,6 +81,8 @@ export class SentMessageCollector {
     /** 整个 session 累计的重复拦截次数 */
     duplicateBlockedCount = 0;
 
+    constructor(private readonly stickerDescriptionLookup?: StickerDescriptionLookup) {}
+
     /** 由 sandbox notify 事件回调调用 */
     collect(event: Record<string, unknown>): void {
         const type = String(event.type ?? "");
@@ -91,11 +100,15 @@ export class SentMessageCollector {
         }
 
         if (type !== "system.agent_message_sent") return;
+        const text = String(event.text ?? "");
+        const mediaFields = normalizeMessageMediaFields(event.mediaInfo, text);
         const record: SentMessageRecord = {
             chatId: String(event.chatId ?? ""),
-            text: String(event.text ?? ""),
+            text,
             messageId: event.messageId != null ? String(event.messageId) : undefined,
             timestamp: String(event.timestamp ?? new Date().toISOString()),
+            mediaType: mediaFields.mediaType,
+            mediaInfo: mediaFields.mediaInfo,
         };
         this.buffer.push(record);
         this.allSent.push(record);
@@ -114,12 +127,20 @@ export class SentMessageCollector {
     }
 
     /** 格式化为 observation 文本（含已发消息确认 + 重复拦截警告） */
-    static formatAsObservation(records: SentMessageRecord[], duplicateWarnings?: string[]): string {
+    formatAsObservation(records: SentMessageRecord[], duplicateWarnings?: string[]): string {
+        return SentMessageCollector.formatAsObservation(records, duplicateWarnings, this.stickerDescriptionLookup);
+    }
+
+    static formatAsObservation(
+        records: SentMessageRecord[],
+        duplicateWarnings?: string[],
+        stickerDescriptionLookup?: StickerDescriptionLookup,
+    ): string {
         const parts: string[] = [];
 
         if (records.length > 0) {
             const lines = records.map(r =>
-                `- 发送到 chat=${r.chatId}: "${r.text.length > 100 ? r.text.slice(0, 100) + '...' : r.text}"`
+                `- 发送到 chat=${r.chatId}: "${formatSentMessageText(r, stickerDescriptionLookup)}"`
             );
             parts.push(`[📤 已发送消息确认]\n${lines.join("\n")}`);
         }
@@ -130,6 +151,25 @@ export class SentMessageCollector {
 
         return parts.join("\n\n");
     }
+}
+
+function formatSentMessageText(
+    record: SentMessageRecord,
+    stickerDescriptionLookup?: StickerDescriptionLookup,
+): string {
+    const line = formatMessageLine({
+        id: record.messageId,
+        sender: "已发送",
+        text: record.text,
+        timestamp: record.timestamp,
+        mediaType: record.mediaType,
+        mediaInfo: record.mediaInfo,
+    }, {
+        includeMediaTags: true,
+        stickerDescriptionLookup,
+    });
+    const content = line.replace(/^\[[^\]]*\]\s+\[msgId:[^\]]+\]\s+已发送:\s*/, "");
+    return content.length > 160 ? `${content.slice(0, 160)}...` : content;
 }
 
 
@@ -560,7 +600,7 @@ export async function runCodeActSession(
             if (sentMessageCollector) {
                 const turnSent = sentMessageCollector.drainTurn();
                 const turnDupWarnings = sentMessageCollector.drainDuplicateWarnings();
-                const sentConfirmation = SentMessageCollector.formatAsObservation(turnSent, turnDupWarnings);
+                const sentConfirmation = sentMessageCollector.formatAsObservation(turnSent, turnDupWarnings);
                 if (sentConfirmation) {
                     textOnlyObs += `\n\n${sentConfirmation}`;
                 }
@@ -711,7 +751,7 @@ export async function runCodeActSession(
         if (sentMessageCollector) {
             const turnSent = sentMessageCollector.drainTurn();
             const turnDupWarnings = sentMessageCollector.drainDuplicateWarnings();
-            const sentConfirmation = SentMessageCollector.formatAsObservation(turnSent, turnDupWarnings);
+            const sentConfirmation = sentMessageCollector.formatAsObservation(turnSent, turnDupWarnings);
             if (sentConfirmation) {
                 observation = observation ? `${observation}\n\n${sentConfirmation}` : sentConfirmation;
             }

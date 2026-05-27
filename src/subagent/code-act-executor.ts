@@ -809,7 +809,7 @@ export class CodeActExecutor {
         // 清空 pending buffer（层 1 已经刷新了 recentMessages，此处 drain 掉残留）
         this.pendingMessages = [];
 
-        const sentCollector = new SentMessageCollector();
+        const sentCollector = new SentMessageCollector(this.memory ?? undefined);
         const sandbox = await this.sandboxPool!.acquire(this.chatId);
         const deduplicateSentMessages = currentConfig.subagent?.deduplicateSentMessages !== false;
 

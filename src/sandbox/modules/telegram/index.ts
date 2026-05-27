@@ -315,15 +315,16 @@ export function createTelegramClientProxy(
             // ── 贴纸重复发送很正常，不拦截 ──
             const sent = hydrateTelegramMessage(await callTelegramHost("telegram.sendSticker", [chatId, uniqueFileId, opts]));
             env.emitOutput(formatTelegramAck("[Telegram] sendSticker ok", sent));
+            const sentMediaInfo = typeof sent === "object" && sent
+                ? (sent as { mediaInfo?: unknown }).mediaInfo
+                : undefined;
             env.notifyHost({
                 type: "system.agent_message_sent",
                 scene: "telegram",
                 chatId: String(chatId),
                 messageId: typeof sent === "object" && sent && "id" in sent ? (sent as { id?: unknown }).id : undefined,
                 text: `[🎭 贴纸: ${uniqueFileId}]`,
-                mediaInfo: typeof sent === "object" && sent && "mediaInfo" in sent
-                    ? (sent as { mediaInfo?: unknown }).mediaInfo
-                    : { type: "sticker", fileId: uniqueFileId, uniqueFileId },
+                mediaInfo: sentMediaInfo ?? { type: "sticker", fileId: uniqueFileId, uniqueFileId },
                 timestamp: Date.now(),
             });
             return sent;
