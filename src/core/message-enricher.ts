@@ -77,6 +77,8 @@ export interface EnrichOptions {
     downloadFn?: DownloadFn;
     /** Sticker 缓存 */
     stickerCache?: StickerCache;
+    /** 只读 Sticker 描述缓存；用于不启用写缓存/vision 的轻量格式化路径 */
+    stickerDescriptionLookup?: StickerDescriptionLookup;
     /** 所属群组 chatId（fallback，当 message 自身无 chatId 时使用） */
     chatId?: string;
     /** 媒体下载管理器（可选，启用后保存文件到磁盘） */
@@ -87,6 +89,10 @@ export interface EnrichOptions {
     mediaTypes?: Array<"photo" | "sticker" | "video" | "document" | "animation" | "audio" | "other">;
     /** 是否启用 URL OpenGraph 预览（默认 true） */
     enableOgPreview?: boolean;
+    /** 是否启用媒体处理管线（默认 true；false 时只做统一格式化和媒体标签/缓存描述 fallback） */
+    enableMediaProcessing?: boolean;
+    /** 是否允许媒体处理管线下载文件（默认 true；false 时不会调用 downloadFn/mediaDownloader） */
+    enableMediaDownload?: boolean;
     /** 强制走文本描述路径，不内联图片到主 LLM（attend describe 模式使用） */
     forceTextDescriptions?: boolean;
 }
@@ -112,6 +118,11 @@ export async function enrichMessages(
     messages: RawMessage[],
     options: EnrichOptions,
 ): Promise<EnrichedResult> {
+    const stickerDescriptionLookup = options.stickerDescriptionLookup ?? options.stickerCache;
+    const mediaDownloadEnabled = options.enableMediaDownload !== false;
+    const downloadFn = mediaDownloadEnabled ? options.downloadFn : undefined;
+    const mediaDownloader = mediaDownloadEnabled ? options.mediaDownloader : undefined;
+
     // ─── 1. 从 mediaInfo 解析 MediaAttachment[] ───
     let attachments = parseMediaAttachments(messages, options.chatId);
 
@@ -122,7 +133,7 @@ export async function enrichMessages(
     }
 
     // ─── 2. Vision 批量处理 ───
-    if (attachments.length > 0) {
+    if (options.enableMediaProcessing !== false && attachments.length > 0) {
         log.info("媒体富化开始", { count: attachments.length, chatId: options.chatId });
         try {
             const processed = await processMediaBatch(
@@ -130,9 +141,9 @@ export async function enrichMessages(
                 options.visionConfig,
                 options.llmConfig,
                 Array.isArray(options.visionLlmConfig) ? options.visionLlmConfig : options.visionLlmConfig ? [options.visionLlmConfig] : undefined,
-                options.downloadFn,
+                downloadFn,
                 options.stickerCache,
-                options.mediaDownloader,
+                mediaDownloader,
                 options.imageCatalog,
                 { forceTextDescriptions: options.forceTextDescriptions },
             );
@@ -162,7 +173,7 @@ export async function enrichMessages(
     // ─── 3. 格式化消息文本 ───
     const imageParts: Array<{ url: string }> = [];
     const formattedText = formatMessages(messages, imageParts, {
-        stickerDescriptionLookup: options.stickerCache,
+        stickerDescriptionLookup,
     });
 
     return { formattedText, imageParts };

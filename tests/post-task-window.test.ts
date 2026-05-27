@@ -424,8 +424,8 @@ describe("PostTaskWindowManager", () => {
         manager.dispose();
     });
 
-    it("renders only the latest SESSION_DIGEST in follow-up judge input", () => {
-        const prompt = formatFollowUpJudgeInput({
+    it("renders only the latest SESSION_DIGEST in follow-up judge input", async () => {
+        const prompt = await formatFollowUpJudgeInput({
             chatId: "telegram:1",
             chatTitle: "测试群",
             isDirectMessage: false,
@@ -458,6 +458,52 @@ describe("PostTaskWindowManager", () => {
         assert.doesNotMatch(prompt, /本次思考过程/);
         assert.doesNotMatch(prompt, /旧摘要/);
         assert.doesNotMatch(prompt, /confidence/);
+    });
+
+    it("formats follow-up judge messages through message-enricher cache-only mode", async () => {
+        const prompt = await formatFollowUpJudgeInput({
+            chatId: "telegram:1",
+            isDirectMessage: false,
+            recentMessages: [{
+                messageId: "ctx-sticker",
+                sender: "Alice",
+                text: "[🎭 贴纸: 🫶]",
+                timestamp: "2026-05-03T12:00:00.000Z",
+                mediaType: "sticker",
+                mediaInfo: JSON.stringify({
+                    type: "sticker",
+                    fileId: "file-sticker-context",
+                    uniqueFileId: "sticker-known",
+                    emoji: "🫶",
+                }),
+            }],
+            sentMessages: [{ messageId: "sent-1", text: "hello", timestamp: "2026-05-03T12:00:01.000Z" }],
+            callbacks: [makeCallback()],
+            messages: [{
+                messageId: "msg-sticker",
+                sender: "Bob",
+                text: "[🎭 贴纸: 🫶]",
+                timestamp: "2026-05-03T12:00:02.000Z",
+                mediaType: "sticker",
+                mediaInfo: JSON.stringify({
+                    type: "sticker",
+                    fileId: "file-sticker-batch",
+                    uniqueFileId: "sticker-known",
+                    emoji: "🫶",
+                }),
+            }],
+            stickerDescriptionLookup: {
+                getStickerDescription: (uniqueFileId: string) => uniqueFileId === "sticker-known"
+                    ? { description: "比心示好的温柔贴纸", emojis: ["🫶"] }
+                    : null,
+            },
+        });
+
+        assert.match(prompt, /ctx-sticker/);
+        assert.match(prompt, /msg-sticker/);
+        assert.match(prompt, /贴纸 🫶: 比心示好的温柔贴纸/);
+        assert.doesNotMatch(prompt, /file-sticker-context/);
+        assert.doesNotMatch(prompt, /file-sticker-batch/);
     });
 
     it("does not reclassify post-task batches already judged as non-follow-up", async () => {

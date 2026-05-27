@@ -21,9 +21,14 @@ import { createLogger } from "../core/logger.js";
 import { formatTsForPrompt } from "../core/timezone.js";
 import { prefixedShortUuid } from "../core/ids.js";
 import { callLLMWithFallback, type ChatMessage } from "../core/llm.js";
-import { loadConfig, resolveComponentProfiles, resolveComponentTimeout } from "../core/config.js";
+import { loadConfig, resolveComponentProfiles, resolveComponentTimeout, type LLMConfig } from "../core/config.js";
 import { loadPromptFile } from "../core/prompt-loader.js";
-import { formatMessageLine, type StickerDescriptionLookup } from "../core/message-enricher.js";
+import {
+    enrichMessages,
+    formatMessageLine,
+    type RawMessage,
+    type StickerDescriptionLookup,
+} from "../core/message-enricher.js";
 
 const log = createLogger("post-task-window");
 
@@ -33,6 +38,15 @@ const IDLE_RECHECK_MS = 2_000;
 const MIN_MAX_WINDOW_MS = 5 * 60_000;
 const FOLLOW_UP_CONTEXT_MESSAGE_LIMIT = 20;
 const POST_TASK_FOLLOWUP_PROMPT_PATH = "subagent/post-task-followup.md";
+const FORMAT_ONLY_LLM_CONFIG: LLMConfig = {
+    provider: "openai",
+    baseUrl: "",
+    apiKey: "",
+    model: "format-only",
+    temperature: 0,
+    maxTokens: 1,
+    vision: false,
+};
 
 const DEFAULT_POST_TASK_FOLLOWUP_PROMPT = [
     "你是一个极轻量的 post-task follow-up 判定器。",
@@ -752,7 +766,7 @@ async function judgePostTaskFollowUpWithLLM(input: PostTaskFollowUpJudgeInput): 
 
     const llmMessages: ChatMessage[] = [
         { role: "system", content: getPostTaskFollowUpPrompt() },
-        { role: "user", content: formatFollowUpJudgeInput(input) },
+        { role: "user", content: await formatFollowUpJudgeInput(input, profiles[0] ?? FORMAT_ONLY_LLM_CONFIG) },
     ];
     const response = await callLLMWithFallback(llmMessages, profiles, {
         caller: "post-task-followup",
@@ -767,12 +781,16 @@ function getPostTaskFollowUpPrompt(): string {
     return (loadPromptFile(POST_TASK_FOLLOWUP_PROMPT_PATH) ?? DEFAULT_POST_TASK_FOLLOWUP_PROMPT).trim();
 }
 
-export function formatFollowUpJudgeInput(input: PostTaskFollowUpJudgeInput): string {
+export async function formatFollowUpJudgeInput(
+    input: PostTaskFollowUpJudgeInput,
+    llmConfig: LLMConfig = FORMAT_ONLY_LLM_CONFIG,
+): Promise<string> {
     const recentLines = input.recentMessages?.length
-        ? input.recentMessages
-            .slice(-FOLLOW_UP_CONTEXT_MESSAGE_LIMIT)
-            .map((message) => formatReactionMessageLine(message, input.stickerDescriptionLookup))
-            .join("\n")
+        ? await enrichFollowUpJudgeMessages(
+            input.recentMessages.slice(-FOLLOW_UP_CONTEXT_MESSAGE_LIMIT),
+            input,
+            llmConfig,
+        )
         : "(无可用上下文)";
     const sentLines = input.sentMessages.length > 0
         ? input.sentMessages.map((message) => {
@@ -787,9 +805,9 @@ export function formatFollowUpJudgeInput(input: PostTaskFollowUpJudgeInput): str
             formatCallbackDigestLine(callback.summary),
         ].filter(Boolean).join("\n")).join("\n")
         : "(暂无 callback)";
-    const messageLines = input.messages
-        .map((message) => formatReactionMessageLine(message, input.stickerDescriptionLookup))
-        .join("\n");
+    const messageLines = input.messages.length
+        ? await enrichFollowUpJudgeMessages(input.messages, input, llmConfig)
+        : "(无新消息)";
     return [
         `chatId: ${input.chatId}`,
         input.chatTitle ? `chatTitle: ${input.chatTitle}` : "",
@@ -809,6 +827,33 @@ export function formatFollowUpJudgeInput(input: PostTaskFollowUpJudgeInput): str
         "",
         "请判断这批新消息中是否出现 follow-up。triggerMessageId 必须来自上方 [msgId:...]。",
     ].filter(Boolean).join("\n");
+}
+
+async function enrichFollowUpJudgeMessages(
+    messages: PostTaskReactionMessage[],
+    input: PostTaskFollowUpJudgeInput,
+    llmConfig: LLMConfig,
+): Promise<string> {
+    const rawMessages = messages.map((message): RawMessage => ({
+        id: message.messageId,
+        sender: message.sender,
+        text: message.text,
+        timestamp: message.timestamp,
+        replyTo: message.replyToMessageId ? `msg#${message.replyToMessageId}` : undefined,
+        replyToMsgId: message.replyToMessageId,
+        mediaType: message.mediaType,
+        mediaInfo: message.mediaInfo,
+        chatId: input.chatId,
+    }));
+    const enriched = await enrichMessages(rawMessages, {
+        llmConfig,
+        chatId: input.chatId,
+        stickerDescriptionLookup: input.stickerDescriptionLookup,
+        enableMediaProcessing: false,
+        enableMediaDownload: false,
+        enableOgPreview: false,
+    });
+    return enriched.formattedText;
 }
 
 function formatCallbackDigestLine(summary?: string): string {

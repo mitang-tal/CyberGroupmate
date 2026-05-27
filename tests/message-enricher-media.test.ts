@@ -119,4 +119,41 @@ describe("message-enricher media downloads", () => {
         assert.doesNotMatch(result.formattedText, /AgADzw4AAs9qqFY/);
         assert.doesNotMatch(result.formattedText, /图片描述: \[🎭 贴纸/);
     });
+
+    it("can run in cache-only formatting mode without media downloads", async () => {
+        let downloadCalls = 0;
+        const result = await enrichMessages([
+            {
+                id: "cache-only-sticker",
+                sender: "Alice",
+                text: "[🎭 贴纸: 🫶]",
+                timestamp: "2026-05-27T03:51:00.000Z",
+                mediaType: "sticker",
+                mediaInfo: JSON.stringify({
+                    type: "sticker",
+                    fileId: "file-sticker",
+                    uniqueFileId: "sticker-known",
+                    emoji: "🫶",
+                }),
+            },
+        ], {
+            llmConfig,
+            stickerDescriptionLookup: {
+                getStickerDescription: (uniqueFileId: string) => uniqueFileId === "sticker-known"
+                    ? { description: "比心示好的温柔贴纸", emojis: ["🫶"] }
+                    : null,
+            },
+            downloadFn: async () => {
+                downloadCalls += 1;
+                return Buffer.from("should-not-download");
+            },
+            enableMediaProcessing: false,
+            enableMediaDownload: false,
+            enableOgPreview: false,
+        });
+
+        assert.equal(downloadCalls, 0);
+        assert.match(result.formattedText, /贴纸 🫶: 比心示好的温柔贴纸/);
+        assert.doesNotMatch(result.formattedText, /file-sticker/);
+    });
 });
