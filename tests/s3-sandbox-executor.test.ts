@@ -175,6 +175,10 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
 
         it("#6a direct pending messages are injected into current observation", () => {
             const executor = new CodeActExecutor("chat1");
+            const drained: Array<{ ids: string[]; source: string }> = [];
+            executor.setPendingMessageDrainHandler((messages, source) => {
+                drained.push({ ids: messages.map((message) => message.messageId), source });
+            });
 
             executor.pushPendingMessage({
                 messageId: "msg-1",
@@ -200,10 +204,15 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
             assert.match(observation ?? "", /reply to msg#sent-1 #sent-1/);
             assert.match(observation ?? "", /\[mid-turn direct attention: reply-to-agent\]/);
             assert.equal(executor.drainPendingMessages(), null);
+            assert.deepEqual(drained, [{ ids: ["msg-1", "msg-2"], source: "observation" }]);
         });
 
         it("#6b non-direct pending messages stay on the next-turn injection path", () => {
             const executor = new CodeActExecutor("chat1");
+            const drained: Array<{ ids: string[]; source: string }> = [];
+            executor.setPendingMessageDrainHandler((messages, source) => {
+                drained.push({ ids: messages.map((message) => message.messageId), source });
+            });
 
             executor.pushPendingMessage({
                 messageId: "msg-1",
@@ -219,6 +228,7 @@ describe("S3: Sandbox 多实例 + CodeActExecutor", () => {
             assert.match(nextTurn ?? "", /\[📩 新消息到达\]/);
             assert.match(nextTurn ?? "", /普通插话/);
             assert.doesNotMatch(nextTurn ?? "", /mid-turn direct attention/);
+            assert.deepEqual(drained, [{ ids: ["msg-1"], source: "turn" }]);
         });
 
         it("#6c direct pending messages stay highlighted if they miss current observation", () => {

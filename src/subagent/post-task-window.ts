@@ -23,7 +23,7 @@ import { prefixedShortUuid } from "../core/ids.js";
 import { callLLMWithFallback, type ChatMessage } from "../core/llm.js";
 import { loadConfig, resolveComponentProfiles, resolveComponentTimeout } from "../core/config.js";
 import { loadPromptFile } from "../core/prompt-loader.js";
-import { formatMessageLine } from "../core/message-enricher.js";
+import { formatMessageLine, type StickerDescriptionLookup } from "../core/message-enricher.js";
 
 const log = createLogger("post-task-window");
 
@@ -31,11 +31,12 @@ const DEFAULT_WINDOW_MS = 120_000;
 const DEFAULT_FOLLOW_UP_CHECK_INTERVAL_MS = 5_000;
 const IDLE_RECHECK_MS = 2_000;
 const MIN_MAX_WINDOW_MS = 5 * 60_000;
+const FOLLOW_UP_CONTEXT_MESSAGE_LIMIT = 20;
 const POST_TASK_FOLLOWUP_PROMPT_PATH = "subagent/post-task-followup.md";
 
 const DEFAULT_POST_TASK_FOLLOWUP_PROMPT = [
     "你是一个极轻量的 post-task follow-up 判定器。",
-    "你会看到 agent 刚发出的消息，以及之后短时间窗口内新出现的一批群聊消息。",
+    "你会看到最近 20 条上下文消息、agent 刚发出的消息，以及之后短时间窗口内新出现的一批群聊消息。",
     "判断这些新消息里是否出现了需要让 agent 像被自然追问/接话一样补一轮的 follow-up。",
     "",
     "判定为 true 的情况：",
@@ -51,7 +52,7 @@ const DEFAULT_POST_TASK_FOLLOWUP_PROMPT = [
     "- 只是在闲聊背景中提到相近词，但没有要求 agent 继续",
     "",
     "只输出严格 JSON，不要 markdown：",
-    '{ "hasFollowUp": true, "triggerMessageId": "msg-id", "reason": "一句话说明", "confidence": 0.0 }',
+    '{ "hasFollowUp": true, "triggerMessageId": "msg-id", "reason": "一句话说明" }',
 ].join("\n");
 
 interface ExecutorLike {
@@ -70,19 +71,24 @@ export interface PostTaskFollowUpJudgeInput {
     chatId: string;
     chatTitle?: string;
     isDirectMessage?: boolean;
+    recentMessages?: PostTaskReactionMessage[];
     sentMessages: PostTaskSentMessage[];
     callbacks: SubagentCallback[];
     messages: PostTaskReactionMessage[];
+    stickerDescriptionLookup?: StickerDescriptionLookup;
 }
 
 export interface PostTaskFollowUpJudgeResult {
     hasFollowUp: boolean;
     reason?: string;
-    confidence?: number;
     triggerMessageId?: string;
 }
 
 export type PostTaskFollowUpJudge = (input: PostTaskFollowUpJudgeInput) => Promise<PostTaskFollowUpJudgeResult>;
+export type PostTaskRecentMessagesProvider = (
+    chatId: string,
+    limit: number,
+) => PostTaskReactionMessage[] | Promise<PostTaskReactionMessage[]>;
 
 interface ActivePostTaskWindow {
     chatId: string;
@@ -111,6 +117,8 @@ export interface PostTaskWindowManagerOptions {
     onDirectTaskEnqueued?: (task: CodeActReplyTask) => void;
     followUpCheckIntervalMs?: number;
     followUpJudge?: PostTaskFollowUpJudge | null;
+    recentMessagesProvider?: PostTaskRecentMessagesProvider;
+    stickerDescriptionLookup?: StickerDescriptionLookup;
 }
 
 export class PostTaskWindowManager {
@@ -122,6 +130,8 @@ export class PostTaskWindowManager {
     private readonly onDirectTaskEnqueued?: (task: CodeActReplyTask) => void;
     private readonly followUpCheckIntervalMs: number;
     private readonly followUpJudge: PostTaskFollowUpJudge | null;
+    private readonly recentMessagesProvider?: PostTaskRecentMessagesProvider;
+    private readonly stickerDescriptionLookup?: StickerDescriptionLookup;
     private readonly windows = new Map<string, ActivePostTaskWindow>();
 
     constructor(options: PostTaskWindowManagerOptions) {
@@ -133,6 +143,8 @@ export class PostTaskWindowManager {
         this.onDirectTaskEnqueued = options.onDirectTaskEnqueued;
         this.followUpCheckIntervalMs = options.followUpCheckIntervalMs ?? DEFAULT_FOLLOW_UP_CHECK_INTERVAL_MS;
         this.followUpJudge = options.followUpJudge === undefined ? judgePostTaskFollowUpWithLLM : options.followUpJudge;
+        this.recentMessagesProvider = options.recentMessagesProvider;
+        this.stickerDescriptionLookup = options.stickerDescriptionLookup;
     }
 
     handleSentMessage(chatId: string, event: NotificationEvent): void {
@@ -269,6 +281,21 @@ export class PostTaskWindowManager {
         });
     }
 
+    markMessagesInjected(chatId: string, messageIds: string[], source: string): void {
+        const window = this.windows.get(chatId);
+        if (!window || messageIds.length === 0) return;
+        for (const rawId of messageIds) {
+            const messageId = String(rawId);
+            window.deliveredMessageIds.add(messageId);
+            window.triagedMessageIds.add(messageId);
+        }
+        log.debug("post-task window messages marked as already injected", {
+            chatId,
+            source,
+            messageIds,
+        });
+    }
+
     dispose(): void {
         for (const window of this.windows.values()) {
             if (window.timer) clearTimeout(window.timer);
@@ -300,7 +327,6 @@ export class PostTaskWindowManager {
             decisionReason: string;
             contentDirection: string;
             classifierReason?: string;
-            confidence?: number;
             logKind: "direct" | "follow-up";
         },
     ): boolean {
@@ -339,7 +365,7 @@ export class PostTaskWindowManager {
             decisions: [{
                 action: "REPLY",
                 reason: options.decisionReason,
-                confidence: options.confidence ?? 1,
+                confidence: 1,
                 contentDirection: options.contentDirection,
                 targetMessageIds,
                 toneGuidance: contextSnapshot.toneGuidance,
@@ -427,13 +453,16 @@ export class PostTaskWindowManager {
 
         window.followUpCheckInFlight = true;
         try {
+            const recentMessages = await this.loadRecentContextMessages(chatId, candidates);
             const decision = await this.followUpJudge({
                 chatId,
                 chatTitle: window.chatTitle ?? window.callbacks[0]?.chatTitle,
                 isDirectMessage: window.isDirectMessage ?? window.callbacks[0]?.isDirectMessage,
+                recentMessages,
                 sentMessages: window.sentMessages,
                 callbacks: window.callbacks.slice(-3),
                 messages: candidates,
+                stickerDescriptionLookup: this.stickerDescriptionLookup,
             });
             if (this.windows.get(chatId) !== window) return;
 
@@ -446,7 +475,6 @@ export class PostTaskWindowManager {
                     chatId,
                     messages: candidates.length,
                     reason: decision.reason,
-                    confidence: decision.confidence,
                 });
                 return;
             }
@@ -458,7 +486,6 @@ export class PostTaskWindowManager {
                 decisionReason: `Post-task follow-up classifier: ${decision.reason ?? "follow-up detected"}`,
                 contentDirection: "Post-task window 内出现了可能针对你刚才发言的 follow-up。请像被自然接住话题一样判断是否需要补一轮。",
                 classifierReason: decision.reason,
-                confidence: decision.confidence,
                 logKind: "follow-up",
             });
         } catch (err) {
@@ -474,6 +501,29 @@ export class PostTaskWindowManager {
             if (this.windows.get(chatId) === window && hasUntriagedMessages(window)) {
                 this.scheduleFollowUpCheck(window);
             }
+        }
+    }
+
+    private async loadRecentContextMessages(
+        chatId: string,
+        excludedMessages: PostTaskReactionMessage[],
+    ): Promise<PostTaskReactionMessage[]> {
+        if (!this.recentMessagesProvider) return [];
+        const excludedIds = new Set(excludedMessages.map((message) => message.messageId));
+        try {
+            const messages = await this.recentMessagesProvider(
+                chatId,
+                FOLLOW_UP_CONTEXT_MESSAGE_LIMIT + excludedIds.size,
+            );
+            return messages
+                .filter((message) => !excludedIds.has(message.messageId))
+                .slice(-FOLLOW_UP_CONTEXT_MESSAGE_LIMIT);
+        } catch (err) {
+            log.warn("post-task follow-up context load failed", {
+                chatId,
+                error: err instanceof Error ? err.message : String(err),
+            });
+            return [];
         }
     }
 
@@ -674,7 +724,10 @@ function formatPostTaskContinuationPrompt(
     ].join("\n");
 }
 
-function formatReactionMessageLine(message: PostTaskReactionMessage): string {
+function formatReactionMessageLine(
+    message: PostTaskReactionMessage,
+    stickerDescriptionLookup?: StickerDescriptionLookup,
+): string {
     return formatMessageLine({
         id: message.messageId,
         sender: message.sender,
@@ -684,7 +737,7 @@ function formatReactionMessageLine(message: PostTaskReactionMessage): string {
         replyToMsgId: message.replyToMessageId,
         mediaType: message.mediaType,
         mediaInfo: message.mediaInfo,
-    }, { includeMediaTags: true });
+    }, { includeMediaTags: true, stickerDescriptionLookup });
 }
 
 async function judgePostTaskFollowUpWithLLM(input: PostTaskFollowUpJudgeInput): Promise<PostTaskFollowUpJudgeResult> {
@@ -714,7 +767,13 @@ function getPostTaskFollowUpPrompt(): string {
     return (loadPromptFile(POST_TASK_FOLLOWUP_PROMPT_PATH) ?? DEFAULT_POST_TASK_FOLLOWUP_PROMPT).trim();
 }
 
-function formatFollowUpJudgeInput(input: PostTaskFollowUpJudgeInput): string {
+export function formatFollowUpJudgeInput(input: PostTaskFollowUpJudgeInput): string {
+    const recentLines = input.recentMessages?.length
+        ? input.recentMessages
+            .slice(-FOLLOW_UP_CONTEXT_MESSAGE_LIMIT)
+            .map((message) => formatReactionMessageLine(message, input.stickerDescriptionLookup))
+            .join("\n")
+        : "(无可用上下文)";
     const sentLines = input.sentMessages.length > 0
         ? input.sentMessages.map((message) => {
             const id = message.messageId ? ` [msgId:${message.messageId}]` : "";
@@ -725,14 +784,19 @@ function formatFollowUpJudgeInput(input: PostTaskFollowUpJudgeInput): string {
         ? input.callbacks.map((callback) => [
             `- taskId=${callback.taskId}, status=${callback.status}`,
             callback.contentDirection ? `  contentDirection=${callback.contentDirection}` : "",
-            callback.summary ? `  summary=${callback.summary}` : "",
+            formatCallbackDigestLine(callback.summary),
         ].filter(Boolean).join("\n")).join("\n")
         : "(暂无 callback)";
-    const messageLines = input.messages.map(formatReactionMessageLine).join("\n");
+    const messageLines = input.messages
+        .map((message) => formatReactionMessageLine(message, input.stickerDescriptionLookup))
+        .join("\n");
     return [
         `chatId: ${input.chatId}`,
         input.chatTitle ? `chatTitle: ${input.chatTitle}` : "",
         `isDirectMessage: ${input.isDirectMessage ? "true" : "false"}`,
+        "",
+        "## 最近 20 条上下文消息",
+        recentLines,
         "",
         "## Agent 刚发出的消息",
         sentLines,
@@ -745,6 +809,24 @@ function formatFollowUpJudgeInput(input: PostTaskFollowUpJudgeInput): string {
         "",
         "请判断这批新消息中是否出现 follow-up。triggerMessageId 必须来自上方 [msgId:...]。",
     ].filter(Boolean).join("\n");
+}
+
+function formatCallbackDigestLine(summary?: string): string {
+    const digest = extractLatestSessionDigest(summary);
+    return digest ? `  sessionDigest=${digest}` : "";
+}
+
+function extractLatestSessionDigest(summary?: string): string | undefined {
+    const trimmed = summary?.trim();
+    if (!trimmed) return undefined;
+    const re = /\[SESSION_DIGEST\]([\s\S]*?)(?:\[\/SESSION_DIGEST\]|$)/g;
+    let latest: string | undefined;
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(trimmed)) !== null) {
+        const value = match[1]?.trim();
+        if (value) latest = value;
+    }
+    return latest;
 }
 
 function parseFollowUpJudgeResult(raw: string): PostTaskFollowUpJudgeResult {
@@ -762,15 +844,11 @@ function parseFollowUpJudgeResult(raw: string): PostTaskFollowUpJudgeResult {
     }
 
     const hasFollowUpRaw = parsed.hasFollowUp ?? parsed.has_follow_up ?? parsed.followUp ?? parsed.follow_up;
-    const confidenceRaw = parsed.confidence;
     return {
         hasFollowUp: hasFollowUpRaw === true || hasFollowUpRaw === "true",
         reason: parsed.reason != null ? String(parsed.reason) : undefined,
         triggerMessageId: (parsed.triggerMessageId ?? parsed.trigger_message_id) != null
             ? String(parsed.triggerMessageId ?? parsed.trigger_message_id)
-            : undefined,
-        confidence: typeof confidenceRaw === "number"
-            ? Math.max(0, Math.min(1, confidenceRaw))
             : undefined,
     };
 }

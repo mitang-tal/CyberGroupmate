@@ -566,6 +566,16 @@ async function main(): Promise<void> {
                 markDirectSubagentDeliveryAsRead(task.chatId, "post-task-direct");
             }
         },
+        recentMessagesProvider: (chatId, limit) => memory.getRecentMessages(chatId, limit).reverse().map((message) => ({
+            messageId: String(message.messageId),
+            sender: String(message.displayName || message.userId || "?"),
+            text: String(message.text ?? ""),
+            timestamp: String(message.timestamp ?? ""),
+            replyToMessageId: message.replyToMessageId ? String(message.replyToMessageId) : undefined,
+            mediaType: message.mediaType ?? undefined,
+            mediaInfo: message.mediaInfo ?? undefined,
+        })),
+        stickerDescriptionLookup: memory,
     });
 
     log.info("Subagent 组件初始化完成", {
@@ -983,6 +993,13 @@ async function main(): Promise<void> {
                         log.debug("post-session flush failed", { chatId: cb.chatId, error: String(error) });
                     }
                 }, 60_000);
+            });
+            realExecutor.setPendingMessageDrainHandler((messages, source) => {
+                postTaskWindows.markMessagesInjected(
+                    chatId,
+                    messages.map((message) => message.messageId),
+                    `mid-turn-${source}`,
+                );
             });
             realExecutor.setDependencies(
                 sandboxPool,

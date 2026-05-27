@@ -193,6 +193,8 @@ function formatContinuationPromptFromEnrichedMessages(
     ].join("\n");
 }
 
+type PendingMessageDrainSource = "observation" | "turn";
+
 // ─── API 概览缓存 ───
 const _apiBriefCache = new Map<string, string>();
 
@@ -428,6 +430,8 @@ export class CodeActExecutor {
 
     /** Callback handler（由 GroupSubagent 或 S8 集成时注入） */
     private callbackHandler: ((cb: SubagentCallback) => void) | null = null;
+    /** pending 消息实际注入 prompt 后的通知，用于和 post-task window 跨路径去重 */
+    private pendingMessageDrainHandler: ((messages: PostTaskReactionMessage[], source: PendingMessageDrainSource) => void) | null = null;
 
     /** 层 2: 消息前送缓冲区 — NC hook 在 session 执行期间推入新消息 */
     private pendingMessages: PostTaskReactionMessage[] = [];
@@ -450,6 +454,12 @@ export class CodeActExecutor {
      */
     setCallbackHandler(handler: (cb: SubagentCallback) => void): void {
         this.callbackHandler = handler;
+    }
+
+    setPendingMessageDrainHandler(
+        handler: (messages: PostTaskReactionMessage[], source: PendingMessageDrainSource) => void,
+    ): void {
+        this.pendingMessageDrainHandler = handler;
     }
 
     /**
@@ -1175,6 +1185,7 @@ export class CodeActExecutor {
             count: drained.length,
             directReason,
         });
+        this.notifyPendingMessagesDrained(drained, "observation");
         return formatMidTurnDirectAttentionPrompt(drained, directReason, this.memory ?? undefined);
     }
 
@@ -1192,10 +1203,27 @@ export class CodeActExecutor {
             count: drained.length,
             hasDirectAttention: !!trigger,
         });
+        this.notifyPendingMessagesDrained(drained, "turn");
         if (trigger) {
             return formatMidTurnDirectAttentionPrompt(drained, trigger.directReason ?? "direct-address", this.memory ?? undefined);
         }
         return formatPendingMessages(drained, this.memory ?? undefined);
+    }
+
+    private notifyPendingMessagesDrained(
+        messages: PostTaskReactionMessage[],
+        source: PendingMessageDrainSource,
+    ): void {
+        if (!this.pendingMessageDrainHandler || messages.length === 0) return;
+        try {
+            this.pendingMessageDrainHandler(messages, source);
+        } catch (err) {
+            log.debug("pending message drain handler failed", {
+                chatId: this.chatId,
+                source,
+                error: String(err),
+            });
+        }
     }
 
     /**
