@@ -18,11 +18,11 @@ import type {
     SubagentPostTaskFollowUpCallback,
 } from "./types.js";
 import { createLogger } from "../core/logger.js";
-import { formatTsForPrompt } from "../core/timezone.js";
 import { prefixedShortUuid } from "../core/ids.js";
 import { callLLMWithFallback, type ChatMessage } from "../core/llm.js";
 import { loadConfig, resolveComponentProfiles, resolveComponentTimeout, type LLMConfig } from "../core/config.js";
 import { loadPromptFile } from "../core/prompt-loader.js";
+import { renderTemplate } from "../context-engine/template-engine.js";
 import {
     enrichMessages,
     formatMessageLine,
@@ -50,7 +50,8 @@ const FORMAT_ONLY_LLM_CONFIG: LLMConfig = {
 
 const DEFAULT_POST_TASK_FOLLOWUP_PROMPT = [
     "你是一个极轻量的 post-task follow-up 判定器。",
-    "你会看到最近 20 条上下文消息、agent 刚发出的消息，以及之后短时间窗口内新出现的一批群聊消息。",
+    "当前 agent 的名字是「{{personaName}}」。",
+    "你会看到最近 20 条上下文消息，以及之后短时间窗口内新出现的一批群聊消息。",
     "判断这些新消息里是否出现了需要让 agent 像被自然追问/接话一样补一轮的 follow-up。",
     "",
     "判定为 true 的情况：",
@@ -763,9 +764,10 @@ async function judgePostTaskFollowUpWithLLM(input: PostTaskFollowUpJudgeInput): 
     const timeoutMs = hasDedicatedRoute
         ? (resolveComponentTimeout("post_task_followup", config) ?? 15_000)
         : (resolveComponentTimeout("recording_triage", config) ?? 15_000);
+    const personaName = config.persona?.name ?? "agent";
 
     const llmMessages: ChatMessage[] = [
-        { role: "system", content: getPostTaskFollowUpPrompt() },
+        { role: "system", content: getPostTaskFollowUpPrompt(personaName) },
         { role: "user", content: await formatFollowUpJudgeInput(input, profiles[0] ?? FORMAT_ONLY_LLM_CONFIG) },
     ];
     const response = await callLLMWithFallback(llmMessages, profiles, {
@@ -777,8 +779,9 @@ async function judgePostTaskFollowUpWithLLM(input: PostTaskFollowUpJudgeInput): 
     return parseFollowUpJudgeResult(response.content);
 }
 
-function getPostTaskFollowUpPrompt(): string {
-    return (loadPromptFile(POST_TASK_FOLLOWUP_PROMPT_PATH) ?? DEFAULT_POST_TASK_FOLLOWUP_PROMPT).trim();
+function getPostTaskFollowUpPrompt(personaName: string): string {
+    const template = loadPromptFile(POST_TASK_FOLLOWUP_PROMPT_PATH) ?? DEFAULT_POST_TASK_FOLLOWUP_PROMPT;
+    return renderTemplate(template, { personaName }).trim();
 }
 
 export async function formatFollowUpJudgeInput(
@@ -792,12 +795,6 @@ export async function formatFollowUpJudgeInput(
             llmConfig,
         )
         : "(无可用上下文)";
-    const sentLines = input.sentMessages.length > 0
-        ? input.sentMessages.map((message) => {
-            const id = message.messageId ? ` [msgId:${message.messageId}]` : "";
-            return `- [${formatTsForPrompt(message.timestamp)}]${id}: ${message.text || "[non-text message]"}`;
-        }).join("\n")
-        : "(暂无已知发送内容；可根据 callback 摘要和新消息保守判断)";
     const callbackLines = input.callbacks.length > 0
         ? input.callbacks.map((callback) => [
             `- taskId=${callback.taskId}, status=${callback.status}`,
@@ -815,9 +812,6 @@ export async function formatFollowUpJudgeInput(
         "",
         "## 最近 20 条上下文消息",
         recentLines,
-        "",
-        "## Agent 刚发出的消息",
-        sentLines,
         "",
         "## 最近 callback 摘要",
         callbackLines,

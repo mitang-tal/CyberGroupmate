@@ -270,6 +270,7 @@ export function createTelegramClientProxy(
                 chatId: String(chatId),
                 messageId: typeof sent === "object" && sent && "id" in sent ? (sent as { id?: unknown }).id : undefined,
                 text: opts?.caption ?? "[media]",
+                mediaInfo: typeof sent === "object" && sent && "mediaInfo" in sent ? (sent as { mediaInfo?: unknown }).mediaInfo : undefined,
                 timestamp: Date.now(),
             });
             return sent;
@@ -305,6 +306,7 @@ export function createTelegramClientProxy(
                 messageId: typeof sent === "object" && sent && "id" in sent ? (sent as { id?: unknown }).id : undefined,
                 text: opts?.caption ?? `[file:${filePath}]`,
                 replyToMessageId: opts?.replyTo,
+                mediaInfo: typeof sent === "object" && sent && "mediaInfo" in sent ? (sent as { mediaInfo?: unknown }).mediaInfo : undefined,
                 timestamp: Date.now(),
             });
             return sent;
@@ -319,6 +321,9 @@ export function createTelegramClientProxy(
                 chatId: String(chatId),
                 messageId: typeof sent === "object" && sent && "id" in sent ? (sent as { id?: unknown }).id : undefined,
                 text: `[🎭 贴纸: ${uniqueFileId}]`,
+                mediaInfo: typeof sent === "object" && sent && "mediaInfo" in sent
+                    ? (sent as { mediaInfo?: unknown }).mediaInfo
+                    : { type: "sticker", fileId: uniqueFileId, uniqueFileId },
                 timestamp: Date.now(),
             });
             return sent;

@@ -454,6 +454,8 @@ describe("PostTaskWindowManager", () => {
         });
 
         assert.match(prompt, /## 最近 20 条上下文消息/);
+        assert.doesNotMatch(prompt, /## Agent 刚发出的消息/);
+        assert.doesNotMatch(prompt, /一个贴纸/);
         assert.match(prompt, /sessionDigest=最新摘要：不需要继续参与/);
         assert.doesNotMatch(prompt, /本次思考过程/);
         assert.doesNotMatch(prompt, /旧摘要/);

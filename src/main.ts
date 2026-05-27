@@ -609,6 +609,7 @@ async function main(): Promise<void> {
                 : new Date(typeof event.timestamp === "number" ? event.timestamp : Date.now()).toISOString();
             const agentName = appConfig.persona?.name ?? "agent";
             const text = String(event.text ?? "");
+            const mediaInfo = (event as any).mediaInfo;
             try {
                 memory.storeMessageBatch([{
                     messageId,
@@ -618,6 +619,8 @@ async function main(): Promise<void> {
                     text,
                     replyToMessageId: event.replyToMessageId ? String(event.replyToMessageId) : undefined,
                     timestamp,
+                    mediaType: mediaInfo?.type ?? undefined,
+                    mediaInfo: mediaInfo ? JSON.stringify(mediaInfo) : undefined,
                 }]);
                 memory.storeInteraction({
                     chatId: compositeChatId,
@@ -645,6 +648,8 @@ async function main(): Promise<void> {
                     text,
                     timestamp: Date.now(),
                     replyToMessageId: event.replyToMessageId ? String(event.replyToMessageId) : undefined,
+                    mediaType: mediaInfo?.type ?? undefined,
+                    mediaInfo: mediaInfo ? JSON.stringify(mediaInfo) : undefined,
                 };
                 agentSub.recordingPipeline.onMessage(agentMsg);
             }

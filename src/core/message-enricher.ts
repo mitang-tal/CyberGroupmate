@@ -497,7 +497,12 @@ export function formatMessages(
                 stickerDescriptionLookup: options?.stickerDescriptionLookup,
             });
             if (tag && !textPart.includes(tag)) {
-                textPart = textPart ? `${textPart} ${tag}` : tag;
+                const existingPattern = existingMediaTagPattern(m.mediaType);
+                if (existingPattern?.test(textPart)) {
+                    textPart = textPart.replace(existingPattern, `${tag} `).trim();
+                } else {
+                    textPart = textPart ? `${textPart} ${tag}` : tag;
+                }
             }
         }
 

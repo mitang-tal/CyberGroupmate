@@ -126,7 +126,7 @@ describe("message-enricher media downloads", () => {
             {
                 id: "cache-only-sticker",
                 sender: "Alice",
-                text: "[🎭 贴纸: 🫶]",
+                text: "[🎭 贴纸: sticker-known]",
                 timestamp: "2026-05-27T03:51:00.000Z",
                 mediaType: "sticker",
                 mediaInfo: JSON.stringify({
@@ -154,6 +154,7 @@ describe("message-enricher media downloads", () => {
 
         assert.equal(downloadCalls, 0);
         assert.match(result.formattedText, /贴纸 🫶: 比心示好的温柔贴纸/);
+        assert.doesNotMatch(result.formattedText, /贴纸: sticker-known/);
         assert.doesNotMatch(result.formattedText, /file-sticker/);
     });
 });
