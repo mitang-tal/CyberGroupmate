@@ -217,6 +217,90 @@ describe("TelegramAdapter", () => {
         nc.dispose();
     });
 
+    it("auto-downloads incoming media from the native media object", async () => {
+        const nc = makeNC();
+        const events: any[] = [];
+        nc.onPush(event => events.push(event));
+        let newMessageHandler: ((msg: unknown) => void | Promise<void>) | null = null;
+        const downloadLocations: unknown[] = [];
+        let savedOptions: Record<string, unknown> | undefined;
+        const uniqueFileId = `photo-${randomUUID()}`;
+
+        const media = {
+            type: "photo",
+            fileId: "photo-file-id",
+            uniqueFileId,
+            mimeType: "image/jpeg",
+            width: 1495,
+            height: 768,
+            fileSize: 79662,
+        };
+        const fakeClient = {
+            async start() {
+                return { id: 99, displayName: "Userbot", isBot: false };
+            },
+            onNewMessage: {
+                add(handler: (msg: unknown) => void | Promise<void>) {
+                    newMessageHandler = handler;
+                },
+                remove() {
+                    newMessageHandler = null;
+                },
+            },
+            async downloadAsBuffer(location: unknown) {
+                downloadLocations.push(location);
+                if (typeof location === "string") {
+                    throw new Error("download should use native media object");
+                }
+                return new Uint8Array([1, 2, 3]);
+            },
+            async destroy() {},
+        };
+        const mediaDownloader = {
+            getExistingPath() {
+                return null;
+            },
+            isWithinSizeLimit() {
+                return true;
+            },
+            saveMedia(buffer: Buffer, options: Record<string, unknown>) {
+                assert.deepEqual([...buffer], [1, 2, 3]);
+                savedOptions = options;
+                return { path: "/tmp/photo-unique-id.jpg" };
+            },
+        };
+
+        const adapter = new TelegramAdapter(
+            makeConfig(),
+            nc,
+            async () => "",
+            () => {},
+            async () => fakeClient,
+            mediaDownloader as any,
+        );
+
+        await adapter.start();
+        assert.ok(newMessageHandler);
+
+        await newMessageHandler!({
+            id: 4045,
+            text: "不对哦",
+            date: new Date("2026-05-27T13:22:23.000Z"),
+            isMention: true,
+            chat: { id: -1002450361141, title: "LLM Meta", type: "supergroup" },
+            sender: { id: 682932098, displayName: "莫思奇多", isBot: false },
+            media,
+        });
+
+        assert.equal(downloadLocations[0], media);
+        assert.equal(savedOptions?.uniqueFileId, uniqueFileId);
+        assert.equal(events[0].mediaInfo?.downloadStatus, "downloaded");
+        assert.equal(events[0].mediaInfo?.filePath, "/tmp/photo-unique-id.jpg");
+
+        await adapter.stop();
+        nc.dispose();
+    });
+
     it("should coerce numeric string peer ids before host calls", async () => {
         const nc = makeNC();
         const sendTextCalls: unknown[] = [];

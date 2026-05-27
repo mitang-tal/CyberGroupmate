@@ -157,4 +157,43 @@ describe("message-enricher media downloads", () => {
         assert.doesNotMatch(result.formattedText, /贴纸: sticker-known/);
         assert.doesNotMatch(result.formattedText, /file-sticker/);
     });
+
+    it("uses the sent sticker id for cache lookup when Telegram returns a different uniqueFileId", async () => {
+        let downloadCalls = 0;
+        const result = await enrichMessages([
+            {
+                id: "4059",
+                sender: "Miu",
+                text: "[🎭 贴纸: AgADdg0AAvE2QVQ]",
+                timestamp: "2026-05-27T13:24:04.000Z",
+                mediaType: "sticker",
+                mediaInfo: JSON.stringify({
+                    type: "sticker",
+                    fileId: "CAACAgUAAyEGAASSDYs1AAIP22oW8HOv8YPnYqAcp_PDn3hSYL3sAALiHQACtJK5VIO-anIsyB9fOgQ",
+                    uniqueFileId: "AgAD4h0AArSSuVQ",
+                    fileName: "telegram_-1002984884196_550880_AgADdg0AAvE2QVQ.webp",
+                    mimeType: "image/webp",
+                }),
+            },
+        ], {
+            llmConfig,
+            visionConfig: { stickerMode: "vision_cache" },
+            stickerCache: {
+                getStickerDescription: (uniqueFileId: string) => uniqueFileId === "AgADdg0AAvE2QVQ"
+                    ? { description: "惊讶、意外，带点紧张的小表情", emojis: ["😮", "😳"] }
+                    : null,
+                setStickerDescription: () => {},
+            },
+            downloadFn: async () => {
+                downloadCalls += 1;
+                return Buffer.from("should-not-download");
+            },
+            enableOgPreview: false,
+        });
+
+        assert.equal(downloadCalls, 0);
+        assert.match(result.formattedText, /贴纸 😮 😳: 惊讶、意外，带点紧张的小表情/);
+        assert.doesNotMatch(result.formattedText, /AgADdg0AAvE2QVQ/);
+        assert.doesNotMatch(result.formattedText, /AgAD4h0AArSSuVQ/);
+    });
 });

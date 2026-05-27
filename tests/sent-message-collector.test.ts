@@ -16,6 +16,12 @@ describe("SentMessageCollector", () => {
             chatId: "-1002450361141",
             messageId: 4014,
             text: "[🎭 贴纸: AgADdg0AAvE2QVQ]",
+            mediaInfo: {
+                type: "sticker",
+                fileId: "CAACAgUAAyEGAASSDYs1AAIP22oW8HOv8YPnYqAcp_PDn3hSYL3sAALiHQACtJK5VIO-anIsyB9fOgQ",
+                uniqueFileId: "AgAD4h0AArSSuVQ",
+                fileName: "telegram_-1002984884196_550880_AgADdg0AAvE2QVQ.webp",
+            },
             timestamp: "2026-05-27T12:17:00.000Z",
         });
 

@@ -323,10 +323,6 @@ export class TelegramAdapter implements PlatformAdapter {
                 return;
             }
 
-            if (normalized.mediaInfo && normalized.messageId) {
-                await this.downloadIncomingMedia(normalized.mediaInfo, normalized.chatId, normalized.messageId);
-            }
-
             log.debug("接收 Telegram 消息", {
                 messageId: normalized.messageId,
                 chatId: normalized.chatId,
@@ -693,7 +689,8 @@ export class TelegramAdapter implements PlatformAdapter {
                 const fileIdOrMedia = args[0];
                 if (!fileIdOrMedia) throw new Error("downloadMedia: fileId is required");
                 const uniqueFileId = typeof args[3] === "string" ? args[3] : undefined;
-                const buffer = await this.downloadMediaBuffer(fileIdOrMedia, args[1], args[2], uniqueFileId);
+                const normalized = this.normalizeDownloadMediaInput(fileIdOrMedia, uniqueFileId);
+                const buffer = await this.downloadMediaBuffer(normalized.location, args[1], args[2], normalized.uniqueFileId);
                 return { buffer: buffer.toString("base64"), size: buffer.length };
             }
             case "telegram.sendSticker": {
@@ -2237,11 +2234,14 @@ export class TelegramAdapter implements PlatformAdapter {
                 const msg = messages?.[0];
                 if (!msg) throw new Error("refetch 返回空消息");
 
+                const freshMedia = msg?.media;
                 const freshFileId = this.extractFileIdFromMessage(msg);
-                if (!freshFileId) throw new Error("refetch 消息中未找到 fileId");
+                if (!freshMedia && !freshFileId) throw new Error("refetch 消息中未找到媒体");
 
-                log.info("downloadMedia: refetch 成功，重试下载", { freshFileId: freshFileId.slice(0, 30) + "..." });
-                const uint8 = await this.client.downloadAsBuffer(freshFileId);
+                log.info("downloadMedia: refetch 成功，重试下载", {
+                    freshFileId: freshFileId ? freshFileId.slice(0, 30) + "..." : "media-object",
+                });
+                const uint8 = await this.client.downloadAsBuffer(this.hydrateMtcuteArg(freshMedia ?? freshFileId));
                 const buffer = Buffer.from(uint8);
                 if (uniqueFileId) this.mediaCache.set(uniqueFileId, buffer);
                 return buffer;
@@ -2256,7 +2256,52 @@ export class TelegramAdapter implements PlatformAdapter {
         }
     }
 
-    private async downloadIncomingMedia(mediaInfo: MediaInfo, chatId: string, messageId: string): Promise<void> {
+    private normalizeDownloadMediaInput(
+        fileIdOrMedia: unknown,
+        uniqueFileId?: string,
+    ): { location: unknown; uniqueFileId?: string } {
+        if (!fileIdOrMedia || typeof fileIdOrMedia !== "object" || Array.isArray(fileIdOrMedia)) {
+            return { location: fileIdOrMedia, uniqueFileId };
+        }
+        if (fileIdOrMedia instanceof Date || Buffer.isBuffer(fileIdOrMedia) || fileIdOrMedia instanceof Uint8Array || Long.isLong(fileIdOrMedia)) {
+            return { location: fileIdOrMedia, uniqueFileId };
+        }
+
+        const raw = fileIdOrMedia as Record<string, unknown>;
+        if (typeof raw[MTCUTE_OBJECT_REF_KEY] === "string" || typeof raw._ === "string") {
+            return { location: fileIdOrMedia, uniqueFileId };
+        }
+
+        const fileId = raw.fileId;
+        if (typeof fileId !== "string" || !fileId.trim()) {
+            return { location: fileIdOrMedia, uniqueFileId };
+        }
+
+        const looksLikeMediaInfo =
+            typeof raw.type === "string"
+            || "uniqueFileId" in raw
+            || "downloadStatus" in raw
+            || "mimeType" in raw
+            || "fileName" in raw
+            || "fileSize" in raw;
+        if (!looksLikeMediaInfo) {
+            return { location: fileIdOrMedia, uniqueFileId };
+        }
+
+        const mediaUniqueFileId = typeof raw.uniqueFileId === "string" && raw.uniqueFileId.trim()
+            ? raw.uniqueFileId.trim()
+            : undefined;
+        log.warn("downloadMedia: received mediaInfo object, using mediaInfo.fileId", {
+            type: typeof raw.type === "string" ? raw.type : undefined,
+            uniqueFileId: uniqueFileId ?? mediaUniqueFileId,
+        });
+        return {
+            location: fileId.trim(),
+            uniqueFileId: uniqueFileId ?? mediaUniqueFileId,
+        };
+    }
+
+    private async downloadIncomingMedia(mediaInfo: MediaInfo, chatId: string, messageId: string, mediaSource?: unknown): Promise<void> {
         if (!this.mediaDownloader || !mediaInfo.fileId) return;
 
         const uniqueFileId = mediaInfo.uniqueFileId ?? mediaInfo.fileId;
@@ -2274,7 +2319,7 @@ export class TelegramAdapter implements PlatformAdapter {
         }
 
         try {
-            const buffer = await this.downloadMediaBuffer(mediaInfo.fileId, chatId, messageId, uniqueFileId);
+            const buffer = await this.downloadMediaBuffer(mediaSource ?? mediaInfo.fileId, chatId, messageId, uniqueFileId);
             const saved = this.mediaDownloader.saveMedia(buffer, {
                 chatId,
                 messageId,
@@ -2316,6 +2361,9 @@ export class TelegramAdapter implements PlatformAdapter {
 
         // ── 媒体元数据提取 ──
         const mediaInfo = plain.mediaInfo;
+        if (mediaInfo && plain.id) {
+            await this.downloadIncomingMedia(mediaInfo, chatId, plain.id, plain.media);
+        }
 
         // 对纯 media 消息生成占位文本，确保 text 非空
         let text = plain.text ?? "";

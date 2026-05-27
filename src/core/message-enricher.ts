@@ -122,6 +122,32 @@ function inferStickerIdFromText(text?: string): string | undefined {
     return undefined;
 }
 
+function addStringCandidate(target: string[], value: unknown): void {
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    if (trimmed && !target.includes(trimmed)) target.push(trimmed);
+}
+
+function inferStickerIdFromFileName(fileName?: string): string | undefined {
+    if (!fileName) return undefined;
+    const base = fileName.split(/[\\/]/).pop() ?? fileName;
+    const withoutExt = base.replace(/\.[^.]+$/, "");
+    const match = /(?:^|_)(AgAD[A-Za-z0-9_-]{6,})$/.exec(withoutExt);
+    return match?.[1];
+}
+
+function stickerLookupCandidates(info?: Record<string, unknown>, text?: string): string[] {
+    const candidates: string[] = [];
+    addStringCandidate(candidates, inferStickerIdFromText(text));
+    addStringCandidate(candidates, info?.sendableFileId);
+    addStringCandidate(candidates, info?.stickerId);
+    addStringCandidate(candidates, info?.stickerUniqueFileId);
+    addStringCandidate(candidates, info?.uniqueFileId);
+    addStringCandidate(candidates, info?.fileId);
+    addStringCandidate(candidates, inferStickerIdFromFileName(typeof info?.fileName === "string" ? info.fileName : undefined));
+    return candidates;
+}
+
 function mediaInfoToPlainObject(mediaInfo: unknown): Record<string, unknown> | undefined {
     if (!mediaInfo) return undefined;
     if (typeof mediaInfo === "string") {
@@ -151,6 +177,8 @@ export function normalizeMessageMediaFields(
         normalized.type ??= "sticker";
         normalized.fileId ??= inferredStickerId;
         normalized.uniqueFileId ??= inferredStickerId;
+        normalized.sendableFileId ??= inferredStickerId;
+        normalized.stickerId ??= inferredStickerId;
     }
 
     const mediaType = typeof normalized?.type === "string"
@@ -255,23 +283,22 @@ export async function enrichMessages(
 function mediaTagFromType(
     mediaType?: string,
     mediaInfo?: string,
-    options?: { stickerDescriptionLookup?: StickerDescriptionLookup },
+    options?: { stickerDescriptionLookup?: StickerDescriptionLookup; text?: string },
 ): string {
     if (!mediaType) return "";
     let emoji = "";
-    let uniqueFileId = "";
+    let info: Record<string, unknown> | undefined;
     try {
         if (mediaInfo) {
-            const info = JSON.parse(mediaInfo);
-            emoji = info.emoji ?? "";
-            uniqueFileId = info.uniqueFileId ?? info.fileId ?? "";
+            info = JSON.parse(mediaInfo);
+            emoji = typeof info?.emoji === "string" ? info.emoji : "";
         }
     } catch { /* ignore */ }
     switch (mediaType) {
         case "photo": return "[📷 图片]";
         case "sticker": {
-            if (uniqueFileId && options?.stickerDescriptionLookup) {
-                const cached = options.stickerDescriptionLookup.getStickerDescription(uniqueFileId);
+            for (const id of stickerLookupCandidates(info, options?.text)) {
+                const cached = options?.stickerDescriptionLookup?.getStickerDescription(id);
                 if (cached) {
                     const emojiTag = formatCachedEmojiTag(cached.emojis?.length ? cached.emojis : (cached.emoji ?? emoji));
                     return `[🎭 贴纸${emojiTag}: ${cached.description}]`;
@@ -333,6 +360,7 @@ export function formatMessageLine(
     if (options?.includeMediaTags && (!m.processedMedia || m.processedMedia.length === 0) && m.mediaType) {
         const tag = mediaTagFromType(m.mediaType, m.mediaInfo, {
             stickerDescriptionLookup: options.stickerDescriptionLookup,
+            text: textPart,
         });
         if (tag && !textPart.includes(tag)) {
             const existingPattern = existingMediaTagPattern(m.mediaType);
@@ -383,28 +411,32 @@ export async function resolveReplyText(
         chatId?: string;
     },
 ): Promise<string | undefined> {
-    // 1. 有文本 → 直接返回
-    if (origMsg.text) return origMsg.text;
+    // 1. 有非媒体占位文本 → 直接返回；媒体占位继续走缓存/vision 富化。
+    if (origMsg.text && (!origMsg.mediaType || !existingMediaTagPattern(origMsg.mediaType)?.test(origMsg.text))) {
+        return origMsg.text;
+    }
 
     // 2. 无媒体 → 无内容
     if (!origMsg.mediaType) return undefined;
-    if (!origMsg.mediaInfo) return mediaTagFromType(origMsg.mediaType);
+    if (!origMsg.mediaInfo) return mediaTagFromType(origMsg.mediaType, undefined, { text: origMsg.text });
 
     // 3. 解析 mediaInfo
     let info: Record<string, unknown>;
     try {
         info = JSON.parse(origMsg.mediaInfo);
     } catch {
-        return mediaTagFromType(origMsg.mediaType, origMsg.mediaInfo);
+        return mediaTagFromType(origMsg.mediaType, origMsg.mediaInfo, { text: origMsg.text });
     }
 
     // 4. 贴纸：优先查缓存
-    if (origMsg.mediaType === "sticker" && deps?.stickerCache && info.uniqueFileId) {
-        const cached = deps.stickerCache.getStickerDescription(info.uniqueFileId as string);
-        if (cached) {
-            const emojiCandidates = cached.emojis?.length ? cached.emojis : [info.emoji as string | undefined].filter(Boolean) as string[];
-            const emoji = emojiCandidates.length ? `${emojiCandidates.join(" ")} ` : "";
-            return `[🎭 贴纸: ${emoji}${cached.description}]`;
+    if (origMsg.mediaType === "sticker" && deps?.stickerCache) {
+        for (const id of stickerLookupCandidates(info, origMsg.text)) {
+            const cached = deps.stickerCache.getStickerDescription(id);
+            if (cached) {
+                const emojiCandidates = cached.emojis?.length ? cached.emojis : [info.emoji as string | undefined].filter(Boolean) as string[];
+                const emoji = emojiCandidates.length ? `${emojiCandidates.join(" ")} ` : "";
+                return `[🎭 贴纸: ${emoji}${cached.description}]`;
+            }
         }
     }
 
@@ -414,7 +446,9 @@ export async function resolveReplyText(
             const attachment: MediaAttachment = {
                 type: ((info.type as string) ?? origMsg.mediaType) as MediaAttachment["type"],
                 fileId: info.fileId as string,
-                uniqueFileId: (info.uniqueFileId as string) ?? (info.fileId as string),
+                uniqueFileId: origMsg.mediaType === "sticker"
+                    ? (stickerLookupCandidates(info, origMsg.text)[0] ?? (info.uniqueFileId as string) ?? (info.fileId as string))
+                    : ((info.uniqueFileId as string) ?? (info.fileId as string)),
                 emoji: info.emoji as string | undefined,
                 mimeType: info.mimeType as string | undefined,
                 fileName: info.fileName as string | undefined,
@@ -444,7 +478,7 @@ export async function resolveReplyText(
     }
 
     // 6. Fallback: 媒体类型标签
-    return mediaTagFromType(origMsg.mediaType, origMsg.mediaInfo);
+    return mediaTagFromType(origMsg.mediaType, origMsg.mediaInfo, { text: origMsg.text });
 }
 
 // ─── 内部函数 ───
@@ -466,7 +500,9 @@ function parseMediaAttachments(messages: RawMessage[], fallbackChatId?: string):
             attachments.push({
                 type: info.type,
                 fileId: info.fileId,
-                uniqueFileId: info.uniqueFileId ?? info.fileId,
+                uniqueFileId: info.type === "sticker"
+                    ? (stickerLookupCandidates(info, m.text)[0] ?? info.uniqueFileId ?? info.fileId)
+                    : (info.uniqueFileId ?? info.fileId),
                 url: info.url,
                 emoji: info.emoji,
                 mimeType: info.mimeType,
@@ -561,6 +597,7 @@ export function formatMessages(
         if (!hasProcessedMedia && m.mediaType) {
             const tag = mediaTagFromType(m.mediaType, m.mediaInfo, {
                 stickerDescriptionLookup: options?.stickerDescriptionLookup,
+                text: textPart,
             });
             if (tag && !textPart.includes(tag)) {
                 const existingPattern = existingMediaTagPattern(m.mediaType);
