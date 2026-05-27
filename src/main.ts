@@ -726,10 +726,12 @@ async function main(): Promise<void> {
         const executor = sub.codeActExecutor as import("./subagent/code-act-executor.js").CodeActExecutor | null;
         const executorProcessing = !!executor?.isProcessing();
 
-        if (!executorProcessing) postTaskWindows.recordMessage(chatId, event, { isDirectAttention, directReason: directReason || undefined });
+        postTaskWindows.recordMessage(chatId, event, { isDirectAttention, directReason: directReason || undefined });
 
         if (isDirectAttention) {
-            const handledByPostTaskWindow = executorProcessing || postTaskWindows.tryForwardDirectMessage(chatId, event, directReason);
+            const handledByPostTaskWindow = executorProcessing
+                ? postTaskWindows.hasActiveWindow(chatId)
+                : postTaskWindows.tryForwardDirectMessage(chatId, event, directReason);
             if (!handledByPostTaskWindow) {
                 const entry = sub.buildQueueEntry("DIRECT_ADDRESS");
                 accumulator.ingest(0, createDirectAddressItem(chatId, {

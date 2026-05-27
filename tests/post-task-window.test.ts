@@ -2,6 +2,10 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { CallbackQueue } from "../src/subagent/callback-queue.js";
 import { PostTaskWindowManager } from "../src/subagent/post-task-window.js";
+import type {
+    PostTaskFollowUpJudge,
+    PostTaskFollowUpJudgeInput,
+} from "../src/subagent/post-task-window.js";
 import type { CodeActReplyTask, SubagentCallback } from "../src/subagent/types.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -30,6 +34,8 @@ function makeManager(options?: {
     blocks?: string[];
     isProcessing?: () => boolean;
     getQueueSize?: () => number;
+    followUpCheckIntervalMs?: number;
+    followUpJudge?: PostTaskFollowUpJudge | null;
 }) {
     const q5 = options?.q5 ?? new CallbackQueue();
     const enqueued = options?.enqueued ?? [];
@@ -59,6 +65,8 @@ function makeManager(options?: {
         onDirectTaskEnqueued: options?.directTasks
             ? (task) => options.directTasks?.push(task)
             : undefined,
+        followUpCheckIntervalMs: options?.followUpCheckIntervalMs,
+        followUpJudge: options?.followUpJudge,
     });
     return { manager, q5, enqueued, unblocks, blocks };
 }
@@ -231,6 +239,8 @@ describe("PostTaskWindowManager", () => {
         assert.deepEqual(enqueued[0].targetMessageIds, ["msg-1", "msg-2"]);
         assert.equal(enqueued[0].replyStrategy, "DIRECT_REPLY");
         assert.equal(enqueued[0].skipRefreshTaskMessages, true);
+        assert.deepEqual(enqueued[0].continuationMessages?.map((message) => message.messageId), ["msg-1", "msg-2"]);
+        assert.equal(enqueued[0].continuationReason, "reply-to-agent");
         assert.match(enqueued[0].continuationPrompt ?? "", /\[📩 新消息到达\]/);
         assert.match(enqueued[0].continuationPrompt ?? "", /前面这句也还没送过/);
         assert.match(enqueued[0].continuationPrompt ?? "", /你刚才说的是这个意思吗？/);
@@ -289,6 +299,77 @@ describe("PostTaskWindowManager", () => {
         assert.deepEqual(enqueued[1].targetMessageIds, ["msg-3"]);
         assert.doesNotMatch(enqueued[1].continuationPrompt ?? "", /第一条/);
         assert.match(enqueued[1].continuationPrompt ?? "", /第三条/);
+        manager.dispose();
+    });
+
+    it("classifies batched post-task messages as follow-up and forwards them", async () => {
+        const judgeInputs: PostTaskFollowUpJudgeInput[] = [];
+        const followUpJudge: PostTaskFollowUpJudge = async (input) => {
+            judgeInputs.push(input);
+            return {
+                hasFollowUp: true,
+                triggerMessageId: "msg-follow",
+                reason: "对刚才的回复追问细节",
+                confidence: 0.92,
+            };
+        };
+        const { manager, enqueued } = makeManager({
+            windowMs: 200,
+            followUpCheckIntervalMs: 10,
+            followUpJudge,
+        });
+
+        manager.handleCallback(makeCallback());
+        manager.recordMessage("telegram:1", {
+            _id: "evt-follow",
+            _ts: "2026-05-03T12:00:20.000Z",
+            type: "nc.message",
+            chatId: "telegram:1",
+            messageId: "msg-follow",
+            displayName: "Alice",
+            text: "那你刚才说的第二点具体怎么做？",
+        });
+
+        await sleep(50);
+
+        assert.equal(judgeInputs.length, 1);
+        assert.equal(judgeInputs[0]?.messages[0]?.messageId, "msg-follow");
+        assert.equal(enqueued.length, 1);
+        assert.deepEqual(enqueued[0].targetMessageIds, ["msg-follow"]);
+        assert.match(enqueued[0].continuationPrompt ?? "", /对刚才的回复追问细节/);
+        assert.equal(enqueued[0].decisions[0]?.confidence, 0.92);
+        assert.deepEqual(enqueued[0].continuationMessages?.map((message) => message.messageId), ["msg-follow"]);
+        assert.equal(enqueued[0].continuationReason, "llm-followup");
+        assert.equal(enqueued[0].continuationClassifierReason, "对刚才的回复追问细节");
+        manager.dispose();
+    });
+
+    it("does not reclassify post-task batches already judged as non-follow-up", async () => {
+        let calls = 0;
+        const { manager, enqueued } = makeManager({
+            windowMs: 200,
+            followUpCheckIntervalMs: 10,
+            followUpJudge: async () => {
+                calls += 1;
+                return { hasFollowUp: false, reason: "只是附和" };
+            },
+        });
+
+        manager.handleCallback(makeCallback());
+        manager.recordMessage("telegram:1", {
+            _id: "evt-no-follow",
+            _ts: "2026-05-03T12:00:21.000Z",
+            type: "nc.message",
+            chatId: "telegram:1",
+            messageId: "msg-no-follow",
+            displayName: "Bob",
+            text: "哈哈哈哈",
+        });
+
+        await sleep(60);
+
+        assert.equal(calls, 1);
+        assert.equal(enqueued.length, 0);
         manager.dispose();
     });
 

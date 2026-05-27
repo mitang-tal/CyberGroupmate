@@ -78,6 +78,7 @@
     { key: "session", label: "CodeAct 交互", desc: "生成回复内容" },
     { key: "recording_cluster", label: "话题聚类", desc: "消息→话题分组" },
     { key: "recording_triage", label: "话题 Triage", desc: "摘要 + 介入判断" },
+    { key: "post_task_followup", label: "Post-task Follow-up", desc: "窗口内 5 秒追问判定" },
     { key: "reflection", label: "反思引擎", desc: "人物画像/总结" },
     { key: "compact", label: "上下文压缩", desc: "对话历史摘要" },
     { key: "memory", label: "记忆检索", desc: "Deep recall" },

@@ -100,7 +100,7 @@ export interface EmbeddingConfig {
 }
 
 /** 组件路由中可配置超时的组件名 */
-export type RoutingComponentKey = 'meta' | 'session' | 'recording_cluster' | 'recording_triage' | 'reflection' | 'compact' | 'memory' | 'vision';
+export type RoutingComponentKey = 'meta' | 'session' | 'recording_cluster' | 'recording_triage' | 'post_task_followup' | 'reflection' | 'compact' | 'memory' | 'vision';
 
 /** 组件级 LLM 路由 — 每个组件可指定一个或多个 profile（fallback chain） */
 export interface LLMRoutingConfig {
@@ -112,6 +112,8 @@ export interface LLMRoutingConfig {
     recording_cluster?: string | string[];
     /** 话题摘要 + Triage（recording-pipeline Step 2） */
     recording_triage?: string | string[];
+    /** Post-task window 内 5 秒批量 follow-up 判定 */
+    post_task_followup?: string | string[];
     /** 反思引擎（reflection） */
     reflection?: string | string[];
     /** 上下文压缩（context-manager compact） */
@@ -523,7 +525,7 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
     // 解析 per-component timeouts
     const rawTimeouts = (fileRouting.timeouts ?? {}) as Record<string, unknown>;
     const parsedTimeouts: LLMRoutingConfig['timeouts'] = {};
-    for (const key of ['meta', 'session', 'recording_cluster', 'recording_triage', 'recording', 'reflection', 'compact', 'memory', 'vision'] as const) {
+    for (const key of ['meta', 'session', 'recording_cluster', 'recording_triage', 'post_task_followup', 'recording', 'reflection', 'compact', 'memory', 'vision'] as const) {
         if (rawTimeouts[key] != null) {
             parsedTimeouts[key] = num(rawTimeouts[key], 60000);
         }
@@ -536,6 +538,7 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
         session: parseRoutingValue(fileRouting.session),
         recording_cluster: parseRoutingValue(fileRouting.recording_cluster) ?? recordingFallback,
         recording_triage: parseRoutingValue(fileRouting.recording_triage) ?? recordingFallback,
+        post_task_followup: parseRoutingValue(fileRouting.post_task_followup),
         reflection: parseRoutingValue(fileRouting.reflection),
         compact: parseRoutingValue(fileRouting.compact),
         memory: parseRoutingValue(fileRouting.memory),

@@ -105,6 +105,8 @@ llm_routing:
   #   - gemini-flash
   # recording — 话题聚类 + Triage（后台分析）
   recording: gemini-flash
+  # post_task_followup — Post-task window 内 5 秒批量追问判定（建议用很便宜的小模型）
+  post_task_followup: gemini-flash
   # reflection — 反思引擎（人物画像/话题总结）
   reflection: gemini-flash
   # compact — 上下文压缩（对话历史摘要）
