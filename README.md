@@ -188,41 +188,57 @@ workspace/tmp/
 
 ## 🐳 Docker 部署
 
-### 快速启动
+### 方式一：使用 GHCR 预构建镜像（推荐）
+
+每次 push 到 agentic 分支或发布新版本时，GitHub Actions 会自动构建并推送镜像到 GHCR。无需本地编译，开箱即用。
 
 ```bash
-# 1. 准备配置文件
+# 1. 拉取镜像
+docker pull ghcr.io/archeb/cybergroupmate:agentic
+
+# 2. 准备配置文件
+mkdir -p cybergroupmate && cd cybergroupmate
+cp ../config.example.yaml config.yaml
+
+# 3. 启动（使用 host 网络模式以便连接本地服务）
+docker run -d \
+  --name cybergroupmate \
+  --restart unless-stopped \
+  --network host \
+  -v \$(pwd)/workspace:/app/workspace \
+  -v \$(pwd)/config.yaml:/app/config.yaml \
+  ghcr.io/archeb/cybergroupmate:agentic
+
+# 4. 查看日志
+docker logs -f cybergroupmate
+```
+
+发布版本（v* tag）也会同步推送，可使用语义化版本号拉取：
+
+```bash
+docker pull ghcr.io/archeb/cybergroupmate:1.0.0
+```
+
+可用标签请参考 [GHCR Packages 页面](https://github.com/Archeb/CyberGroupmate/pkgs/container/cybergroupmate)。
+
+### 方式二：本地构建
+
+如果需要自定义修改或 GHCR 镜像不可用，可以从源码本地构建：
+
+```bash
+# 1. 克隆仓库
+git clone https://github.com/Archeb/CyberGroupmate.git
+cd CyberGroupmate
+
+# 2. 准备配置文件
 cp config.example.yaml config.yaml
-# 编辑 config.yaml，填写对应平台凭据和 LLM API Key
 
-# 2. 启动
-docker compose up -d
+# 3. 构建并启动
+docker compose up -d --build
 
-# 3. 查看日志
+# 4. 查看日志
 docker compose logs -f
 ```
-
-### Telegram Userbot 首次登录
-
-如果使用 Telegram 的 userbot 模式，首次启动需要输入 OTP 验证码：
-
-```bash
-docker attach cybergroupmate
-# 输入验证码后按 Ctrl+P, Ctrl+Q 脱离（不要 Ctrl+C）
-```
-
-### 数据持久化
-
-运行数据（SQLite 数据库、Telegram 会话、事件日志等）存储在 `workspace/` 或 `docker-compose.yaml` 中配置的 Docker volume 中。
-
-```bash
-# 备份数据
-docker run --rm -v cybergroupmate-data:/data -v $(pwd):/backup alpine tar czf /backup/cybergroupmate-backup.tar.gz -C /data .
-
-# 恢复数据
-docker run --rm -v cybergroupmate-data:/data -v $(pwd):/backup alpine tar xzf /backup/cybergroupmate-backup.tar.gz -C /data
-```
-
 
 ## 📄 LICENSING
 
