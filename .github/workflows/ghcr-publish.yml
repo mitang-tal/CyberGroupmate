@@ -2,7 +2,7 @@ name: Build and Publish to GHCR
 
 on:
   push:
-    branches: [main]
+    branches: [agentic]
     tags: ['v*']
   workflow_dispatch:
 
