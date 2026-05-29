@@ -25,4 +25,10 @@ export interface HarnessRunRecord {
     exitCode?: number | null;
     trigger: "scheduled" | "enqueued";
     pendingCount: number;
+    harness: string;
+    pid?: number;
+    durationMs?: number;
+    costUsd?: number;
+    stderrTail?: string;
+    resultSummary?: string;
 }

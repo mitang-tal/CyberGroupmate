@@ -962,6 +962,7 @@ async function main(): Promise<void> {
 
     let activeUserProfilesForDispatch = new Map<string, ActiveUserProfile[]>();
     let metaSandbox: MetaSandbox | null = null;
+    let harnessManager: import("./harness/manager.js").HarnessManager | null = null;
     const metaApiContext = buildMetaApiContext({
         memory,
         subagentManager,
@@ -1024,6 +1025,20 @@ async function main(): Promise<void> {
         },
     });
     sandboxDispatchApi = metaApiContext.dispatch;
+
+    // Background Agent API for Meta sandbox — closure captures harnessManager (assigned later)
+    (metaApiContext as Record<string, unknown>).background = {
+        enqueue: async (content: string, source?: string) => {
+            if (!harnessManager) return { queued: false, reason: "Background Agent not configured" };
+            harnessManager.enqueue({ content, source: source ?? "meta" });
+            return { queued: true, queueLength: harnessManager.queueLength };
+        },
+        getStatus: async () => {
+            if (!harnessManager) return { enabled: false };
+            return { enabled: true, ...harnessManager.getStatus() };
+        },
+    };
+
     metaSandbox = new MetaSandbox(metaApiContext);
 
     mainLoop.setMetaSessionHandler(createMetaSessionHandler({
@@ -1168,7 +1183,6 @@ async function main(): Promise<void> {
     }
 
     // ─── Background Agent HarnessManager ───
-    let harnessManager: import("./harness/manager.js").HarnessManager | null = null;
     const bgHarness = appConfig.backgroundAgent?.harness;
     if (mcpServerInstance && (bgHarness === "claude-code" || bgHarness === "copilot")) {
         const { HarnessManager, ClaudeCodeLauncher, CopilotCliLauncher } = await import("./harness/index.js");

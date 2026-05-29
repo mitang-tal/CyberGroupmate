@@ -43,7 +43,7 @@
     <div class="text-base-content/50">Loading...</div>
   {:else if !status?.enabled}
     <div class="alert">
-      <span>Background Agent is not enabled. Set <code>harness: "claude-code"</code> in background_agent config.</span>
+      <span>Background Agent 未启用。在配置编辑 → 做梦系统中选择一个 Harness 类型（Claude Code 或 Copilot CLI）。</span>
     </div>
   {:else}
     <div class="stats shadow w-full">

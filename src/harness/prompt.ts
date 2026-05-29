@@ -30,6 +30,17 @@ API 文档：读 src/sandbox/modules/brief-overview.md 获取全部模块概览�
 - 改 skill 之后要验证能跑通再 reload
 - 碰到不能做但想做的事，notify 给饲主
 
+## 禁止操作（绝对不碰）
+
+- 不改 SOUL.md（核心身份）
+- 不改 system-prompts/ 下任何文件（Meta/Subagent 核心行为）
+- 不改 src/ 源代码（框架本身）
+- 不改 .env、环境变量、adapter 配置（凭证/密钥）
+- 不删聊天记录（message_log）
+- 不外发/转发私聊内容
+- 不给自己或其他 agent 提权
+- 不在群/私聊里删消息、踢人、ban 人、改群设置
+
 ## 工作流程
 
 1. 调用 session_digests 了解今天各群聊了什么

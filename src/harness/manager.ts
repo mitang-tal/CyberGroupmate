@@ -106,6 +106,7 @@ export class HarnessManager {
             startedAt: Date.now(),
             trigger,
             pendingCount: pending.length,
+            harness: this.config.launcher.name,
         };
 
         let receivedResult = false;
@@ -120,6 +121,8 @@ export class HarnessManager {
                 extraArgs: this.config.extraArgs,
             });
 
+            record.pid = this.child.pid ?? undefined;
+
             log.info("launch: harness started", {
                 launcher: this.config.launcher.name,
                 pid: this.child.pid,
@@ -127,14 +130,15 @@ export class HarnessManager {
                 pendingCount: pending.length,
             });
 
-            this.collectOutput(this.child, () => { receivedResult = true; });
+            this.collectOutput(this.child, record, () => { receivedResult = true; });
 
             this.child.once("exit", (code) => {
                 record.endedAt = Date.now();
                 record.exitCode = code;
+                record.durationMs = record.durationMs ?? (record.endedAt - record.startedAt);
 
-                const durationSec = ((record.endedAt - record.startedAt) / 1000).toFixed(1);
-                log.info("launch: harness exited", { code, durationSec, trigger });
+                const durationSec = (record.durationMs / 1000).toFixed(1);
+                log.info("launch: harness exited", { code, durationSec, trigger, cost: record.costUsd });
 
                 this.child = null;
                 this.running = false;
@@ -200,14 +204,20 @@ export class HarnessManager {
         return items;
     }
 
-    private collectOutput(child: ChildProcess, onResult?: () => void): void {
+    private collectOutput(child: ChildProcess, record: HarnessRunRecord, onResult?: () => void): void {
         let stdoutBuffer = "";
+        let stderrTail = "";
         const processLine = (line: string) => {
             if (!line.trim()) return;
             try {
                 const event = JSON.parse(line);
+                // Claude Code: event.type === "result"
+                // Copilot CLI: event.type === "result" (same format in JSONL mode)
                 if (event.type === "result") {
                     log.info("harness result", { cost: event.cost_usd, duration: event.duration_ms });
+                    if (event.cost_usd != null) record.costUsd = event.cost_usd;
+                    if (event.duration_ms != null) record.durationMs = event.duration_ms;
+                    if (event.result) record.resultSummary = String(event.result).slice(0, 500);
                     onResult?.();
                 }
             } catch {
@@ -223,11 +233,15 @@ export class HarnessManager {
         child.once("exit", () => {
             if (stdoutBuffer.trim()) processLine(stdoutBuffer);
             stdoutBuffer = "";
+            if (stderrTail.trim()) record.stderrTail = stderrTail.trim().slice(-500);
         });
 
         child.stderr?.on("data", (chunk: Buffer) => {
             const text = chunk.toString().trim();
-            if (text) log.warn("harness stderr", { text: text.slice(0, 500) });
+            if (text) {
+                log.warn("harness stderr", { text: text.slice(0, 500) });
+                stderrTail = (stderrTail + "\n" + text).slice(-500);
+            }
         });
     }
 }

@@ -13,8 +13,8 @@
 - 观察以上聊天方式为先获取最近聊天内容，然后再dispatch task进行互动参与。
 
 ## 自主进化（移交 Background Agent）
-- 最近的互动中有没有学到新技巧？如果有，notify 给 Background Agent 处理。
+- 最近的互动中有没有学到新技巧？如果有，交给 Background Agent 处理。
 - 不要自己让 subagent 写 skill，交给 Background。
-- 发现需要完整开发环境的重活（写 skill、研究新技术、深入查资料）→ `notify({ to: "meta", content: "...", source: "background_notify" })` 描述任务，由 Background Agent 在做梦时间处理。
+- 发现需要完整开发环境的重活（写 skill、研究新技术、深入查资料）→ `await background.enqueue("描述任务内容")`，由 Background Agent 在做梦时间处理。
 
 更加主动的找别人玩吧！不过，如果没有值得关心的事项，只写清楚本轮巡视结论并 `<end_turn>`。

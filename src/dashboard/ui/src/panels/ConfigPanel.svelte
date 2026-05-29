@@ -67,7 +67,7 @@
     { id: "envVars", label: "环境变量", icon: "fa-key" },
   ];
 
-  const RESTART_SECTIONS = new Set(["embedding", "dashboard"]);
+  const RESTART_SECTIONS = new Set(["embedding", "dashboard", "backgroundAgent"]);
   const RESTART_FIELDS = {
     telegram: ["mode", "botToken", "apiId", "apiHash", "phone"],
     discord: ["botToken"],

@@ -614,6 +614,7 @@ export async function runReflection(
     }
 
     // ── Step 7: 更新 background-dreaming.md（做梦方向感）──
+    // 只从 insights 和 agentFeedback 提取方向感，不用 followupCandidates（那些是具体任务）
     try {
         const DREAMING_PATH = join(process.cwd(), "workspace", "background-dreaming.md");
         const dreamingSections: string[] = [];
@@ -621,14 +622,11 @@ export async function runReflection(
         if (llmOutput.insights) {
             dreamingSections.push(`- ${llmOutput.insights}`);
         }
-        if (llmOutput.followupCandidates?.length) {
-            for (const fc of llmOutput.followupCandidates.slice(0, 5)) {
-                const parts = [fc.topic, fc.suggestedAction ?? fc.reason].filter(Boolean);
-                if (parts.length > 0) dreamingSections.push(`- ${parts.join("：")}`);
-            }
-        }
         if (llmOutput.agentFeedback?.effectiveBehaviors?.length) {
             dreamingSections.push(`- 有效互动方式：${llmOutput.agentFeedback.effectiveBehaviors.join("、")}`);
+        }
+        if (llmOutput.agentFeedback?.toneHints?.length) {
+            dreamingSections.push(`- 语气方向：${llmOutput.agentFeedback.toneHints.join("、")}`);
         }
 
         if (dreamingSections.length > 0) {
