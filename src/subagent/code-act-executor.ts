@@ -774,6 +774,7 @@ export class CodeActExecutor {
                 availableStickers,
                 groundingContext: ctx.groundingContext,
                 sessionDigests: this.globalState?.getSessionDigests(),
+                useSkills: task.useSkills,
             };
             // 重新计算 toneGuidance（避免上面的 ternary 混乱）
             resolveCtx.toneGuidance = toneGuidance || undefined;

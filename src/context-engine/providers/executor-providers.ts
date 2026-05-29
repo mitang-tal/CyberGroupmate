@@ -41,6 +41,7 @@ export interface ExecutorResolveContext extends ResolveContext {
     sessionDigests?: Array<{ createdAt: string; content: string }>;
     sessionDigestLimit?: number;
     imageParts?: unknown[];
+    useSkills?: string[];
 }
 
 interface ExecutorPersonContextData {
@@ -408,6 +409,7 @@ export const executorHeaderProvider: SectionProvider<{
 export const executorDecisionsProvider: SectionProvider<{
     decisions: string;
     toneGuidance: string;
+    skillHint: string;
 }> = {
     schema: {
         name: "executor.decisions",
@@ -421,18 +423,24 @@ export const executorDecisionsProvider: SectionProvider<{
         const formatted = ctx.decisions.map(d =>
             `- [${d.action}] ${d.contentDirection ?? d.reason ?? ""} (topicId: ${d.topicId ?? "N/A"}, confidence: ${d.confidence})`
         ).join("\n");
+        const skillHint = ctx.useSkills?.length
+            ? `推荐使用以下 Skill 完成本次任务: ${ctx.useSkills.join(", ")}。对应 API 已注入，可直接调用。`
+            : "";
         return {
             decisions: formatted,
             toneGuidance: ctx.toneGuidance ?? "",
+            skillHint,
         };
     },
     render(data) {
-        return [
+        const lines = [
             "## 行动决策",
             "",
             data.decisions,
             `语气: ${data.toneGuidance}`,
-        ].join("\n");
+        ];
+        if (data.skillHint) lines.push("", data.skillHint);
+        return lines.join("\n");
     },
 };
 
