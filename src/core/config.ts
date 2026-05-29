@@ -467,6 +467,12 @@ export interface AppConfig {
     grounding?: GroundingConfig;
     /** LLM 请求限速配置 */
     rateLimiting?: import("./llm-rate-limiter.js").RateLimitConfig;
+    /** Background Agent 配置 */
+    backgroundAgent?: {
+        enabled?: boolean;
+        mcpPort?: number;
+        mcpToken?: string;
+    };
 }
 
 // ─── 默认值 ───
@@ -640,6 +646,7 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
         mcpServers: parseMcpServersConfig(fileConfig),
         grounding: parseGroundingConfig(fileConfig),
         rateLimiting: parseRateLimitingConfig(fileConfig),
+        backgroundAgent: parseBackgroundAgentConfig(fileConfig),
     };
 
     _cached = config;
@@ -947,6 +954,16 @@ function parseRateLimitingConfig(fileConfig: Record<string, unknown>): import(".
         maxConcurrency: num(raw.max_concurrency, 0),
         requestsPerMinute: num(raw.requests_per_minute, 0),
         perProfile: Object.keys(perProfile).length > 0 ? perProfile : undefined,
+    };
+}
+
+function parseBackgroundAgentConfig(fileConfig: Record<string, unknown>): AppConfig["backgroundAgent"] {
+    const raw = fileConfig.background_agent as Record<string, unknown> | undefined;
+    if (!raw || typeof raw !== "object") return undefined;
+    return {
+        enabled: raw.enabled !== false,
+        mcpPort: raw.mcp_port != null ? num(raw.mcp_port, 3100) : undefined,
+        mcpToken: str(raw.mcp_token) ?? undefined,
     };
 }
 

@@ -1137,6 +1137,23 @@ async function main(): Promise<void> {
         log.info("Dashboard 已启动", { listen: `${dashboardHost}:${dashboardPort}`, url: `http://${displayHost}:${dashboardPort}?token=${dashboardToken}` });
     }
 
+    // ─── Background Agent MCP Server ───
+    const mcpServerEnabled = appConfig.backgroundAgent?.enabled !== false;
+    let mcpServerInstance: { httpServer: import("node:http").Server; config: { port: number; authToken: string } } | null = null;
+    if (mcpServerEnabled) {
+        const { startMcpServer, generateAuthToken } = await import("./mcp-server/index.js");
+        const mcpPort = appConfig.backgroundAgent?.mcpPort ?? 3100;
+        const mcpToken = appConfig.backgroundAgent?.mcpToken ?? generateAuthToken();
+        try {
+            mcpServerInstance = await startMcpServer(
+                { metaApi: metaApiContext, workspaceRoot: process.cwd() },
+                { port: mcpPort, authToken: mcpToken },
+            );
+        } catch (err) {
+            log.error("MCP Server 启动失败", { error: String(err) });
+        }
+    }
+
     // ─── Prometheus Metrics Exporter ───
     let metricsInstance: import("./metrics/index.js").MetricsInstance | null = null;
     const metricsEnabled = appConfig.metrics?.enabled !== false;
@@ -1366,6 +1383,11 @@ async function main(): Promise<void> {
         clearInterval(topicCleanupInterval);
         clearInterval(reflectionInterval);
         clearInterval(schedulerWatchdogInterval);
+
+        // 停止 MCP server
+        if (mcpServerInstance) {
+            mcpServerInstance.httpServer.close();
+        }
 
         // 先停止平台输入，避免新消息继续进入系统
         await Promise.allSettled(adapters.map((adapter) =>
