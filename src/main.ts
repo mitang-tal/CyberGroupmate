@@ -1182,6 +1182,7 @@ async function main(): Promise<void> {
             workDir: process.cwd(),
             mcpUrl: `http://127.0.0.1:${mcpServerInstance.config.port}/mcp`,
             mcpToken: mcpServerInstance.config.authToken,
+            persona: appConfig.persona,
             model,
             maxBudgetUsd: appConfig.backgroundAgent!.maxBudgetUsd,
             extraArgs: appConfig.backgroundAgent!.extraArgs,

@@ -1,4 +1,6 @@
 import type { ChildProcess } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createLogger } from "../core/logger.js";
 import { buildFixedLayerPrompt } from "./prompt.js";
 import type { HarnessLauncher, HarnessNotify, HarnessRunRecord } from "./types.js";
@@ -10,6 +12,7 @@ export interface HarnessManagerConfig {
     workDir: string;
     mcpUrl: string;
     mcpToken: string;
+    persona: { name: string; description: string };
     model?: string;
     maxBudgetUsd?: number;
     extraArgs?: string[];
@@ -91,7 +94,7 @@ export class HarnessManager {
 
         const pending = this.drainQueue();
         const trigger = pending.some(n => n.source === "scheduler") ? "scheduled" : "enqueued";
-        const prompt = buildFixedLayerPrompt(this.config.workDir, pending);
+        const prompt = buildFixedLayerPrompt(this.config.workDir, this.config.persona, pending);
 
         const mcpConfig = {
             mcpServers: {
@@ -99,6 +102,7 @@ export class HarnessManager {
                     type: "streamable-http" as const,
                     url: `${this.config.mcpUrl}?token=${this.config.mcpToken}`,
                 },
+                ...this.loadExternalMcpServers(),
             },
         };
 
@@ -196,6 +200,32 @@ export class HarnessManager {
                 }
             }, delaySec * 1000);
         }
+    }
+
+    private loadExternalMcpServers(): Record<string, Record<string, unknown>> {
+        const result: Record<string, Record<string, unknown>> = {};
+        try {
+            const raw = readFileSync(join(this.config.workDir, "workspace", "mcp-connections.json"), "utf-8");
+            const connections = JSON.parse(raw) as Array<Record<string, unknown>>;
+            for (const conn of connections) {
+                const name = String(conn.name ?? "");
+                if (!name || !conn.url) continue;
+                const entry: Record<string, unknown> = {
+                    type: String(conn.transport ?? "streamable-http"),
+                    url: String(conn.url),
+                };
+                if (conn.headers && typeof conn.headers === "object") {
+                    entry.headers = conn.headers;
+                }
+                result[name] = entry;
+            }
+            if (Object.keys(result).length > 0) {
+                log.info("loaded external MCP servers for harness", { servers: Object.keys(result) });
+            }
+        } catch {
+            // no external connections or file unreadable — fine
+        }
+        return result;
     }
 
     private drainQueue(): HarnessNotify[] {

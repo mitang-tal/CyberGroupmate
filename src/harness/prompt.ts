@@ -6,13 +6,14 @@ import type { HarnessNotify } from "./types.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, "..", "..");
 
-export function buildFixedLayerPrompt(workDir: string, pending: HarnessNotify[]): string {
+export function buildFixedLayerPrompt(
+    workDir: string,
+    persona: { name: string; description: string },
+    pending: HarnessNotify[],
+): string {
     const sections: string[] = [];
 
-    const soul = tryRead(join(workDir, "workspace", "SOUL.md"));
-    if (soul) {
-        sections.push(`# 身份\n\n${soul}`);
-    }
+    sections.push(`# 身份\n\n${persona.description}`);
 
     const dreamingMode = tryRead(join(PROJECT_ROOT, "system-prompts", "harness", "dreaming-mode.md"));
     if (dreamingMode) {
