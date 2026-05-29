@@ -40,7 +40,7 @@ import {
     type StickerDescriptionLookup,
 } from "../core/message-enricher.js";
 import type { MediaDownloader } from "../core/media-downloader.js";
-import type { ChatMessage } from "../core/llm.js";
+import type { ChatMessage, ImagePart } from "../core/llm.js";
 import { createLogger } from "../core/logger.js";
 import { formatTsForPrompt, normalizeProgrammaticTimestamps, sanitizePromptTimestamps } from "../core/timezone.js";
 import { getRawId, ensureCompositeId, getPlatform, getGroupModelKey } from "../core/chat-id.js";
@@ -862,8 +862,8 @@ export class CodeActExecutor {
                 resolveComponentProfiles("session"),
                 this.config.maxExecutionTimeMs,
                 sentCollector, // Fix 1: 传入 collector
-                () => this.drainPendingMessages(), // 层 2: turn 间消息注入
-                () => this.drainPendingMessagesForObservation(), // 层 2: direct attention 立即并入 observation
+                async () => this.drainPendingMessages(), // 层 2: turn 间消息注入
+                async () => this.drainPendingMessagesForObservation(), // 层 2: direct attention 立即并入 observation
                 `让${this.personaName}想想，`,  // prefill: 引导 LLM 以角色开始思考
                 ["[Execution Output]"],  // stop sequences
                 this.chatId,  // 关联 chatId，用于 codeActEvents 进度广播
@@ -1175,7 +1175,7 @@ export class CodeActExecutor {
      * 层 2: 在当前 turn 的 observation 前优先抽取 direct attention 消息
      * 仅当有人直接叫住 agent 时才清空 buffer 并立即反馈给模型。
      */
-    drainPendingMessagesForObservation(): string | null {
+    async drainPendingMessagesForObservation(): Promise<{ content: string; imageParts?: ImagePart[] } | null> {
         const trigger = findLatestDirectAttentionMessage(this.pendingMessages);
         if (!trigger) return null;
 
@@ -1187,15 +1187,22 @@ export class CodeActExecutor {
             directReason,
         });
         this.notifyPendingMessagesDrained(drained, "observation");
-        return formatMidTurnDirectAttentionPrompt(drained, directReason, this.memory ?? undefined);
+        const enriched = await this.enrichReactionMessages(drained);
+        const content = [
+            "[📩 新消息到达]",
+            enriched.formattedText,
+            "",
+            `[mid-turn direct attention: ${directReason}] 这些消息发生在你处理当前任务期间，其中有人直接叫住你、回复你或提及你。请结合当前会话、刚才的执行结果和上面所有尚未处理的新消息判断是否需要调整下一步行动或直接回复；需要时在下一轮自然处理，不需要则继续当前任务。`,
+        ].join("\n");
+        return { content, imageParts: enriched.imageParts.length ? enriched.imageParts : undefined };
     }
 
     /**
      * 层 2: 取出并格式化 pending messages，清空 buffer
      * 由 session-runner 在每个 turn 的 LLM 调用前调用
-     * @returns 格式化的消息文本，无新消息时返回 null
+     * @returns 格式化的消息文本和图片，无新消息时返回 null
      */
-    drainPendingMessages(): string | null {
+    async drainPendingMessages(): Promise<{ content: string; imageParts?: ImagePart[] } | null> {
         if (this.pendingMessages.length === 0) return null;
         const drained = this.pendingMessages.splice(0);
         const trigger = findLatestDirectAttentionMessage(drained);
@@ -1205,10 +1212,19 @@ export class CodeActExecutor {
             hasDirectAttention: !!trigger,
         });
         this.notifyPendingMessagesDrained(drained, "turn");
+        const enriched = await this.enrichReactionMessages(drained);
         if (trigger) {
-            return formatMidTurnDirectAttentionPrompt(drained, trigger.directReason ?? "direct-address", this.memory ?? undefined);
+            const directReason = trigger.directReason ?? "direct-address";
+            const content = [
+                "[📩 新消息到达]",
+                enriched.formattedText,
+                "",
+                `[mid-turn direct attention: ${directReason}] 这些消息发生在你处理当前任务期间，其中有人直接叫住你、回复你或提及你。请结合当前会话、刚才的执行结果和上面所有尚未处理的新消息判断是否需要调整下一步行动或直接回复；需要时在下一轮自然处理，不需要则继续当前任务。`,
+            ].join("\n");
+            return { content, imageParts: enriched.imageParts.length ? enriched.imageParts : undefined };
         }
-        return formatPendingMessages(drained, this.memory ?? undefined);
+        const content = `[📩 新消息到达]\n${enriched.formattedText}`;
+        return { content, imageParts: enriched.imageParts.length ? enriched.imageParts : undefined };
     }
 
     private notifyPendingMessagesDrained(

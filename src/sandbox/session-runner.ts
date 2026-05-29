@@ -15,7 +15,7 @@
 
 import { Sandbox, ExecutionResult } from "./sandbox.js";
 import type { NotificationCenter } from "../event/notification-center.js";
-import { callLLMWithFallback, ChatMessage, LLMResponse } from "../core/llm.js";
+import { callLLMWithFallback, ChatMessage, LLMResponse, type ImagePart } from "../core/llm.js";
 import type { LLMConfig } from "../core/config.js";
 import type { ContextManifest } from "../context-engine/types.js";
 import { ulid } from "ulid";
@@ -387,9 +387,9 @@ export async function runCodeActSession(
     /** 已发消息收集器，用于将 notify 事件中确认的消息反馈到 observation */
     sentMessageCollector?: SentMessageCollector,
     /** 层 2 消息前送：每轮 LLM 调用前检查是否有新消息到达 */
-    pendingMessagesDrain?: () => string | null,
+    pendingMessagesDrain?: () => Promise<{ content: string; imageParts?: ImagePart[] } | null>,
     /** 层 2 observation 注入：当前 turn 结束时优先并入 direct attention 新消息 */
-    pendingMessagesObservationDrain?: () => string | null,
+    pendingMessagesObservationDrain?: () => Promise<{ content: string; imageParts?: ImagePart[] } | null>,
     /** LLM prefill（预填充回复开头） */
     prefill?: string,
     /** LLM stop sequences */
@@ -434,17 +434,21 @@ export async function runCodeActSession(
         codeActEvents.emit("codeact:progress", payload);
     };
 
-    const injectPendingBeforeEnd = (turnNum: number, turn: SessionTurn, source: string): boolean => {
-        const newMessages = pendingMessagesDrain?.();
-        if (!newMessages) return false;
-        const sanitizedNewMessages = sanitizePromptTimestamps(newMessages);
-        log.info(`Turn ${turnNum}: ${source}<end_task> 前收到新消息，继续处理`, { length: newMessages.length });
+    const injectPendingBeforeEnd = async (turnNum: number, turn: SessionTurn, source: string): Promise<boolean> => {
+        const drained = await pendingMessagesDrain?.();
+        if (!drained) return false;
+        const sanitizedContent = sanitizePromptTimestamps(drained.content);
+        log.info(`Turn ${turnNum}: ${source}<end_task> 前收到新消息，继续处理`, { length: drained.content.length });
         turns.push(turn);
-        messages.push({ role: "user", content: sanitizedNewMessages });
+        messages.push({
+            role: "user",
+            content: sanitizedContent,
+            ...(drained.imageParts?.length ? { imageParts: drained.imageParts } : {}),
+        });
         emitProgress({
             turn: turnNum,
             phase: "new_messages",
-            userMessage: sanitizedNewMessages,
+            userMessage: sanitizedContent,
             isProcessing: true,
         });
         return true;
@@ -468,17 +472,21 @@ export async function runCodeActSession(
     for (let turnNum = 0; turnNum < effectiveMaxTurns; turnNum++) {
         // ─── 层 2: turn 间消息注入 ───
         if (pendingMessagesDrain) {
-            const newMessages = pendingMessagesDrain();
-            if (newMessages) {
-                const sanitizedNewMessages = sanitizePromptTimestamps(newMessages);
-                log.info(`Turn ${turnNum}: 注入前送消息`, { length: newMessages.length });
-                messages.push({ role: "user", content: sanitizedNewMessages });
+            const drained = await pendingMessagesDrain();
+            if (drained) {
+                const sanitizedContent = sanitizePromptTimestamps(drained.content);
+                log.info(`Turn ${turnNum}: 注入前送消息`, { length: drained.content.length, hasImages: !!drained.imageParts?.length });
+                messages.push({
+                    role: "user",
+                    content: sanitizedContent,
+                    ...(drained.imageParts?.length ? { imageParts: drained.imageParts } : {}),
+                });
 
                 // 发射进度事件：新消息到达
                 emitProgress({
                     turn: turnNum,
                     phase: "new_messages",
-                    userMessage: sanitizedNewMessages,
+                    userMessage: sanitizedContent,
                     isProcessing: true,
                 });
             }
@@ -565,7 +573,7 @@ export async function runCodeActSession(
 
         // ─── <end_task> 且无代码块 → 直接结束 session ───
         if (hasEndTurn && codeBlocks.length === 0) {
-            if (injectPendingBeforeEnd(turnNum, turn, "")) continue;
+            if (await injectPendingBeforeEnd(turnNum, turn, "")) continue;
             if (!hasSessionDigest(thinking)) {
                 log.info(`Turn ${turnNum}: <end_task> 缺少 SESSION_DIGEST，要求补充摘要`);
                 turns.push(turn);
@@ -606,10 +614,14 @@ export async function runCodeActSession(
                 }
             }
 
+            let obsImageParts: ImagePart[] | undefined;
             if (pendingMessagesObservationDrain) {
-                const pendingObservation = pendingMessagesObservationDrain();
+                const pendingObservation = await pendingMessagesObservationDrain();
                 if (pendingObservation) {
-                    textOnlyObs += `\n\n${pendingObservation}`;
+                    textOnlyObs += `\n\n${pendingObservation.content}`;
+                    if (pendingObservation.imageParts?.length) {
+                        obsImageParts = pendingObservation.imageParts;
+                    }
                 }
             }
 
@@ -633,7 +645,11 @@ export async function runCodeActSession(
                 isProcessing: true,
             });
 
-            messages.push({ role: "user", content: sanitizePromptTimestamps(textOnlyObs, "timestamp") });
+            messages.push({
+                role: "user",
+                content: sanitizePromptTimestamps(textOnlyObs, "timestamp"),
+                ...(obsImageParts?.length ? { imageParts: obsImageParts } : {}),
+            });
             continue;
         }
 
@@ -757,10 +773,14 @@ export async function runCodeActSession(
             }
         }
 
+        let execObsImageParts: ImagePart[] | undefined;
         if (pendingMessagesObservationDrain) {
-            const pendingObservation = pendingMessagesObservationDrain();
+            const pendingObservation = await pendingMessagesObservationDrain();
             if (pendingObservation) {
-                observation = observation ? `${observation}\n\n${pendingObservation}` : pendingObservation;
+                observation = observation ? `${observation}\n\n${pendingObservation.content}` : pendingObservation.content;
+                if (pendingObservation.imageParts?.length) {
+                    execObsImageParts = pendingObservation.imageParts;
+                }
             }
         }
 
@@ -789,7 +809,11 @@ export async function runCodeActSession(
 
         // 将 observation 作为 user 消息追加
         if (observation.trim()) {
-            messages.push({ role: "user", content: observation });
+            messages.push({
+                role: "user",
+                content: observation,
+                ...(execObsImageParts?.length ? { imageParts: execObsImageParts } : {}),
+            });
         }
 
         // 消费本轮 runtime.extendSteps / runtime.modifyTimeout 控制指令
