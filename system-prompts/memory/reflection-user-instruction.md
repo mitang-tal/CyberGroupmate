@@ -30,7 +30,7 @@
 4. **anecdote**：特别注意标注有趣的轶事（category='anecdote'）
 5. **interactionQuality**（必填）：评估近期互动质量，不要输出 dunbarTier（系统会自动计算）
 6. **topicsSummary**：每个话题摘要简洁（1-2句），sentiment 反映话题整体氛围
-7. **insights**：提供具体、可操作的建议（如"某人对旅行话题很感兴趣，下次可以主动聊"），不要泛泛而谈。insights 的内容也会被用于更新"做梦方向感"（background-dreaming.md），所以应包含：最近关注什么、对谁有牵挂、想在哪个方向进化。写性格倾向和价值判断，不写具体任务清单
+7. **insights**：提供具体、可操作的建议（如"某人对旅行话题很感兴趣，下次可以主动聊"），不要泛泛而谈
 8. **relationshipEvents**：从近期直接互动和原始证据里提炼值得进入情感记忆的关系事件，必须带 `messageIds/evidence/confidence` 中至少一种证据
 9. **agentFeedback**：总结 agent 这段时间哪些行为有效、哪些应避免、未来语气策略
 10. **followupCandidates**：只输出自然、不突兀、可由 Meta/Agent 以后接回的候选动作
