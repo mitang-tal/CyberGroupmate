@@ -201,6 +201,23 @@ notify 给对应 subagent 去发送结果。
 - 修好 skill 直接 reload
 - 群友第二天看到"诶 Miu 换头像了"
 
+#### 实现方式：`platform_exec`
+
+平台 API 庞大（Telegram 单平台就有上百个 mtcute 方法），不为每个操作维护 MCP tool 映射。采用与 subagent sandbox 相同的思路：
+
+```
+platform_exec({
+  code: "await telegram.useAccountProfile(); await telegram.mtcute('setMyProfilePhoto', { ... });"
+})
+```
+
+- 一个 MCP tool，传入 JS 代码，在专用 sandbox（`__background__`）中执行
+- sandbox 挂载平台 adapter（telegram 等），复用现有 host call / mtcute passthrough 机制
+- 写限制：允许平台级自操作（avatar/bio/story），禁止发消息到群/私聊（发消息走 notify）
+- 常用流程沉淀为 skill 后可直接调用，不必每次写代码
+
+与 `useXxx()` guide 体系的关系：Background Agent 同样可以先调 `telegram.useAccountProfile()` 获取完整 API 文档，再执行具体操作。guide 在 sandbox 内天然可用。
+
 ### 7.3 写日记（面向记录）
 
 记录今晚做了什么、想了什么。
@@ -318,7 +335,7 @@ Background Agent 通过 MCP 访问的 Core 能力：
 | `notify` | 通知 Meta 或任何 subagent |
 | `skills.list` / `skills.reload` | 管理 skill |
 | `todo.list` / `todo.create` | 任务列表 |
-| 平台 API（改头像/bio/发动态等） | 自操作 |
+| `platform_exec` | 传入 JS 代码在 sandbox 中执行平台操作（改头像/bio/发动态等） |
 
 ---
 
@@ -368,3 +385,4 @@ Background Agent 通过 MCP 访问的 Core 能力：
 | HarnessManager 位置 | src/harness/（独立模块） | 未来职责会扩展，不应绑定在 main-agent 下 |
 | 做梦日记去处 | 默认写文件，可配置 | 最不打扰，方便回看 |
 | CLAUDE.md 方案 | 通过 -p 传入，不用文件 | 避免和主项目 CLAUDE.md 冲突 |
+| 平台操作方式 | `platform_exec` 传入 JS 代码在 sandbox 执行 | 平台 API 庞大，不维护 MCP↔platform 映射；复用 sandbox + guide 体系 |

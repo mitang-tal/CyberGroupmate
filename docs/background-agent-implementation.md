@@ -16,89 +16,78 @@
 | Reflection 执行 + 输出 | ✅ 已有，可在输出阶段追加逻辑 | `src/memory-v2/reflection.ts:586-614` |
 | GlobalState 持久化 | ✅ 已有 | `src/main-agent/global-state.ts` |
 | MCP Client（连接外部 MCP server） | ✅ 已有 | `src/sandbox/modules/mcp-bridge/` |
-| **MCP Server（暴露内部 API）** | ❌ 不存在，需要新建 | — |
-| **HarnessManager（外部 harness 管理）** | ❌ 不存在，需要新建 | — |
-| **notify 工具** | ❌ 不存在，需要扩展 dispatch | — |
+| **MCP Server（暴露内部 API）** | ✅ M1 已完成，23 tools（含 notify/skills/scheduler/todo/conversation/memory/agents/digest） | `src/mcp-server/` |
+| **notify 工具** | ✅ 已实现，支持 to: "meta"（注入 attention item）和 bindingId（dispatch） | `src/mcp-server/tools/notify.ts` |
+| **platform_exec（平台自操作）** | ❌ 需要新建，传入 JS 代码在 sandbox 中执行 | `src/mcp-server/tools/platform.ts` |
+| **HarnessManager（外部 harness 管理）** | ❌ 不存在，需要新建 | `src/harness/` |
 
 ---
 
-## Phase 0: notify 工具
+## Phase 0: notify 工具 ✅ 已完成
 
-**目标**：将现有 dispatch 语义扩展为 notify，支持双向通信。
-
-**改动点**：
-- `src/meta-sandbox/meta-api/dispatch.ts` — 扩展 `taskToGroup` 或新增 `notify` 方法
-  - 支持 `to: "meta" | bindingId`
-  - 当 `to: "meta"` 时，写入 GlobalState 的一个新字段（如 `backgroundNotifications`）供 Meta 下次 turn 读取
-- 更新 Meta Agent 的 tool definitions，将 dispatch 重命名/别名为 notify
-- Subagent 侧兼容（现有 dispatch 调用方式不变，只是多了一个入口名）
-
-**预计工作量**：1-2 天
-
-**验证**：Meta Agent 能通过 notify 给某个 bindingId 塞任务，subagent 收到并执行。
+已在 MCP server 中实现。`notify(to: "meta")` 注入 BACKGROUND_AGENT attention item 唤醒 Meta Agent；`notify(to: bindingId)` 通过 `dispatch.taskToGroup` 派发任务给 subagent。
 
 ---
 
-## Phase 1: MCP Server
+## Phase 1: MCP Server ✅ M1 已完成
 
-**目标**：将 Meta API 包装成 MCP Server，让外部 harness 通过 MCP 协议访问 Core 能力。
+23 个 tools 已注册并验证：conversation（3）、memory（3）、agents（1）、notify（1）、skills（4）、todo（4）、scheduler（6）、digest（1）。
 
-**这是整个实施的关键路径。** Background Agent 的所有能力都依赖于此。
+Streamable HTTP transport，token 认证，端口冲突优雅降级，连接信息写入 `workspace/mcp-server-info.json`。
 
-### 新建 `src/mcp-server/`
+---
 
-```
-src/mcp-server/
-├─ index.ts           — MCP server 入口，注册所有 tools
-├─ transport.ts       — Streamable HTTP transport（外部 harness 通过 HTTP 连接）
-├─ tools/
-│   ├─ conversation.ts  — getDigest, getHistory
-│   ├─ memory.ts        — query, write, update, delete
-│   ├─ agents.ts        — list, getState
-│   ├─ notify.ts        — notify(to, content, artifacts)
-│   ├─ skills.ts        — list, reload
-│   ├─ todo.ts          — list, create, update, delete
-│   ├─ cron.ts          — list, create, update, delete
-│   └─ platform.ts      — 改头像/bio/发动态等平台操作
-└─ auth.ts            — 简单的 token 认证（防止未授权访问）
-```
+## Phase 1.5: platform_exec（平台自操作）
 
-### 实现策略
+**目标**：让 Background Agent 能执行平台操作（改头像/bio/发 story 等），不维护 MCP↔platform 的庞大映射。
 
-- 每个 tool 文件是一个薄包装层，内部直接调用已有的 Meta API（`createDispatchApi`、`createTodoApi` 等）
-- 不需要重新实现业务逻辑，只做 MCP tool schema 定义 + 参数转换
-- 安全边界在这里实现：不暴露发消息、删消息、踢人等 API
+**这是 M1 到 M2 之间的关键路径。** 没有 platform_exec，Background Agent 无法完成 RFC §7.2 自操作类任务。
 
-### 安全边界实现
+### 设计
 
-在 MCP server 注册 tools 时，直接**不注册**被屏蔽的操作：
-- 不注册：sendMessage、deleteMessage、kickUser、banUser、changeGroupSettings
-- 不注册：editFile（限定路径：SOUL.md、system-prompts/、src/、.env）
-- 注册但做路径校验：file write 只允许 workspace/ 下
-
-### Transport
-
-- 使用 Streamable HTTP（Claude Code 和 Copilot CLI 都支持）
-- 监听本地端口（如 `localhost:3100/mcp`）
-- Token 认证：启动时生成随机 token，传给 harness 启动参数
-
-### 启动方式
-
-MCP server 随 CyberGroupmate 主进程启动，作为内嵌服务：
+参考 `telegram-mtcute-guides.md` 的思想：平台 API 庞大（Telegram 单平台上百个 mtcute 方法），不为每个操作单独包装 MCP tool，而是用一个 `platform_exec` 工具传入 JS 代码在 sandbox 中执行。
 
 ```typescript
-// src/main.ts 中追加
-import { startMcpServer } from './mcp-server';
-const mcpServer = await startMcpServer({
-  port: config.backgroundAgent?.mcpPort ?? 3100,
-  metaApi: buildMetaApiContext(deps),
-  authToken: generateToken()
+// src/mcp-server/tools/platform.ts
+mcp.tool("platform_exec", {
+  code: z.string().describe("JS code to run in sandbox with platform modules (telegram.*, etc.)"),
+}, async ({ code }) => {
+  const sandbox = await deps.sandboxPool.acquire("__background__");
+  try {
+    const result = await sandbox.eval(code);
+    return { content: [{ type: "text", text: JSON.stringify(result) }] };
+  } finally {
+    deps.sandboxPool.release("__background__");
+  }
 });
 ```
 
-**预计工作量**：3-5 天
+### 关键设计点
 
-**验证**：用 Claude Code 手动连接 MCP server，调通 getDigest、notify、skills.list。
+- **专用 sandbox**：使用 `__background__` chatId acquire，与正常群聊 sandbox 隔离
+- **复用现有机制**：sandbox 通过 `onAcquire` 回调挂载 telegram adapter 的 host call handler，`useXxx()` guide、mtcute passthrough 全部天然可用
+- **写限制**：`__background__` 没有绑定聊天，需要专门的 allowlist：
+  - ✅ 平台级自操作（accountProfile 组：改头像/bio/签名/emoji status 等）
+  - ✅ Stories 操作（发/删/编辑 story）
+  - ⛔ 发消息方法（`sendText`/`sendMedia`/`sendMediaGroup` 等，走 notify）
+  - ⛔ 管理操作（kickUser/banUser/deleteMessages/改群设置）
+- **guide 体系天然可用**：Background Agent 先调 `telegram.useAccountProfile()` 获取完整 API 文档再执行，和 subagent 工作方式一致
+- **常用流程沉淀为 skill**：如 `change-avatar` skill，Background Agent 直接调用不需要每次写代码
+
+### 改动点
+
+1. **新建 `src/mcp-server/tools/platform.ts`**：注册 `platform_exec` tool
+2. **修改 `src/mcp-server/index.ts`**：注册 platform tools，deps 需要传入 sandboxPool
+3. **修改 `src/mcp-server/types.ts`**：McpServerDeps 已有 sandboxPool（M1 加的），无需改
+4. **写限制 allowlist**：在 platform.ts 或 adapter 层实现 `__background__` 的方法白名单
+
+### 预计工作量
+
+1-2 天（sandbox 基础设施已有，主要是 allowlist 和测试）
+
+### 验证
+
+用 Claude Code 连上 MCP server，执行 `platform_exec({ code: "return await telegram.useAccountProfile()" })` 获取 guide 文档，再执行一个实际操作（如读取当前 bio）。
 
 ---
 
@@ -260,32 +249,34 @@ if (reflectionResult.dreamingUpdate) {
 ## 总览
 
 ```
-Phase 0: notify 工具                    1-2 天
-Phase 1: MCP Server                     3-5 天  ← 关键路径
+Phase 0: notify 工具                    ✅ 已完成
+Phase 1: MCP Server                     ✅ M1 已完成
+Phase 1.5: platform_exec（平台自操作）   1-2 天
 Phase 2: HarnessManager                 2-3 天
 Phase 3: 系统集成（idle/reflection）     2-3 天
 Phase 4: 第二 Harness + 打磨            2-3 天
 ─────────────────────────────────────────────
-总计                                    ~10-16 天
+剩余                                    ~8-11 天
 ```
 
 ```
 依赖关系：
 
-Phase 0 ──→ Phase 1 ──→ Phase 2 ──→ Phase 3 ──→ Phase 4
-(notify)    (MCP Server) (Harness)   (集成)      (打磨)
+Phase 0 ──→ Phase 1 ──→ Phase 1.5 ──→ Phase 2 ──→ Phase 3 ──→ Phase 4
+  ✅          ✅       (platform)    (Harness)    (集成)      (打磨)
 ```
 
-Phase 0 和 Phase 1 可以部分并行（notify 的 API 设计先确定，MCP server 按设计包装）。Phase 2 依赖 Phase 1 完成（harness 需要连 MCP）。Phase 3 依赖 Phase 2。Phase 4 随时可以开始 Copilot CLI 部分。
+Phase 1.5 和 Phase 2 可以部分并行（platform_exec 不依赖 HarnessManager）。Phase 3 依赖 Phase 2。Phase 4 随时可以开始 Copilot CLI 部分。
 
 ---
 
 ## 里程碑
 
-| 里程碑 | 标志 | 预计 |
+| 里程碑 | 标志 | 状态 |
 |---|---|---|
-| M0: notify 可用 | Meta Agent 能通过 notify 通信 | Phase 0 完成 |
-| M1: MCP 连通 | Claude Code 能连上 MCP server 并读到 digest | Phase 1 完成 |
-| M2: 首次做梦 | Background Agent 被手动拉起，执行一个完整任务并通过 notify 回传结果 | Phase 2 完成 |
-| M3: 自动做梦 | 凌晨 3 点自动拉起，第二天早上有成果 | Phase 3 完成 |
-| M4: 双 Harness | Claude Code 和 Copilot CLI 都能跑 | Phase 4 完成 |
+| M0: notify 可用 | Meta Agent 能通过 notify 通信 | ✅ |
+| M1: MCP 连通 | Claude Code 能连上 MCP server 并读到 digest | ✅ |
+| M1.5: 平台自操作 | Background Agent 能通过 platform_exec 执行平台操作 | 下一步 |
+| M2: 首次做梦 | Background Agent 被手动拉起，执行一个完整任务并通过 notify 回传结果 | Phase 2 |
+| M3: 自动做梦 | 凌晨 3 点自动拉起，第二天早上有成果 | Phase 3 |
+| M4: 双 Harness | Claude Code 和 Copilot CLI 都能跑 | Phase 4 |
