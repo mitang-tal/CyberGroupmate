@@ -971,6 +971,7 @@ async function main(): Promise<void> {
         groundingConfig: appConfig.grounding,
         getActiveUserProfilesForChat: (chatId) => activeUserProfilesForDispatch.get(chatId),
         getQuoteOutput: (index) => metaSandbox?.getOutput(index),
+        getHarnessManager: () => harnessManager,
         workspaceRoot: process.cwd(),
         onTaskDispatched: (task) => {
             metricsInstance?.groupCollector.onAttend(task.chatId, "REPLY");
@@ -1025,20 +1026,6 @@ async function main(): Promise<void> {
         },
     });
     sandboxDispatchApi = metaApiContext.dispatch;
-
-    // Background Agent API for Meta sandbox — closure captures harnessManager (assigned later)
-    (metaApiContext as Record<string, unknown>).background = {
-        enqueue: async (content: string, source?: string) => {
-            if (!harnessManager) return { queued: false, reason: "Background Agent not configured" };
-            harnessManager.enqueue({ content, source: source ?? "meta" });
-            return { queued: true, queueLength: harnessManager.queueLength };
-        },
-        getStatus: async () => {
-            if (!harnessManager) return { enabled: false };
-            return { enabled: true, ...harnessManager.getStatus() };
-        },
-    };
-
     metaSandbox = new MetaSandbox(metaApiContext);
 
     mainLoop.setMetaSessionHandler(createMetaSessionHandler({

@@ -207,16 +207,18 @@ export class HarnessManager {
     private collectOutput(child: ChildProcess, record: HarnessRunRecord, onResult?: () => void): void {
         let stdoutBuffer = "";
         let stderrTail = "";
+        let lastEvent: Record<string, unknown> | null = null;
         const processLine = (line: string) => {
             if (!line.trim()) return;
             try {
-                const event = JSON.parse(line);
-                // Claude Code: event.type === "result"
-                // Copilot CLI: event.type === "result" (same format in JSONL mode)
+                const event = JSON.parse(line) as Record<string, unknown>;
+                lastEvent = event;
+                // Claude Code: { type: "result", cost_usd, duration_ms, result }
+                // Copilot CLI: { type: "result", ... } (similar JSONL in --output-format json)
                 if (event.type === "result") {
                     log.info("harness result", { cost: event.cost_usd, duration: event.duration_ms });
-                    if (event.cost_usd != null) record.costUsd = event.cost_usd;
-                    if (event.duration_ms != null) record.durationMs = event.duration_ms;
+                    if (event.cost_usd != null) record.costUsd = Number(event.cost_usd);
+                    if (event.duration_ms != null) record.durationMs = Number(event.duration_ms);
                     if (event.result) record.resultSummary = String(event.result).slice(0, 500);
                     onResult?.();
                 }
@@ -234,6 +236,12 @@ export class HarnessManager {
             if (stdoutBuffer.trim()) processLine(stdoutBuffer);
             stdoutBuffer = "";
             if (stderrTail.trim()) record.stderrTail = stderrTail.trim().slice(-500);
+            if (!record.resultSummary && lastEvent) {
+                log.debug("harness: no result event parsed, recording last JSONL event", {
+                    type: lastEvent.type, keys: Object.keys(lastEvent).join(","),
+                });
+                record.resultSummary = `[no result event] last: ${JSON.stringify(lastEvent).slice(0, 300)}`;
+            }
         });
 
         child.stderr?.on("data", (chunk: Buffer) => {
