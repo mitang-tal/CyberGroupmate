@@ -3,9 +3,9 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { McpServerDeps } from "../types.js";
 
 const SANDBOX_CALL_TIMEOUT = 120_000;
+let executing: Promise<unknown> = Promise.resolve();
 
 export function registerPlatformTools(mcp: McpServer, deps: McpServerDeps): void {
-    let executing: Promise<unknown> = Promise.resolve();
 
     mcp.tool(
         "sandbox_call",

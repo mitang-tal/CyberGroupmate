@@ -170,8 +170,8 @@ export class HarnessManager {
     private handleSpawnFailure(error: string, pending: HarnessNotify[], record: HarnessRunRecord): void {
         log.error("launch: harness spawn failed", { error, consecutiveFailures: this.consecutiveFailures + 1 });
         this.pendingQueue.unshift(...pending);
-        record.endedAt = Date.now();
-        record.exitCode = -1;
+        if (!record.endedAt) record.endedAt = Date.now();
+        if (record.exitCode == null) record.exitCode = -1;
         this.history.push(record);
         if (this.history.length > 50) this.history.shift();
         this.child = null;
