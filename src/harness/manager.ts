@@ -41,7 +41,7 @@ export class HarnessManager {
         if (this.shuttingDown) return;
         this.pendingQueue.push(notify);
         if (!this.running) {
-            void this.launch("enqueued");
+            void this.launch();
         } else {
             log.info("enqueue: instance running, queued", { queueLength: this.pendingQueue.length });
         }
@@ -83,11 +83,12 @@ export class HarnessManager {
         }
     }
 
-    private async launch(trigger: "scheduled" | "enqueued"): Promise<void> {
+    private async launch(): Promise<void> {
         if (this.running || this.shuttingDown) return;
         this.running = true;
 
         const pending = this.drainQueue();
+        const trigger = pending.some(n => n.source === "scheduler") ? "scheduled" : "enqueued";
         const prompt = buildFixedLayerPrompt(this.config.workDir, pending);
 
         const mcpConfig = {
@@ -105,6 +106,8 @@ export class HarnessManager {
             pendingCount: pending.length,
         };
 
+        let receivedResult = false;
+
         try {
             this.child = await this.config.launcher.start({
                 prompt,
@@ -121,7 +124,7 @@ export class HarnessManager {
                 pendingCount: pending.length,
             });
 
-            this.collectOutput(this.child);
+            this.collectOutput(this.child, () => { receivedResult = true; });
 
             this.child.once("exit", (code) => {
                 record.endedAt = Date.now();
@@ -134,12 +137,22 @@ export class HarnessManager {
 
                 this.child = null;
                 this.running = false;
-                this.consecutiveFailures = 0;
-                this.lastError = null;
+
+                if (code === 0 || this.shuttingDown) {
+                    this.consecutiveFailures = 0;
+                    this.lastError = null;
+                } else if (!receivedResult) {
+                    this.handleSpawnFailure(`harness exited with code ${code}`, pending, record);
+                    return;
+                } else {
+                    this.lastError = `harness exited with code ${code} (partial work done)`;
+                    this.consecutiveFailures = 0;
+                    this.onSpawnFailure?.(this.lastError, this.pendingQueue.length);
+                }
 
                 if (!this.shuttingDown && this.pendingQueue.length > 0) {
                     log.info("launch: pending queue not empty, relaunching", { queueLength: this.pendingQueue.length });
-                    void this.launch("enqueued");
+                    void this.launch();
                 }
             });
 
@@ -169,7 +182,7 @@ export class HarnessManager {
             log.info("launch: scheduling retry", { delaySec, attempt: this.consecutiveFailures });
             setTimeout(() => {
                 if (!this.shuttingDown && !this.running && this.pendingQueue.length > 0) {
-                    void this.launch("enqueued");
+                    void this.launch();
                 }
             }, delaySec * 1000);
         }
@@ -181,7 +194,7 @@ export class HarnessManager {
         return items;
     }
 
-    private collectOutput(child: ChildProcess): void {
+    private collectOutput(child: ChildProcess, onResult?: () => void): void {
         let stdoutBuffer = "";
         child.stdout?.on("data", (chunk: Buffer) => {
             stdoutBuffer += chunk.toString();
@@ -193,6 +206,7 @@ export class HarnessManager {
                     const event = JSON.parse(line);
                     if (event.type === "result") {
                         log.info("harness result", { cost: event.cost_usd, duration: event.duration_ms });
+                        onResult?.();
                     }
                 } catch {
                     log.debug("harness stdout", { line: line.slice(0, 200) });
