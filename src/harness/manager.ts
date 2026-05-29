@@ -17,6 +17,7 @@ export interface HarnessManagerConfig {
 export class HarnessManager {
     private config: HarnessManagerConfig;
     private running = false;
+    private shuttingDown = false;
     private child: ChildProcess | null = null;
     private pendingQueue: HarnessNotify[] = [];
     private history: HarnessRunRecord[] = [];
@@ -34,18 +35,18 @@ export class HarnessManager {
     }
 
     enqueue(notify: HarnessNotify): void {
+        if (this.shuttingDown) return;
+        this.pendingQueue.push(notify);
         if (!this.running) {
-            this.pendingQueue.push(notify);
             void this.launch("enqueued");
         } else {
-            this.pendingQueue.push(notify);
             log.info("enqueue: instance running, queued", { queueLength: this.pendingQueue.length });
         }
     }
 
     triggerScheduled(): void {
-        if (this.running) {
-            log.info("triggerScheduled: instance already running, skipping");
+        if (this.shuttingDown || this.running) {
+            log.info("triggerScheduled: skipped", { shuttingDown: this.shuttingDown, running: this.running });
             return;
         }
         void this.launch("scheduled");
@@ -61,6 +62,7 @@ export class HarnessManager {
     }
 
     async shutdown(): Promise<void> {
+        this.shuttingDown = true;
         if (this.child) {
             log.info("shutdown: killing harness process");
             this.child.kill("SIGTERM");
@@ -80,7 +82,7 @@ export class HarnessManager {
     }
 
     private async launch(trigger: "scheduled" | "enqueued"): Promise<void> {
-        if (this.running) return;
+        if (this.running || this.shuttingDown) return;
         this.running = true;
 
         const pending = this.drainQueue();
@@ -131,7 +133,7 @@ export class HarnessManager {
                 this.child = null;
                 this.running = false;
 
-                if (this.pendingQueue.length > 0) {
+                if (!this.shuttingDown && this.pendingQueue.length > 0) {
                     log.info("launch: pending queue not empty, relaunching", { queueLength: this.pendingQueue.length });
                     void this.launch("enqueued");
                 }
@@ -139,6 +141,7 @@ export class HarnessManager {
 
             this.child.once("error", (err) => {
                 log.error("launch: harness process error", { error: String(err) });
+                this.pendingQueue.unshift(...pending);
                 record.endedAt = Date.now();
                 record.exitCode = -1;
                 this.history.push(record);
@@ -147,6 +150,7 @@ export class HarnessManager {
             });
         } catch (err) {
             log.error("launch: failed to start harness", { error: String(err) });
+            this.pendingQueue.unshift(...pending);
             record.endedAt = Date.now();
             record.exitCode = -1;
             this.history.push(record);
@@ -161,8 +165,12 @@ export class HarnessManager {
     }
 
     private collectOutput(child: ChildProcess): void {
+        let stdoutBuffer = "";
         child.stdout?.on("data", (chunk: Buffer) => {
-            for (const line of chunk.toString().split("\n")) {
+            stdoutBuffer += chunk.toString();
+            const lines = stdoutBuffer.split("\n");
+            stdoutBuffer = lines.pop() ?? "";
+            for (const line of lines) {
                 if (!line.trim()) continue;
                 try {
                     const event = JSON.parse(line);

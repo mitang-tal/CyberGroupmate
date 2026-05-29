@@ -160,18 +160,20 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
     return async (method: string, args: unknown[]) => {
         const adapter = adapters.find((item) => item.canHandle(method));
         if (adapter) {
-            if (chatId === "__background__") {
-                enforceBackgroundWriteRestriction(method, args, adapter);
-            } else if (isBoundChatWriteRestrictionEnabled()) {
-                const restrictedTarget = getRestrictedWriteTarget(method, args, adapter);
-                if (restrictedTarget != null && !isSelfTarget(restrictedTarget)) {
-                    const rawTarget = String(restrictedTarget);
-                    const targetChatId = ensureCompositeId(getPlatform(chatId), rawTarget);
-                    if (targetChatId !== chatId) {
-                        throw new Error(
-                            `[Sandbox 安全限制] ${method} 被拦截：当前 sandbox 绑定 chat=${chatId}，` +
-                            `不允许向 chat=${targetChatId} 发送消息。`
-                        );
+            if (isBoundChatWriteRestrictionEnabled()) {
+                if (chatId === "__background__") {
+                    enforceBackgroundWriteRestriction(method, args, adapter);
+                } else {
+                    const restrictedTarget = getRestrictedWriteTarget(method, args, adapter);
+                    if (restrictedTarget != null && !isSelfTarget(restrictedTarget)) {
+                        const rawTarget = String(restrictedTarget);
+                        const targetChatId = ensureCompositeId(getPlatform(chatId), rawTarget);
+                        if (targetChatId !== chatId) {
+                            throw new Error(
+                                `[Sandbox 安全限制] ${method} 被拦截：当前 sandbox 绑定 chat=${chatId}，` +
+                                `不允许向 chat=${targetChatId} 发送消息。`
+                            );
+                        }
                     }
                 }
             }

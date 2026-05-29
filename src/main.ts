@@ -1168,13 +1168,11 @@ async function main(): Promise<void> {
     let harnessManager: import("./harness/manager.js").HarnessManager | null = null;
     if (mcpServerInstance && appConfig.backgroundAgent?.harness === "claude-code") {
         const { HarnessManager, ClaudeCodeLauncher } = await import("./harness/index.js");
-        const mcpPort = appConfig.backgroundAgent.mcpPort ?? 3100;
-        const mcpToken = appConfig.backgroundAgent.mcpToken ?? "";
         harnessManager = new HarnessManager({
             launcher: new ClaudeCodeLauncher(appConfig.backgroundAgent.claudeCodePath),
             workDir: process.cwd(),
-            mcpUrl: `http://127.0.0.1:${mcpPort}/mcp`,
-            mcpToken,
+            mcpUrl: `http://127.0.0.1:${mcpServerInstance.config.port}/mcp`,
+            mcpToken: mcpServerInstance.config.authToken,
             model: appConfig.backgroundAgent.claudeModel,
             maxBudgetUsd: appConfig.backgroundAgent.maxBudgetUsd,
         });
@@ -1353,6 +1351,22 @@ async function main(): Promise<void> {
     }, 30_000);
     if (schedulerWatchdogInterval.unref) schedulerWatchdogInterval.unref();
 
+    // ─── Background Agent 定时做梦 ───
+    let backgroundDreamingInterval: ReturnType<typeof setInterval> | null = null;
+    if (harnessManager && appConfig.backgroundAgent?.schedule) {
+        let lastDreamingMinute = -1;
+        backgroundDreamingInterval = setInterval(() => {
+            const now = new Date();
+            const minuteKey = now.getFullYear() * 1000000 + now.getMonth() * 10000 + now.getDate() * 100 + now.getHours() * 60 + now.getMinutes();
+            if (minuteKey === lastDreamingMinute) return;
+            if (!matchesCron(appConfig.backgroundAgent!.schedule!, now)) return;
+            lastDreamingMinute = minuteKey;
+            log.info("Background Agent 定时做梦触发", { schedule: appConfig.backgroundAgent!.schedule });
+            harnessManager!.triggerScheduled();
+        }, 30_000);
+        if (backgroundDreamingInterval.unref) backgroundDreamingInterval.unref();
+    }
+
     // ─── 启动（并行 + 超时容错） ───
     const ADAPTER_START_TIMEOUT_MS = 30_000;
     const adapterStatuses: Array<{ platform: string; status: "ok" | "failed" | "timeout"; error?: string }> = [];
@@ -1410,6 +1424,7 @@ async function main(): Promise<void> {
         clearInterval(topicCleanupInterval);
         clearInterval(reflectionInterval);
         clearInterval(schedulerWatchdogInterval);
+        if (backgroundDreamingInterval) clearInterval(backgroundDreamingInterval);
 
         // 停止 Background Agent harness
         if (harnessManager) {

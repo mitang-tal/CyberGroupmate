@@ -14,7 +14,8 @@ export function registerPlatformTools(mcp: McpServer, deps: McpServerDeps): void
         async ({ code }) => {
             const sandbox = await deps.sandboxPool.acquire("__background__");
             try {
-                const result = await sandbox.execute(code, SANDBOX_CALL_TIMEOUT);
+                const wrapped = `const __result__ = await (async () => {\n${code}\n})();\nif (__result__ !== undefined) console.log(typeof __result__ === "string" ? __result__ : JSON.stringify(__result__, null, 2));`;
+                const result = await sandbox.execute(wrapped, SANDBOX_CALL_TIMEOUT);
                 return {
                     content: [{ type: "text" as const, text: result.error ? `Error:\n${result.output}` : (result.output || "(no output)") }],
                     isError: result.error,

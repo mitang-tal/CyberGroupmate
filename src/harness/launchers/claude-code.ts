@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "../../core/logger.js";
 import type { HarnessLaunchOptions, HarnessLauncher } from "../types.js";
@@ -46,6 +46,10 @@ export class ClaudeCodeLauncher implements HarnessLauncher {
             cwd: options.workDir,
             stdio: ["ignore", "pipe", "pipe"],
             env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "background-agent" },
+        });
+
+        child.once("exit", () => {
+            try { unlinkSync(mcpConfigPath); } catch {}
         });
 
         return child;
