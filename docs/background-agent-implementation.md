@@ -18,7 +18,7 @@
 | MCP Client（连接外部 MCP server） | ✅ 已有 | `src/sandbox/modules/mcp-bridge/` |
 | **MCP Server（暴露内部 API）** | ✅ M1 已完成，23 tools（含 notify/skills/scheduler/todo/conversation/memory/agents/digest） | `src/mcp-server/` |
 | **notify 工具** | ✅ 已实现，支持 to: "meta"（注入 attention item）和 bindingId（dispatch） | `src/mcp-server/tools/notify.ts` |
-| **platform_exec（平台自操作）** | ❌ 需要新建，传入 JS 代码在 sandbox 中执行 | `src/mcp-server/tools/platform.ts` |
+| **sandbox_call（sandbox 代码执行）** | ❌ 需要新建，传入 JS 代码在 sandbox 中执行平台 API 和 skill | `src/mcp-server/tools/platform.ts` |
 | **HarnessManager（外部 harness 管理）** | ❌ 不存在，需要新建 | `src/harness/` |
 
 ---
@@ -37,20 +37,20 @@ Streamable HTTP transport，token 认证，端口冲突优雅降级，连接信�
 
 ---
 
-## Phase 1.5: platform_exec（平台自操作）
+## Phase 1.5: sandbox_call（sandbox 代码执行）
 
-**目标**：让 Background Agent 能执行平台操作（改头像/bio/发 story 等），不维护 MCP↔platform 的庞大映射。
+**目标**：让 Background Agent 能通过 MCP 在 sandbox 中执行 JS 代码，访问平台 API 和 skill。
 
-**这是 M1 到 M2 之间的关键路径。** 没有 platform_exec，Background Agent 无法完成 RFC §7.2 自操作类任务。
+**这是 M1 到 M2 之间的关键路径。** 没有 sandbox_call，Background Agent 无法完成 RFC §7.2 自操作类任务。
 
 ### 设计
 
-参考 `telegram-mtcute-guides.md` 的思想：平台 API 庞大（Telegram 单平台上百个 mtcute 方法），不为每个操作单独包装 MCP tool，而是用一个 `platform_exec` 工具传入 JS 代码在 sandbox 中执行。
+平台 API 庞大，不为每个操作维护 MCP tool 映射。一个 `sandbox_call` 工具传入 JS 代码在 sandbox 中执行，支持多步链式调用。
 
 ```typescript
 // src/mcp-server/tools/platform.ts
-mcp.tool("platform_exec", {
-  code: z.string().describe("JS code to run in sandbox with platform modules (telegram.*, etc.)"),
+mcp.tool("sandbox_call", {
+  code: z.string().describe("JS code to execute in sandbox with platform modules"),
 }, async ({ code }) => {
   const sandbox = await deps.sandboxPool.acquire("__background__");
   try {
@@ -62,24 +62,24 @@ mcp.tool("platform_exec", {
 });
 ```
 
+API 发现不走 MCP，走文件系统——Background Agent 在 Claude Code 中直接读 `src/sandbox/modules/brief-overview.md` 获取全部模块概览，需要详细签名时读 `.d.ts` 和 guide markdown。固定层 prompt 中指引这一路径。
+
 ### 关键设计点
 
-- **专用 sandbox**：使用 `__background__` chatId acquire，与正常群聊 sandbox 隔离
-- **复用现有机制**：sandbox 通过 `onAcquire` 回调挂载 telegram adapter 的 host call handler，`useXxx()` guide、mtcute passthrough 全部天然可用
-- **写限制**：`__background__` 没有绑定聊天，需要专门的 allowlist：
+- **专用 sandbox**：`__background__` chatId，与群聊 sandbox 隔离
+- **复用现有机制**：sandbox 通过 `onAcquire` 挂载 adapter host call handler，mtcute passthrough、guide 体系全部天然可用
+- **写限制 allowlist**（`__background__` 没有绑定聊天）：
   - ✅ 平台级自操作（accountProfile 组：改头像/bio/签名/emoji status 等）
   - ✅ Stories 操作（发/删/编辑 story）
   - ⛔ 发消息方法（`sendText`/`sendMedia`/`sendMediaGroup` 等，走 notify）
   - ⛔ 管理操作（kickUser/banUser/deleteMessages/改群设置）
-- **guide 体系天然可用**：Background Agent 先调 `telegram.useAccountProfile()` 获取完整 API 文档再执行，和 subagent 工作方式一致
-- **常用流程沉淀为 skill**：如 `change-avatar` skill，Background Agent 直接调用不需要每次写代码
+- **常用流程沉淀为 skill**：高频操作写成 skill，Background Agent 直接调用
 
 ### 改动点
 
-1. **新建 `src/mcp-server/tools/platform.ts`**：注册 `platform_exec` tool
-2. **修改 `src/mcp-server/index.ts`**：注册 platform tools，deps 需要传入 sandboxPool
-3. **修改 `src/mcp-server/types.ts`**：McpServerDeps 已有 sandboxPool（M1 加的），无需改
-4. **写限制 allowlist**：在 platform.ts 或 adapter 层实现 `__background__` 的方法白名单
+1. **新建 `src/mcp-server/tools/platform.ts`**：注册 `sandbox_call` tool
+2. **修改 `src/mcp-server/index.ts`**：注册 platform tools
+3. **写限制 allowlist**：在 adapter 层为 `__background__` chatId 实现方法白名单
 
 ### 预计工作量
 
@@ -87,7 +87,7 @@ mcp.tool("platform_exec", {
 
 ### 验证
 
-用 Claude Code 连上 MCP server，执行 `platform_exec({ code: "return await telegram.useAccountProfile()" })` 获取 guide 文档，再执行一个实际操作（如读取当前 bio）。
+用 Claude Code 连上 MCP server，执行 `sandbox_call({ code: "return await telegram.getMe()" })` 确认 sandbox 能正常调用平台 API。
 
 ---
 
@@ -251,7 +251,7 @@ if (reflectionResult.dreamingUpdate) {
 ```
 Phase 0: notify 工具                    ✅ 已完成
 Phase 1: MCP Server                     ✅ M1 已完成
-Phase 1.5: platform_exec（平台自操作）   1-2 天
+Phase 1.5: sandbox_call（sandbox 执行）   1-2 天
 Phase 2: HarnessManager                 2-3 天
 Phase 3: 系统集成（idle/reflection）     2-3 天
 Phase 4: 第二 Harness + 打磨            2-3 天
@@ -263,10 +263,10 @@ Phase 4: 第二 Harness + 打磨            2-3 天
 依赖关系：
 
 Phase 0 ──→ Phase 1 ──→ Phase 1.5 ──→ Phase 2 ──→ Phase 3 ──→ Phase 4
-  ✅          ✅       (platform)    (Harness)    (集成)      (打磨)
+  ✅          ✅       (sandbox)     (Harness)    (集成)      (打磨)
 ```
 
-Phase 1.5 和 Phase 2 可以部分并行（platform_exec 不依赖 HarnessManager）。Phase 3 依赖 Phase 2。Phase 4 随时可以开始 Copilot CLI 部分。
+Phase 1.5 和 Phase 2 可以部分并行（sandbox_call 不依赖 HarnessManager）。Phase 3 依赖 Phase 2。Phase 4 随时可以开始 Copilot CLI 部分。
 
 ---
 
@@ -276,7 +276,7 @@ Phase 1.5 和 Phase 2 可以部分并行（platform_exec 不依赖 HarnessManage
 |---|---|---|
 | M0: notify 可用 | Meta Agent 能通过 notify 通信 | ✅ |
 | M1: MCP 连通 | Claude Code 能连上 MCP server 并读到 digest | ✅ |
-| M1.5: 平台自操作 | Background Agent 能通过 platform_exec 执行平台操作 | 下一步 |
+| M1.5: sandbox 执行 | Background Agent 能通过 sandbox_call 执行平台 API | 下一步 |
 | M2: 首次做梦 | Background Agent 被手动拉起，执行一个完整任务并通过 notify 回传结果 | Phase 2 |
 | M3: 自动做梦 | 凌晨 3 点自动拉起，第二天早上有成果 | Phase 3 |
 | M4: 双 Harness | Claude Code 和 Copilot CLI 都能跑 | Phase 4 |

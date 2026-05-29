@@ -131,8 +131,13 @@ notify({
 ```
 [身份] 你是 Miu，这是你的"做梦"时间。
 [能力] MCP tools（自动注入）
+[平台 API]
+  通过 sandbox_call 工具执行 JS 代码来调用平台 API。
+  API 文档：读 src/sandbox/modules/brief-overview.md 获取全部模块概览，
+  需要详细签名时读对应 .d.ts 文件和 guide markdown。
 [硬性边界]
   - 不直接在群里发消息，通过 notify 让 subagent 发
+  - sandbox_call 中不能调用 sendText/sendMedia 等发消息方法
   - 不碰 reflection 的活
   - 不跑 CPU 密集型任务打满服务器
   - 改 skill 之后要验证能跑通再 reload
@@ -201,22 +206,27 @@ notify 给对应 subagent 去发送结果。
 - 修好 skill 直接 reload
 - 群友第二天看到"诶 Miu 换头像了"
 
-#### 实现方式：`platform_exec`
+#### 实现方式：`sandbox_call`
 
-平台 API 庞大（Telegram 单平台就有上百个 mtcute 方法），不为每个操作维护 MCP tool 映射。采用与 subagent sandbox 相同的思路：
+平台 API 庞大（Telegram 单平台就有上百个 mtcute 方法），不为每个操作维护 MCP tool 映射。一个 `sandbox_call` 工具传入 JS 代码，在专用 sandbox 中执行：
 
 ```
-platform_exec({
-  code: "await telegram.useAccountProfile(); await telegram.mtcute('setMyProfilePhoto', { ... });"
+sandbox_call({
+  code: `
+    const photos = await telegram.iterProfilePhotos("me").toArray();
+    const buf = await telegram.downloadAsBuffer(photos[0]);
+    // ... 处理后设置新头像
+    await telegram.mtcute('setMyProfilePhoto', { photo: ... });
+  `
 })
 ```
 
-- 一个 MCP tool，传入 JS 代码，在专用 sandbox（`__background__`）中执行
-- sandbox 挂载平台 adapter（telegram 等），复用现有 host call / mtcute passthrough 机制
+- 传入 JS 代码在 `__background__` 专用 sandbox 中执行，支持多步链式调用
+- sandbox 挂载平台 adapter，复用现有 host call / mtcute passthrough 机制
 - 写限制：允许平台级自操作（avatar/bio/story），禁止发消息到群/私聊（发消息走 notify）
-- 常用流程沉淀为 skill 后可直接调用，不必每次写代码
+- 常用流程沉淀为 skill 后可直接调用
 
-与 `useXxx()` guide 体系的关系：Background Agent 同样可以先调 `telegram.useAccountProfile()` 获取完整 API 文档，再执行具体操作。guide 在 sandbox 内天然可用。
+API 发现不走 MCP，走文件系统：Background Agent 运行在 Claude Code 中有完整文件系统访问，固定层 prompt 指引它读 `src/sandbox/modules/brief-overview.md` 了解全部 API，需要详细签名时读对应 `.d.ts` 和 guide markdown。
 
 ### 7.3 写日记（面向记录）
 
@@ -335,7 +345,7 @@ Background Agent 通过 MCP 访问的 Core 能力：
 | `notify` | 通知 Meta 或任何 subagent |
 | `skills.list` / `skills.reload` | 管理 skill |
 | `todo.list` / `todo.create` | 任务列表 |
-| `platform_exec` | 传入 JS 代码在 sandbox 中执行平台操作（改头像/bio/发动态等） |
+| `sandbox_call` | 传入 JS 代码在 sandbox 中执行（平台操作、skill 调用等） |
 
 ---
 
@@ -385,4 +395,4 @@ Background Agent 通过 MCP 访问的 Core 能力：
 | HarnessManager 位置 | src/harness/（独立模块） | 未来职责会扩展，不应绑定在 main-agent 下 |
 | 做梦日记去处 | 默认写文件，可配置 | 最不打扰，方便回看 |
 | CLAUDE.md 方案 | 通过 -p 传入，不用文件 | 避免和主项目 CLAUDE.md 冲突 |
-| 平台操作方式 | `platform_exec` 传入 JS 代码在 sandbox 执行 | 平台 API 庞大，不维护 MCP↔platform 映射；复用 sandbox + guide 体系 |
+| 平台操作方式 | `sandbox_call` 传入 JS 代码在 sandbox 执行 | 平台 API 庞大且多步链式调用多，不维护 MCP↔platform 映射；API 发现走文件系统（brief-overview.md + .d.ts） |
