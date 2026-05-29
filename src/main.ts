@@ -1142,13 +1142,19 @@ async function main(): Promise<void> {
     let mcpServerInstance: { httpServer: import("node:http").Server; config: { port: number; authToken: string } } | null = null;
     if (mcpServerEnabled) {
         const { startMcpServer, generateAuthToken } = await import("./mcp-server/index.js");
+        const { writeFileSync } = await import("node:fs");
+        const { join } = await import("node:path");
         const mcpPort = appConfig.backgroundAgent?.mcpPort ?? 3100;
         const mcpToken = appConfig.backgroundAgent?.mcpToken ?? generateAuthToken();
         try {
             mcpServerInstance = await startMcpServer(
-                { metaApi: metaApiContext, globalState, workspaceRoot: process.cwd() },
+                { metaApi: metaApiContext, globalState, accumulator, sandboxPool, workspaceRoot: process.cwd() },
                 { port: mcpPort, authToken: mcpToken },
             );
+            if (mcpServerInstance) {
+                const connInfo = { url: `http://127.0.0.1:${mcpPort}/mcp`, token: mcpToken };
+                writeFileSync(join(process.cwd(), "workspace", "mcp-server-info.json"), JSON.stringify(connInfo, null, 2));
+            }
         } catch (err) {
             log.error("MCP Server 启动失败", { error: String(err) });
         }

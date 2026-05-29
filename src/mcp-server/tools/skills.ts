@@ -78,13 +78,19 @@ export function registerSkillsTools(mcp: McpServer, deps: McpServerDeps): void {
 
     mcp.tool(
         "skills_reload",
-        "Trigger a hot-reload of all skills. Call this after writing/modifying skill files to make changes take effect.",
+        "Trigger a hot-reload of all skills and evict idle sandbox instances so they pick up changes on next use. Call this after writing/modifying skill files.",
         async () => {
             try {
                 const { reloadAllSkills, getSkillListEntries } = await import("../../sandbox/skill-loader.js");
                 const loaded = await reloadAllSkills();
                 const entries = getSkillListEntries(loaded);
-                return { content: [{ type: "text" as const, text: JSON.stringify({ reloaded: true, count: entries.length, skills: entries.map(e => e.name) }, null, 2) }] };
+                const evicted = deps.sandboxPool.evictIdle();
+                return { content: [{ type: "text" as const, text: JSON.stringify({
+                    reloaded: true,
+                    count: entries.length,
+                    skills: entries.map(e => e.name),
+                    sandboxesEvicted: evicted,
+                }, null, 2) }] };
             } catch (err) {
                 return { content: [{ type: "text" as const, text: `Error reloading skills: ${err}` }], isError: true };
             }

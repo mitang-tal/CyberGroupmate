@@ -13,8 +13,19 @@ export function registerNotifyTools(mcp: McpServer, deps: McpServerDeps): void {
         },
         async ({ to, content, useSkills }) => {
             if (to === "meta") {
-                deps.globalState.addSessionDigest(`[Background Agent notify → Meta] ${content}`);
-                return { content: [{ type: "text" as const, text: JSON.stringify({ delivered: true, to: "meta", method: "session_digest" }) }] };
+                deps.globalState.addSessionDigest(`[Background Agent → Meta] ${content}`);
+                const now = Date.now();
+                deps.accumulator.ingest(1, {
+                    chatId: "__meta__",
+                    source: "BACKGROUND_AGENT",
+                    enqueuedAt: now,
+                    payload: {
+                        type: "background_notify",
+                        id: `bg:${now}`,
+                        description: content,
+                    },
+                });
+                return { content: [{ type: "text" as const, text: JSON.stringify({ delivered: true, to: "meta", method: "attention_item" }) }] };
             }
 
             const result = await deps.metaApi.dispatch.taskToGroup(to, {

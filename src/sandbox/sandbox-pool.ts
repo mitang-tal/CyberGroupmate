@@ -279,6 +279,19 @@ export class SandboxPool {
     /**
      * 清理超时空闲实例
      */
+    evictIdle(): number {
+        let count = 0;
+        for (const [chatId, entry] of this.pool.entries()) {
+            if (!entry.inUse) {
+                entry.sandbox.stop().catch(() => {});
+                this.pool.delete(chatId);
+                count++;
+            }
+        }
+        if (count > 0) log.info("evictIdle: 强制回收闲置 sandbox", { count });
+        return count;
+    }
+
     private cleanupIdle(): void {
         const now = Date.now();
         const toRemove: string[] = [];
