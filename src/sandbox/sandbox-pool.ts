@@ -51,6 +51,8 @@ interface PoolEntry {
     lastUsedAt: number;
     /** 是否正在使用中 */
     inUse: boolean;
+    /** 创建时的 skill generation */
+    skillGeneration: number;
 }
 
 /**
@@ -68,6 +70,7 @@ export class SandboxPool {
     private pool = new Map<string, PoolEntry>();
     private config: SandboxPoolConfig;
     private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+    private _skillGeneration = 0;
 
     constructor(config?: Partial<SandboxPoolConfig>) {
         this.config = { ...DEFAULT_POOL_CONFIG, ...config };
@@ -88,18 +91,24 @@ export class SandboxPool {
         // 复用已有实例
         const existing = this.pool.get(chatId);
         if (existing) {
-            existing.lastUsedAt = Date.now();
-            existing.inUse = true;
+            if (existing.skillGeneration < this._skillGeneration) {
+                log.info("acquire: skill 已更新，回收旧实例", { chatId });
+                existing.sandbox.stop().catch(() => {});
+                this.pool.delete(chatId);
+            } else {
+                existing.lastUsedAt = Date.now();
+                existing.inUse = true;
 
-            // 检查是否还活着
-            if (existing.sandbox.isAlive()) {
-                log.debug("acquire: 复用", { chatId });
-                return existing.sandbox;
+                // 检查是否还活着
+                if (existing.sandbox.isAlive()) {
+                    log.debug("acquire: 复用", { chatId });
+                    return existing.sandbox;
+                }
+
+                // 死掉了，移除后重新创建
+                log.warn("acquire: 已有实例已死，重新创建", { chatId });
+                this.pool.delete(chatId);
             }
-
-            // 死掉了，移除后重新创建
-            log.warn("acquire: 已有实例已死，重新创建", { chatId });
-            this.pool.delete(chatId);
         }
 
         // 检查是否达到上限
@@ -128,6 +137,7 @@ export class SandboxPool {
             chatId,
             lastUsedAt: Date.now(),
             inUse: true,
+            skillGeneration: this._skillGeneration,
         });
 
         log.info("acquire: 创建新实例", { chatId, poolSize: this.pool.size });
@@ -290,6 +300,17 @@ export class SandboxPool {
         }
         if (count > 0) log.info("evictIdle: 强制回收闲置 sandbox", { count });
         return count;
+    }
+
+    /**
+     * Skill 重载后调用：立即回收空闲实例，标记 in-use 实例为过期（下次 acquire 时替换）。
+     */
+    invalidateSkills(): number {
+        this._skillGeneration++;
+        const evicted = this.evictIdle();
+        const staleInUse = Array.from(this.pool.values()).filter(e => e.skillGeneration < this._skillGeneration).length;
+        if (staleInUse > 0) log.info("invalidateSkills: 标记 in-use 实例过期", { staleInUse });
+        return evicted;
     }
 
     private cleanupIdle(): void {

@@ -86,7 +86,7 @@ export function registerSkillsTools(mcp: McpServer, deps: McpServerDeps): void {
                 const loaded = await reloadAllSkills();
                 const entries = getSkillListEntries(loaded);
                 refreshModuleRegistryCache();
-                const evicted = deps.sandboxPool.evictIdle();
+                const evicted = deps.sandboxPool.invalidateSkills();
                 return { content: [{ type: "text" as const, text: JSON.stringify({
                     reloaded: true,
                     count: entries.length,
