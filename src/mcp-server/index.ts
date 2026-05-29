@@ -12,6 +12,7 @@ import { registerTodoTools } from "./tools/todo.js";
 import { registerSchedulerTools } from "./tools/scheduler.js";
 import { registerDigestTools } from "./tools/digest.js";
 import { registerNotifyTools } from "./tools/notify.js";
+import { registerPlatformTools } from "./tools/platform.js";
 import type { McpServerDeps } from "./types.js";
 
 const log = createLogger("mcp-server");
@@ -38,6 +39,7 @@ function createMcpInstance(deps: McpServerDeps): McpServer {
     registerSchedulerTools(mcp, deps);
     registerDigestTools(mcp, deps);
     registerNotifyTools(mcp, deps);
+    registerPlatformTools(mcp, deps);
     return mcp;
 }
 

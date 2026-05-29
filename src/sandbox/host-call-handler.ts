@@ -97,6 +97,25 @@ function isSelfTarget(target: unknown): boolean {
     return typeof target === "string" && /^(me|self)$/i.test(target.trim());
 }
 
+function enforceBackgroundWriteRestriction(method: string, args: unknown[], adapter: PlatformAdapter): void {
+    if (adapter.getWriteMethods().includes(method)) {
+        throw new Error(
+            `[Background sandbox] ${method} 不允许：请使用 notify 工具发送消息。`,
+        );
+    }
+    if (method === "telegram.mtcute") {
+        const mtcuteMethod = String(args[0] ?? "");
+        if (TELEGRAM_MTCUTE_WRITE_METHODS.has(mtcuteMethod)) {
+            const target = getTelegramMtcuteWriteTarget(mtcuteMethod, args.slice(1));
+            if (target != null && !isSelfTarget(target)) {
+                throw new Error(
+                    `[Background sandbox] telegram.mtcute('${mtcuteMethod}') 不允许操作其他 chat，只允许自操作。`,
+                );
+            }
+        }
+    }
+}
+
 export function createSandboxHostCallHandler(chatId: string, deps: CreateSandboxHostCallHandlerDeps) {
     const {
         appConfig,
@@ -141,7 +160,9 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
     return async (method: string, args: unknown[]) => {
         const adapter = adapters.find((item) => item.canHandle(method));
         if (adapter) {
-            if (isBoundChatWriteRestrictionEnabled()) {
+            if (chatId === "__background__") {
+                enforceBackgroundWriteRestriction(method, args, adapter);
+            } else if (isBoundChatWriteRestrictionEnabled()) {
                 const restrictedTarget = getRestrictedWriteTarget(method, args, adapter);
                 if (restrictedTarget != null && !isSelfTarget(restrictedTarget)) {
                     const rawTarget = String(restrictedTarget);
