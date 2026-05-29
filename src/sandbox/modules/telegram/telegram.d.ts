@@ -169,11 +169,25 @@ declare const telegram: {
     downloadMedia(location: string | TelegramMtcuteRef | Record<string, unknown>, chatId?: number | string, messageId?: number, uniqueFileId?: string): Promise<{ buffer: string; size: number; }>;
     /**
      * mtcute 原生 downloadAsBuffer 透传。返回值在 sandbox 中表示为 base64 buffer。
+     *
+     * ⚠️ **重要**：此方法对 `location` 类型容错较低。
+     * - ✅ 接受：fileId 字符串、带 `__mtcuteRef` 的 mtcute 原生对象（如 `getProfilePhotos` 返回的 photo 对象）
+     * - ❌ 不接受：`msg.mediaInfo`（普通 plain object，没有 `__mtcuteRef`）——会报 "Unknown object undefined"
+     *
+     * 大多数场景建议优先用 `downloadMedia`（容错更好），仅在需要 mtcute 原生对象时用此方法。
+     *
      * @example
+     * // ✅ 下载用户头像（getProfilePhotos 返回 mtcute 原生对象，可直接传入）
      * const [photo] = await telegram.getProfilePhotos(userId, { limit: 1 });
      * const data = await telegram.downloadAsBuffer(photo);
+     *
+     * @example
+     * // ❌ 不要传 mediaInfo（会报错）
+     * // const data = await telegram.downloadAsBuffer(msg.mediaInfo); // Error!
+     * // ✅ 改用 downloadMedia，或先取 fileId 字符串
+     * const data = await telegram.downloadMedia(msg.mediaInfo.fileId, chatId, msg.id, msg.mediaInfo.uniqueFileId);
      */
-    downloadAsBuffer(location: string | TelegramMtcuteRef | Record<string, unknown>, params?: { fileSize?: number; partSize?: number; dcId?: number; offset?: number; limit?: number }): Promise<{ buffer: string; size: number; }>;
+    downloadAsBuffer(location: string | TelegramMtcuteRef, params?: { fileSize?: number; partSize?: number; dcId?: number; offset?: number; limit?: number }): Promise<{ buffer: string; size: number; }>;
 
     // ─── 群组管理 ───
     /** 加入一个群聊或频道 */
