@@ -21,6 +21,9 @@ export class HarnessManager {
     private child: ChildProcess | null = null;
     private pendingQueue: HarnessNotify[] = [];
     private history: HarnessRunRecord[] = [];
+    private consecutiveFailures = 0;
+    private lastError: string | null = null;
+    onSpawnFailure?: (error: string, pendingCount: number) => void;
 
     constructor(config: HarnessManagerConfig) {
         this.config = config;
@@ -45,19 +48,18 @@ export class HarnessManager {
     }
 
     triggerScheduled(): void {
-        if (this.shuttingDown || this.running) {
-            log.info("triggerScheduled: skipped", { shuttingDown: this.shuttingDown, running: this.running });
-            return;
-        }
-        void this.launch("scheduled");
+        if (this.shuttingDown) return;
+        this.enqueue({ content: "scheduled-dreaming", source: "scheduler" });
     }
 
-    getStatus(): { running: boolean; queueLength: number; historyCount: number; lastRun?: HarnessRunRecord } {
+    getStatus(): { running: boolean; queueLength: number; historyCount: number; lastRun?: HarnessRunRecord; lastError: string | null; consecutiveFailures: number } {
         return {
             running: this.running,
             queueLength: this.pendingQueue.length,
             historyCount: this.history.length,
             lastRun: this.history[this.history.length - 1],
+            lastError: this.lastError,
+            consecutiveFailures: this.consecutiveFailures,
         };
     }
 
@@ -132,6 +134,8 @@ export class HarnessManager {
 
                 this.child = null;
                 this.running = false;
+                this.consecutiveFailures = 0;
+                this.lastError = null;
 
                 if (!this.shuttingDown && this.pendingQueue.length > 0) {
                     log.info("launch: pending queue not empty, relaunching", { queueLength: this.pendingQueue.length });
@@ -140,21 +144,34 @@ export class HarnessManager {
             });
 
             this.child.once("error", (err) => {
-                log.error("launch: harness process error", { error: String(err) });
-                this.pendingQueue.unshift(...pending);
-                record.endedAt = Date.now();
-                record.exitCode = -1;
-                this.history.push(record);
-                this.child = null;
-                this.running = false;
+                this.handleSpawnFailure(String(err), pending, record);
             });
         } catch (err) {
-            log.error("launch: failed to start harness", { error: String(err) });
-            this.pendingQueue.unshift(...pending);
-            record.endedAt = Date.now();
-            record.exitCode = -1;
-            this.history.push(record);
-            this.running = false;
+            this.handleSpawnFailure(String(err), pending, record);
+        }
+    }
+
+    private handleSpawnFailure(error: string, pending: HarnessNotify[], record: HarnessRunRecord): void {
+        log.error("launch: harness spawn failed", { error, consecutiveFailures: this.consecutiveFailures + 1 });
+        this.pendingQueue.unshift(...pending);
+        record.endedAt = Date.now();
+        record.exitCode = -1;
+        this.history.push(record);
+        if (this.history.length > 50) this.history.shift();
+        this.child = null;
+        this.running = false;
+        this.consecutiveFailures++;
+        this.lastError = error;
+        this.onSpawnFailure?.(error, this.pendingQueue.length);
+
+        if (!this.shuttingDown && this.pendingQueue.length > 0 && this.consecutiveFailures <= 3) {
+            const delaySec = Math.min(30, 5 * Math.pow(2, this.consecutiveFailures - 1));
+            log.info("launch: scheduling retry", { delaySec, attempt: this.consecutiveFailures });
+            setTimeout(() => {
+                if (!this.shuttingDown && !this.running && this.pendingQueue.length > 0) {
+                    void this.launch("enqueued");
+                }
+            }, delaySec * 1000);
         }
     }
 

@@ -48,9 +48,9 @@ export class ClaudeCodeLauncher implements HarnessLauncher {
             env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "background-agent" },
         });
 
-        child.once("exit", () => {
-            try { unlinkSync(mcpConfigPath); } catch {}
-        });
+        const cleanup = () => { try { unlinkSync(mcpConfigPath); } catch {} };
+        child.once("exit", cleanup);
+        child.once("error", cleanup);
 
         return child;
     }

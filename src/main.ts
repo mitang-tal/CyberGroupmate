@@ -1176,6 +1176,9 @@ async function main(): Promise<void> {
             model: appConfig.backgroundAgent.claudeModel,
             maxBudgetUsd: appConfig.backgroundAgent.maxBudgetUsd,
         });
+        harnessManager.onSpawnFailure = (error, pendingCount) => {
+            globalState.addSessionDigest(`[Background Agent spawn failed] ${error} (${pendingCount} pending tasks)`);
+        };
         log.info("HarnessManager 已创建", { harness: "claude-code" });
     }
 
