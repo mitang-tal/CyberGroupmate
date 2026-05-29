@@ -1487,6 +1487,15 @@ export function serializeConfigToObject(config: AppConfig): Record<string, unkno
         obj.rate_limiting = rl;
     }
 
+    // background_agent
+    if (config.backgroundAgent) {
+        const ba: Record<string, unknown> = {};
+        if (config.backgroundAgent.enabled != null) ba.enabled = config.backgroundAgent.enabled;
+        if (config.backgroundAgent.mcpPort != null) ba.mcp_port = config.backgroundAgent.mcpPort;
+        if (config.backgroundAgent.mcpToken != null) ba.mcp_token = config.backgroundAgent.mcpToken;
+        if (Object.keys(ba).length > 0) obj.background_agent = ba;
+    }
+
     return obj;
 }
 

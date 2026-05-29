@@ -28,4 +28,32 @@ export function registerTodoTools(mcp: McpServer, deps: McpServerDeps): void {
             return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
         },
     );
+
+    mcp.tool(
+        "todo_set",
+        "Create or update a todo item.",
+        {
+            key: z.string().describe("Unique key for this todo item"),
+            content: z.string().describe("Todo item content/description"),
+            bindingId: z.string().optional().describe("Binding ID (default 'meta')"),
+            dueAt: z.string().optional().describe("Due date/time (ISO timestamp or epoch ms). Null to clear."),
+        },
+        async ({ key, content, bindingId, dueAt }) => {
+            const result = await deps.metaApi.todo.set({ key, content, bindingId, dueAt });
+            return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+        },
+    );
+
+    mcp.tool(
+        "todo_delete",
+        "Delete a todo item by key.",
+        {
+            key: z.string().describe("Todo item key to delete"),
+            bindingId: z.string().optional().describe("Binding ID (default 'meta')"),
+        },
+        async ({ key, bindingId }) => {
+            await deps.metaApi.todo.delete(key, bindingId);
+            return { content: [{ type: "text" as const, text: JSON.stringify({ deleted: true, key }) }] };
+        },
+    );
 }

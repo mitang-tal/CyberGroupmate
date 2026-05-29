@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { McpServerDeps } from "../types.js";
@@ -48,6 +48,45 @@ export function registerSkillsTools(mcp: McpServer, deps: McpServerDeps): void {
                 return { content: [{ type: "text" as const, text: content }] };
             } catch (err) {
                 return { content: [{ type: "text" as const, text: `Error reading file: ${err}` }], isError: true };
+            }
+        },
+    );
+
+    mcp.tool(
+        "skills_writeFile",
+        "Write or update a file in a skill directory. Creates the skill directory if it doesn't exist.",
+        {
+            skillName: z.string().describe("Skill directory name"),
+            fileName: z.string().describe("File name to write"),
+            content: z.string().describe("File content"),
+        },
+        async ({ skillName, fileName, content }) => {
+            if (skillName.includes("..") || fileName.includes("..")) {
+                return { content: [{ type: "text" as const, text: "Path traversal not allowed" }], isError: true };
+            }
+            const skillDir = join(deps.workspaceRoot, "workspace", "skills", skillName);
+            const filePath = join(skillDir, fileName);
+            try {
+                await mkdir(skillDir, { recursive: true });
+                await writeFile(filePath, content, "utf-8");
+                return { content: [{ type: "text" as const, text: JSON.stringify({ written: true, path: filePath }) }] };
+            } catch (err) {
+                return { content: [{ type: "text" as const, text: `Error writing file: ${err}` }], isError: true };
+            }
+        },
+    );
+
+    mcp.tool(
+        "skills_reload",
+        "Trigger a hot-reload of all skills. Call this after writing/modifying skill files to make changes take effect.",
+        async () => {
+            try {
+                const { reloadAllSkills, getSkillListEntries } = await import("../../sandbox/skill-loader.js");
+                const loaded = await reloadAllSkills();
+                const entries = getSkillListEntries(loaded);
+                return { content: [{ type: "text" as const, text: JSON.stringify({ reloaded: true, count: entries.length, skills: entries.map(e => e.name) }, null, 2) }] };
+            } catch (err) {
+                return { content: [{ type: "text" as const, text: `Error reloading skills: ${err}` }], isError: true };
             }
         },
     );

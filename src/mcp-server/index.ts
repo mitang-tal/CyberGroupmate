@@ -10,6 +10,8 @@ import { registerAgentsTools } from "./tools/agents.js";
 import { registerSkillsTools } from "./tools/skills.js";
 import { registerTodoTools } from "./tools/todo.js";
 import { registerSchedulerTools } from "./tools/scheduler.js";
+import { registerDigestTools } from "./tools/digest.js";
+import { registerNotifyTools } from "./tools/notify.js";
 import type { McpServerDeps } from "./types.js";
 
 const log = createLogger("mcp-server");
@@ -34,13 +36,15 @@ function createMcpInstance(deps: McpServerDeps): McpServer {
     registerSkillsTools(mcp, deps);
     registerTodoTools(mcp, deps);
     registerSchedulerTools(mcp, deps);
+    registerDigestTools(mcp, deps);
+    registerNotifyTools(mcp, deps);
     return mcp;
 }
 
 export async function startMcpServer(
     deps: McpServerDeps,
     config: McpServerConfig,
-): Promise<{ httpServer: HttpServer; config: McpServerConfig }> {
+): Promise<{ httpServer: HttpServer; config: McpServerConfig } | null> {
     const app = express();
     app.use(express.json());
 
@@ -121,7 +125,15 @@ export async function startMcpServer(
 
     const httpServer = createServer(app);
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+        httpServer.once("error", (err: NodeJS.ErrnoException) => {
+            if (err.code === "EADDRINUSE") {
+                log.warn(`MCP server port ${config.port} already in use, skipping`);
+                resolve(null);
+            } else {
+                reject(err);
+            }
+        });
         httpServer.listen(config.port, "127.0.0.1", () => {
             log.info(`MCP server listening on http://127.0.0.1:${config.port}/mcp (token: ${config.authToken.slice(0, 8)}...)`);
             resolve({ httpServer, config });

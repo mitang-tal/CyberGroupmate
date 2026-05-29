@@ -1146,7 +1146,7 @@ async function main(): Promise<void> {
         const mcpToken = appConfig.backgroundAgent?.mcpToken ?? generateAuthToken();
         try {
             mcpServerInstance = await startMcpServer(
-                { metaApi: metaApiContext, workspaceRoot: process.cwd() },
+                { metaApi: metaApiContext, globalState, workspaceRoot: process.cwd() },
                 { port: mcpPort, authToken: mcpToken },
             );
         } catch (err) {
