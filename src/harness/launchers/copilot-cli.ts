@@ -18,7 +18,7 @@ export class CopilotCliLauncher implements HarnessLauncher {
 
     async start(options: HarnessLaunchOptions): Promise<ChildProcess> {
         const mcpConfigPath = join(options.workDir, "workspace", ".background-mcp-config.json");
-        const homeDir = getHarnessHome(options.workDir, this.name);
+        const homeDir = getHarnessHome();
         mkdirSync(join(options.workDir, "workspace"), { recursive: true });
         writeFileSync(mcpConfigPath, serializeCopilotMcpConfig(options.mcpConfig), "utf-8");
         const instructionPath = writeHarnessInstructions(homeDir, this.name, options.systemPrompt);
@@ -48,7 +48,7 @@ export class CopilotCliLauncher implements HarnessLauncher {
         const child = spawn(this.copilotPath, args, {
             cwd: options.workDir,
             stdio: ["ignore", "pipe", "pipe"],
-            env: buildHarnessEnv(process.env, homeDir, { COPILOT_HOME: join(homeDir, ".copilot") }),
+            env: buildHarnessEnv(process.env),
         });
 
         const cleanup = () => { try { unlinkSync(mcpConfigPath); } catch {} };

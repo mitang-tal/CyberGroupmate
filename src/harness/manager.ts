@@ -147,7 +147,7 @@ export class HarnessManager {
 
         const runId = this.createRunId();
         const logPath = join(this.config.workDir, "workspace", "dream-journal", `${runId}.jsonl`);
-        const harnessHome = getHarnessHome(this.config.workDir, this.config.launcher.name);
+        const harnessHome = getHarnessHome();
         const instructionPath = getHarnessInstructionPath(harnessHome, this.config.launcher.name);
         mkdirSync(join(this.config.workDir, "workspace", "dream-journal"), { recursive: true });
 

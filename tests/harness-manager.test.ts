@@ -113,7 +113,7 @@ describe("Harness MCP config serialization", () => {
     });
 });
 
-describe("Harness prompt and home isolation", () => {
+describe("Harness prompt and user home handling", () => {
     it("keeps identity in system prompt and task context in task prompt", () => {
         const root = join(process.cwd(), "workspace", ".test-harness-prompt");
         rmSync(root, { recursive: true, force: true });
@@ -135,13 +135,13 @@ describe("Harness prompt and home isolation", () => {
         }
     });
 
-    it("writes launcher instructions under an explicit harness HOME", () => {
+    it("writes launcher instructions under the selected user HOME", () => {
         const root = join(process.cwd(), "workspace", ".test-harness-home");
         rmSync(root, { recursive: true, force: true });
 
         try {
-            const claudeHome = getHarnessHome(root, "claude-code");
-            const copilotHome = getHarnessHome(root, "copilot");
+            const claudeHome = getHarnessHome({ HOME: join(root, "user-home") });
+            const copilotHome = getHarnessHome({ HOME: join(root, "user-home") });
             const claudePath = writeHarnessInstructions(claudeHome, "claude-code", "system for claude");
             const copilotPath = writeHarnessInstructions(copilotHome, "copilot", "system for copilot");
 
@@ -154,9 +154,10 @@ describe("Harness prompt and home isolation", () => {
             assert.equal(existsSync(claudePath), true);
             assert.equal(existsSync(copilotPath), true);
 
-            const env = buildHarnessEnv({ HOME: "real-home", USERPROFILE: "real-profile" }, claudeHome);
-            assert.equal(env.HOME, claudeHome);
-            assert.equal(env.USERPROFILE, claudeHome);
+            const env = buildHarnessEnv({ HOME: "real-home", USERPROFILE: "real-profile" }, { CLAUDE_CODE_ENTRYPOINT: "background-agent" });
+            assert.equal(env.HOME, "real-home");
+            assert.equal(env.USERPROFILE, "real-profile");
+            assert.equal(env.CLAUDE_CODE_ENTRYPOINT, "background-agent");
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

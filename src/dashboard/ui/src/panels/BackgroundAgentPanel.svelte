@@ -248,7 +248,7 @@
                 <div><span>PID</span><strong>{selectedRun.pid ?? '-'}</strong></div>
                 <div><span>MCP</span><strong>{(selectedRun.mcpServers ?? []).join(', ') || '-'}</strong></div>
                 {#if selectedRun.harnessHome}
-                  <div class="col-span-full"><span>Harness HOME</span><strong class="font-mono break-all">{selectedRun.harnessHome}</strong></div>
+                  <div class="col-span-full"><span>用户 HOME</span><strong class="font-mono break-all">{selectedRun.harnessHome}</strong></div>
                 {/if}
                 {#if selectedRun.instructionPath}
                   <div class="col-span-full"><span>System prompt 文件</span><strong class="font-mono break-all">{selectedRun.instructionPath}</strong></div>
