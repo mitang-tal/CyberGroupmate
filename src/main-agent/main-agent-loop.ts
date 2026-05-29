@@ -522,6 +522,10 @@ export class MainAgentLoop {
                     : createSyntheticMetaEntry(item);
                 entry.schedulerTriggers = item.source === "PROACTIVE_IDLE" ? [] : extractSchedulerTriggers(item.payload);
                 break;
+            case "BACKGROUND_AGENT":
+                entry = createSyntheticMetaEntry(item);
+                entry.schedulerTriggers = extractBackgroundAgentTriggers(item.payload);
+                break;
             case "CALLBACK":
                 if (!subagent) return null;
                 entry = subagent.buildQueueEntry("DEFERRED_RE_ENTRY");
@@ -571,7 +575,7 @@ export interface MetaTurnResult {
 }
 
 function isSyntheticMetaSource(source: AttentionItem["source"]): boolean {
-    return source === "WAKE_CONDITION" || source === "SCHEDULER" || source === "PROACTIVE_IDLE";
+    return source === "WAKE_CONDITION" || source === "SCHEDULER" || source === "PROACTIVE_IDLE" || source === "BACKGROUND_AGENT";
 }
 
 function isSubagentCallback(value: unknown): value is SubagentCallback {
@@ -686,6 +690,14 @@ function extractSchedulerTriggers(payload: unknown): NonNullable<AttentionQueueE
     }
 
     return [];
+}
+
+function extractBackgroundAgentTriggers(payload: unknown): NonNullable<AttentionQueueEntry["schedulerTriggers"]> {
+    if (!payload || typeof payload !== "object") return [];
+    const p = payload as Record<string, unknown>;
+    const desc = typeof p.description === "string" ? p.description : "Background Agent notification";
+    const id = typeof p.id === "string" ? p.id : `bg:${Date.now()}`;
+    return [{ id, type: "reminder" as const, description: `[Background Agent] ${desc}` }];
 }
 
 function extractDirectAddressPayload(payload: unknown, chatId: string): { reason?: string; messageIds: string[]; userIds: string[] } {

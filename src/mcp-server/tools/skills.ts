@@ -82,8 +82,10 @@ export function registerSkillsTools(mcp: McpServer, deps: McpServerDeps): void {
         async () => {
             try {
                 const { reloadAllSkills, getSkillListEntries } = await import("../../sandbox/skill-loader.js");
+                const { refreshModuleRegistryCache } = await import("../../subagent/code-act-executor.js");
                 const loaded = await reloadAllSkills();
                 const entries = getSkillListEntries(loaded);
+                refreshModuleRegistryCache();
                 const evicted = deps.sandboxPool.evictIdle();
                 return { content: [{ type: "text" as const, text: JSON.stringify({
                     reloaded: true,
