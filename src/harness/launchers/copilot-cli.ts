@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "../../core/logger.js";
+import { buildHarnessEnv, getHarnessHome, writeHarnessInstructions } from "../home.js";
 import type { HarnessLaunchOptions, HarnessLauncher } from "../types.js";
 
 const log = createLogger("harness-copilot-cli");
@@ -16,8 +17,10 @@ export class CopilotCliLauncher implements HarnessLauncher {
 
     async start(options: HarnessLaunchOptions): Promise<ChildProcess> {
         const mcpConfigPath = join(options.workDir, "workspace", ".background-mcp-config.json");
+        const homeDir = getHarnessHome(options.workDir, this.name);
         mkdirSync(join(options.workDir, "workspace"), { recursive: true });
         writeFileSync(mcpConfigPath, options.mcpConfigJson, "utf-8");
+        const instructionPath = writeHarnessInstructions(homeDir, this.name, options.systemPrompt);
 
         const args = [
             "-p", options.prompt,
@@ -37,11 +40,14 @@ export class CopilotCliLauncher implements HarnessLauncher {
         log.info("launching copilot cli", {
             copilot: this.copilotPath,
             model: options.model ?? "(default)",
+            home: homeDir,
+            instructionPath,
         });
 
         const child = spawn(this.copilotPath, args, {
             cwd: options.workDir,
             stdio: ["ignore", "pipe", "pipe"],
+            env: buildHarnessEnv(process.env, homeDir),
         });
 
         const cleanup = () => { try { unlinkSync(mcpConfigPath); } catch {} };

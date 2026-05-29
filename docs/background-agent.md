@@ -394,5 +394,5 @@ Background Agent 通过 MCP 访问的 Core 能力：
 | 安全边界 | 三级，无审核 | 没有有效的审核方式 |
 | HarnessManager 位置 | src/harness/（独立模块） | 未来职责会扩展，不应绑定在 main-agent 下 |
 | 做梦日记去处 | 默认写文件，可配置 | 最不打扰，方便回看 |
-| CLAUDE.md 方案 | 通过 -p 传入，不用文件 | 避免和主项目 CLAUDE.md 冲突 |
+| Harness system prompt | 写入隔离 HOME 下的 CLI 指令文件 | 身份与固定规则不混入单次任务 prompt；HOME 指向 `workspace/harness-home/<harness>`，避免污染真实用户配置 |
 | 平台操作方式 | `sandbox_call` 传入 JS 代码在 sandbox 执行 | 平台 API 庞大且多步链式调用多，不维护 MCP↔platform 映射；API 发现走文件系统（brief-overview.md + .d.ts） |

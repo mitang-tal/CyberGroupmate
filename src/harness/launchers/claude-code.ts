@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "../../core/logger.js";
+import { buildHarnessEnv, getHarnessHome, writeHarnessInstructions } from "../home.js";
 import type { HarnessLaunchOptions, HarnessLauncher } from "../types.js";
 
 const log = createLogger("harness-claude-code");
@@ -16,8 +17,10 @@ export class ClaudeCodeLauncher implements HarnessLauncher {
 
     async start(options: HarnessLaunchOptions): Promise<ChildProcess> {
         const mcpConfigPath = join(options.workDir, "workspace", ".background-mcp-config.json");
+        const homeDir = getHarnessHome(options.workDir, this.name);
         mkdirSync(join(options.workDir, "workspace"), { recursive: true });
         writeFileSync(mcpConfigPath, options.mcpConfigJson, "utf-8");
+        const instructionPath = writeHarnessInstructions(homeDir, this.name, options.systemPrompt);
 
         const args = [
             "-p", options.prompt,
@@ -44,12 +47,14 @@ export class ClaudeCodeLauncher implements HarnessLauncher {
             claude: this.claudePath,
             model: options.model ?? "(default)",
             maxBudget: options.maxBudgetUsd ?? "(none)",
+            home: homeDir,
+            instructionPath,
         });
 
         const child = spawn(this.claudePath, args, {
             cwd: options.workDir,
             stdio: ["ignore", "pipe", "pipe"],
-            env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "background-agent" },
+            env: buildHarnessEnv(process.env, homeDir, { CLAUDE_CODE_ENTRYPOINT: "background-agent" }),
         });
 
         const cleanup = () => { try { unlinkSync(mcpConfigPath); } catch {} };

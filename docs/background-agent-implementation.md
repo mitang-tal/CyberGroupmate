@@ -119,9 +119,10 @@ class HarnessManager {
   }
 
   private async launch(): Promise<void> {
-    const prompt = buildFixedLayerPrompt(this.config);
+    const systemPrompt = buildSystemPrompt(this.config);
+    const prompt = buildTaskPrompt(this.config);
     const pending = this.drainQueue();
-    const process = await this.launcher.start({ prompt, pending, mcpUrl, authToken });
+    const process = await this.launcher.start({ prompt, systemPrompt, pending, mcpUrl, authToken });
     this.state = { running: true, pid: process.pid, pendingQueue: [] };
     process.on('exit', () => this.onComplete());
   }

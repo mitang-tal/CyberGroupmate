@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { buildHarnessEnv, getHarnessHome, getHarnessInstructionPath, writeHarnessInstructions } from "../src/harness/home.js";
 import { HarnessManager } from "../src/harness/manager.js";
+import { buildSystemPrompt, buildTaskPrompt } from "../src/harness/prompt.js";
 
 describe("HarnessManager MCP config loading", () => {
     it("loads HTTP and stdio MCP configs and keeps cybergroupmate reserved", () => {
@@ -64,6 +66,56 @@ describe("HarnessManager MCP config loading", () => {
                     env: { API_KEY: "secret" },
                 },
             });
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+});
+
+describe("Harness prompt and home isolation", () => {
+    it("keeps identity in system prompt and task context in task prompt", () => {
+        const root = join(process.cwd(), "workspace", ".test-harness-prompt");
+        rmSync(root, { recursive: true, force: true });
+        mkdirSync(join(root, "workspace"), { recursive: true });
+        writeFileSync(join(root, "workspace", "background-dreaming.md"), "整理今天冒出来的工具想法。", "utf-8");
+
+        try {
+            const systemPrompt = buildSystemPrompt(root, { name: "D酱", description: "你是一个后台同伴。" });
+            const taskPrompt = buildTaskPrompt(root, [{ source: "dashboard", content: "检查 MCP 安装路径" }]);
+
+            assert.match(systemPrompt, /你是「D酱」/);
+            assert.match(systemPrompt, /后台同伴/);
+            assert.doesNotMatch(taskPrompt, /你是「D酱」/);
+            assert.doesNotMatch(taskPrompt, /后台同伴/);
+            assert.match(taskPrompt, /整理今天冒出来的工具想法/);
+            assert.match(taskPrompt, /检查 MCP 安装路径/);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("writes launcher instructions under an explicit harness HOME", () => {
+        const root = join(process.cwd(), "workspace", ".test-harness-home");
+        rmSync(root, { recursive: true, force: true });
+
+        try {
+            const claudeHome = getHarnessHome(root, "claude-code");
+            const copilotHome = getHarnessHome(root, "copilot");
+            const claudePath = writeHarnessInstructions(claudeHome, "claude-code", "system for claude");
+            const copilotPath = writeHarnessInstructions(copilotHome, "copilot", "system for copilot");
+
+            assert.equal(claudePath, getHarnessInstructionPath(claudeHome, "claude-code"));
+            assert.equal(copilotPath, getHarnessInstructionPath(copilotHome, "copilot"));
+            assert.ok(claudePath.endsWith(join(".claude", "CLAUDE.md")));
+            assert.ok(copilotPath.endsWith(join(".copilot", "copilot-instructions.md")));
+            assert.equal(readFileSync(claudePath, "utf-8"), "system for claude\n");
+            assert.equal(readFileSync(copilotPath, "utf-8"), "system for copilot\n");
+            assert.equal(existsSync(claudePath), true);
+            assert.equal(existsSync(copilotPath), true);
+
+            const env = buildHarnessEnv({ HOME: "real-home", USERPROFILE: "real-profile" }, claudeHome);
+            assert.equal(env.HOME, claudeHome);
+            assert.equal(env.USERPROFILE, claudeHome);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }

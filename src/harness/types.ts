@@ -2,6 +2,7 @@ import type { ChildProcess } from "node:child_process";
 
 export interface HarnessLaunchOptions {
     prompt: string;
+    systemPrompt: string;
     mcpConfigJson: string;
     workDir: string;
     model?: string;
@@ -40,6 +41,8 @@ export interface HarnessRunRecord {
     harness: string;
     mcpServers?: string[];
     logPath?: string;
+    harnessHome?: string;
+    instructionPath?: string;
     pid?: number;
     durationMs?: number;
     costUsd?: number;

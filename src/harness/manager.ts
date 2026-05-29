@@ -2,7 +2,8 @@ import type { ChildProcess } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "../core/logger.js";
-import { buildFixedLayerPrompt } from "./prompt.js";
+import { getHarnessHome, getHarnessInstructionPath } from "./home.js";
+import { buildSystemPrompt, buildTaskPrompt } from "./prompt.js";
 import type { HarnessLauncher, HarnessNotify, HarnessRunEvent, HarnessRunRecord } from "./types.js";
 
 const log = createLogger("harness-manager");
@@ -122,7 +123,8 @@ export class HarnessManager {
 
         const pending = this.drainQueue();
         const trigger = pending.some(n => n.source === "scheduler") ? "scheduled" : "enqueued";
-        const prompt = buildFixedLayerPrompt(this.config.workDir, this.config.persona, pending);
+        const systemPrompt = buildSystemPrompt(this.config.workDir, this.config.persona);
+        const prompt = buildTaskPrompt(this.config.workDir, pending);
 
         const externalMcpServers = this.loadExternalMcpServers();
         const mcpConfig = {
@@ -138,6 +140,8 @@ export class HarnessManager {
 
         const runId = this.createRunId();
         const logPath = join(this.config.workDir, "workspace", "dream-journal", `${runId}.jsonl`);
+        const harnessHome = getHarnessHome(this.config.workDir, this.config.launcher.name);
+        const instructionPath = getHarnessInstructionPath(harnessHome, this.config.launcher.name);
         mkdirSync(join(this.config.workDir, "workspace", "dream-journal"), { recursive: true });
 
         const record: HarnessRunRecord = {
@@ -148,17 +152,21 @@ export class HarnessManager {
             harness: this.config.launcher.name,
             mcpServers,
             logPath,
+            harnessHome,
+            instructionPath,
             events: [],
             eventCount: 0,
         };
         this.currentRun = record;
         this.recordEvent(record, "system", "launch", `启动 ${record.harness}，触发方式 ${trigger}，待处理 ${pending.length} 条，MCP: ${mcpServers.join(", ")}`);
+        this.recordEvent(record, "system", "home", `HOME=${harnessHome}；system prompt 写入 ${instructionPath}`);
 
         let receivedResult = false;
 
         try {
             this.child = await this.config.launcher.start({
                 prompt,
+                systemPrompt,
                 mcpConfigJson: JSON.stringify(mcpConfig, null, 2),
                 workDir: this.config.workDir,
                 model: this.config.model,
