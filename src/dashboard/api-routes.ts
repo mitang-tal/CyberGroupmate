@@ -1864,5 +1864,22 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         }
     });
 
+    // ─── Background Agent ───
+
+    router.get("/background-agent", (_req, res) => {
+        if (!deps.harnessManager) {
+            return res.json({ enabled: false });
+        }
+        res.json({ enabled: true, ...deps.harnessManager.getStatus() });
+    });
+
+    router.post("/background-agent/trigger", (_req, res) => {
+        if (!deps.harnessManager) {
+            return res.status(404).json({ error: "HarnessManager not configured" });
+        }
+        deps.harnessManager.enqueue({ content: "manual-trigger-from-dashboard", source: "dashboard" });
+        res.json({ ok: true, queueLength: deps.harnessManager.queueLength });
+    });
+
     return router;
 }

@@ -129,8 +129,6 @@ export class HarnessManager {
             this.child.once("exit", (code) => {
                 record.endedAt = Date.now();
                 record.exitCode = code;
-                this.history.push(record);
-                if (this.history.length > 50) this.history.shift();
 
                 const durationSec = ((record.endedAt - record.startedAt) / 1000).toFixed(1);
                 log.info("launch: harness exited", { code, durationSec, trigger });
@@ -138,12 +136,17 @@ export class HarnessManager {
                 this.child = null;
                 this.running = false;
 
+                if (code !== 0 && !this.shuttingDown && !receivedResult) {
+                    this.handleSpawnFailure(`harness exited with code ${code}`, pending, record);
+                    return;
+                }
+
+                this.history.push(record);
+                if (this.history.length > 50) this.history.shift();
+
                 if (code === 0 || this.shuttingDown) {
                     this.consecutiveFailures = 0;
                     this.lastError = null;
-                } else if (!receivedResult) {
-                    this.handleSpawnFailure(`harness exited with code ${code}`, pending, record);
-                    return;
                 } else {
                     this.lastError = `harness exited with code ${code} (partial work done)`;
                     this.consecutiveFailures = 0;
@@ -196,22 +199,27 @@ export class HarnessManager {
 
     private collectOutput(child: ChildProcess, onResult?: () => void): void {
         let stdoutBuffer = "";
+        const processLine = (line: string) => {
+            if (!line.trim()) return;
+            try {
+                const event = JSON.parse(line);
+                if (event.type === "result") {
+                    log.info("harness result", { cost: event.cost_usd, duration: event.duration_ms });
+                    onResult?.();
+                }
+            } catch {
+                log.debug("harness stdout", { line: line.slice(0, 200) });
+            }
+        };
         child.stdout?.on("data", (chunk: Buffer) => {
             stdoutBuffer += chunk.toString();
             const lines = stdoutBuffer.split("\n");
             stdoutBuffer = lines.pop() ?? "";
-            for (const line of lines) {
-                if (!line.trim()) continue;
-                try {
-                    const event = JSON.parse(line);
-                    if (event.type === "result") {
-                        log.info("harness result", { cost: event.cost_usd, duration: event.duration_ms });
-                        onResult?.();
-                    }
-                } catch {
-                    log.debug("harness stdout", { line: line.slice(0, 200) });
-                }
-            }
+            for (const line of lines) processLine(line);
+        });
+        child.once("exit", () => {
+            if (stdoutBuffer.trim()) processLine(stdoutBuffer);
+            stdoutBuffer = "";
         });
 
         child.stderr?.on("data", (chunk: Buffer) => {

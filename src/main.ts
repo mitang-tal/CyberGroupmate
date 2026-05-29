@@ -1079,6 +1079,7 @@ async function main(): Promise<void> {
     // ─── Dashboard 监控仪表盘 ───
     const dashboardEnabled = appConfig.dashboard?.enabled !== false;
     let dashboardServer: { stop: () => void } | null = null;
+    let dashboardDeps: import("./dashboard/types.js").DashboardDeps | null = null;
     if (dashboardEnabled) {
         const { DashboardServer } = await import("./dashboard/dashboard-server.js");
         const { TokenStatsCollector } = await import("./dashboard/token-stats.js");
@@ -1097,8 +1098,7 @@ async function main(): Promise<void> {
         // 进程退出时保存统计
         process.on("exit", () => tokenStats.shutdown());
 
-        const dashboard = new DashboardServer(
-            {
+        dashboardDeps = {
                 nc,
                 subagentManager,
                 accumulator,
@@ -1128,7 +1128,9 @@ async function main(): Promise<void> {
                         managed: currentEnvPlan.managedKeys.length,
                     });
                 },
-            },
+            };
+        const dashboard = new DashboardServer(
+            dashboardDeps,
             { host: dashboardHost, port: dashboardPort, token: dashboardToken, enabled: true },
         );
         dashboardServer = dashboard;
@@ -1179,6 +1181,7 @@ async function main(): Promise<void> {
         harnessManager.onSpawnFailure = (error, pendingCount) => {
             globalState.addSessionDigest(`[Background Agent spawn failed] ${error} (${pendingCount} pending tasks)`);
         };
+        if (dashboardDeps) dashboardDeps.harnessManager = harnessManager;
         log.info("HarnessManager 已创建", { harness: "claude-code" });
     }
 
@@ -1356,18 +1359,20 @@ async function main(): Promise<void> {
 
     // ─── Background Agent 定时做梦 ───
     let backgroundDreamingInterval: ReturnType<typeof setInterval> | null = null;
-    if (harnessManager && appConfig.backgroundAgent?.schedule) {
+    if (harnessManager) {
+        const dreamSchedule = appConfig.backgroundAgent?.schedule ?? "0 3 * * *";
         let lastDreamingMinute = -1;
         backgroundDreamingInterval = setInterval(() => {
             const now = new Date();
             const minuteKey = now.getFullYear() * 1000000 + now.getMonth() * 10000 + now.getDate() * 100 + now.getHours() * 60 + now.getMinutes();
             if (minuteKey === lastDreamingMinute) return;
-            if (!matchesCron(appConfig.backgroundAgent!.schedule!, now)) return;
+            if (!matchesCron(dreamSchedule, now)) return;
             lastDreamingMinute = minuteKey;
-            log.info("Background Agent 定时做梦触发", { schedule: appConfig.backgroundAgent!.schedule });
+            log.info("Background Agent 定时做梦触发", { schedule: dreamSchedule });
             harnessManager!.triggerScheduled();
         }, 30_000);
         if (backgroundDreamingInterval.unref) backgroundDreamingInterval.unref();
+        log.info("Background Agent 定时做梦已注册", { schedule: dreamSchedule });
     }
 
     // ─── 启动（并行 + 超时容错） ───
