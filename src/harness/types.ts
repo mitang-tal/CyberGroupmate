@@ -3,11 +3,26 @@ import type { ChildProcess } from "node:child_process";
 export interface HarnessLaunchOptions {
     prompt: string;
     systemPrompt: string;
-    mcpConfigJson: string;
+    mcpConfig: HarnessMcpConfig;
     workDir: string;
     model?: string;
     maxBudgetUsd?: number;
     extraArgs?: string[];
+}
+
+export type HarnessMcpServerType = "streamable-http" | "stdio";
+
+export interface HarnessMcpServerConfig {
+    type: HarnessMcpServerType;
+    url?: string;
+    headers?: Record<string, string>;
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+}
+
+export interface HarnessMcpConfig {
+    mcpServers: Record<string, HarnessMcpServerConfig>;
 }
 
 export interface HarnessLauncher {

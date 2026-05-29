@@ -5,7 +5,9 @@ import { join } from "node:path";
 
 import { buildHarnessEnv, getHarnessHome, getHarnessInstructionPath, writeHarnessInstructions } from "../src/harness/home.js";
 import { HarnessManager } from "../src/harness/manager.js";
+import { serializeClaudeMcpConfig, serializeCopilotMcpConfig } from "../src/harness/mcp-config.js";
 import { buildSystemPrompt, buildTaskPrompt } from "../src/harness/prompt.js";
+import type { HarnessMcpConfig } from "../src/harness/types.js";
 
 describe("HarnessManager MCP config loading", () => {
     it("loads HTTP and stdio MCP configs and keeps cybergroupmate reserved", () => {
@@ -69,6 +71,45 @@ describe("HarnessManager MCP config loading", () => {
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
+    });
+});
+
+describe("Harness MCP config serialization", () => {
+    it("keeps Claude Code streamable-http and maps Copilot to its MCP schema", () => {
+        const config: HarnessMcpConfig = {
+            mcpServers: {
+                "remote-http": {
+                    type: "streamable-http",
+                    url: "http://127.0.0.1:9999/mcp",
+                    headers: { Authorization: "Bearer token" },
+                },
+                "stdio-tool": {
+                    type: "stdio",
+                    command: "node",
+                    args: ["server.js"],
+                    env: { API_KEY: "secret" },
+                },
+            },
+        };
+
+        assert.equal(JSON.parse(serializeClaudeMcpConfig(config)).mcpServers["remote-http"].type, "streamable-http");
+        assert.deepEqual(JSON.parse(serializeCopilotMcpConfig(config)), {
+            mcpServers: {
+                "remote-http": {
+                    type: "http",
+                    url: "http://127.0.0.1:9999/mcp",
+                    headers: { Authorization: "Bearer token" },
+                    tools: ["*"],
+                },
+                "stdio-tool": {
+                    type: "local",
+                    command: "node",
+                    args: ["server.js"],
+                    env: { API_KEY: "secret" },
+                    tools: ["*"],
+                },
+            },
+        });
     });
 });
 

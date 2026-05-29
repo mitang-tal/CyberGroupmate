@@ -3,6 +3,7 @@ import { writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "../../core/logger.js";
 import { buildHarnessEnv, getHarnessHome, writeHarnessInstructions } from "../home.js";
+import { serializeCopilotMcpConfig } from "../mcp-config.js";
 import type { HarnessLaunchOptions, HarnessLauncher } from "../types.js";
 
 const log = createLogger("harness-copilot-cli");
@@ -19,7 +20,7 @@ export class CopilotCliLauncher implements HarnessLauncher {
         const mcpConfigPath = join(options.workDir, "workspace", ".background-mcp-config.json");
         const homeDir = getHarnessHome(options.workDir, this.name);
         mkdirSync(join(options.workDir, "workspace"), { recursive: true });
-        writeFileSync(mcpConfigPath, options.mcpConfigJson, "utf-8");
+        writeFileSync(mcpConfigPath, serializeCopilotMcpConfig(options.mcpConfig), "utf-8");
         const instructionPath = writeHarnessInstructions(homeDir, this.name, options.systemPrompt);
 
         const args = [
@@ -47,7 +48,7 @@ export class CopilotCliLauncher implements HarnessLauncher {
         const child = spawn(this.copilotPath, args, {
             cwd: options.workDir,
             stdio: ["ignore", "pipe", "pipe"],
-            env: buildHarnessEnv(process.env, homeDir),
+            env: buildHarnessEnv(process.env, homeDir, { COPILOT_HOME: join(homeDir, ".copilot") }),
         });
 
         const cleanup = () => { try { unlinkSync(mcpConfigPath); } catch {} };

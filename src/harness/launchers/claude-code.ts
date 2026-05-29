@@ -3,6 +3,7 @@ import { writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "../../core/logger.js";
 import { buildHarnessEnv, getHarnessHome, writeHarnessInstructions } from "../home.js";
+import { serializeClaudeMcpConfig } from "../mcp-config.js";
 import type { HarnessLaunchOptions, HarnessLauncher } from "../types.js";
 
 const log = createLogger("harness-claude-code");
@@ -19,7 +20,7 @@ export class ClaudeCodeLauncher implements HarnessLauncher {
         const mcpConfigPath = join(options.workDir, "workspace", ".background-mcp-config.json");
         const homeDir = getHarnessHome(options.workDir, this.name);
         mkdirSync(join(options.workDir, "workspace"), { recursive: true });
-        writeFileSync(mcpConfigPath, options.mcpConfigJson, "utf-8");
+        writeFileSync(mcpConfigPath, serializeClaudeMcpConfig(options.mcpConfig), "utf-8");
         const instructionPath = writeHarnessInstructions(homeDir, this.name, options.systemPrompt);
 
         const args = [

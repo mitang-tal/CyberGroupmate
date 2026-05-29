@@ -4,7 +4,14 @@ import { join } from "node:path";
 import { createLogger } from "../core/logger.js";
 import { getHarnessHome, getHarnessInstructionPath } from "./home.js";
 import { buildSystemPrompt, buildTaskPrompt } from "./prompt.js";
-import type { HarnessLauncher, HarnessNotify, HarnessRunEvent, HarnessRunRecord } from "./types.js";
+import type {
+    HarnessLauncher,
+    HarnessMcpConfig,
+    HarnessMcpServerConfig,
+    HarnessNotify,
+    HarnessRunEvent,
+    HarnessRunRecord,
+} from "./types.js";
 
 const log = createLogger("harness-manager");
 
@@ -127,7 +134,7 @@ export class HarnessManager {
         const prompt = buildTaskPrompt(this.config.workDir, pending);
 
         const externalMcpServers = this.loadExternalMcpServers();
-        const mcpConfig = {
+        const mcpConfig: HarnessMcpConfig = {
             mcpServers: {
                 ...externalMcpServers,
                 cybergroupmate: {
@@ -167,7 +174,7 @@ export class HarnessManager {
             this.child = await this.config.launcher.start({
                 prompt,
                 systemPrompt,
-                mcpConfigJson: JSON.stringify(mcpConfig, null, 2),
+                mcpConfig,
                 workDir: this.config.workDir,
                 model: this.config.model,
                 maxBudgetUsd: this.config.maxBudgetUsd,
@@ -257,8 +264,8 @@ export class HarnessManager {
         }
     }
 
-    private loadExternalMcpServers(): Record<string, Record<string, unknown>> {
-        const result: Record<string, Record<string, unknown>> = {};
+    private loadExternalMcpServers(): Record<string, HarnessMcpServerConfig> {
+        const result: Record<string, HarnessMcpServerConfig> = {};
         try {
             const raw = readFileSync(join(this.config.workDir, "workspace", "mcp-connections.json"), "utf-8");
             const parsed = JSON.parse(raw);
@@ -282,7 +289,7 @@ export class HarnessManager {
                         log.warn("skipping external HTTP MCP without url", { name });
                         continue;
                     }
-                    const entry: Record<string, unknown> = {
+                    const entry: HarnessMcpServerConfig = {
                         type: "streamable-http",
                         url: conn.url,
                     };
@@ -296,7 +303,7 @@ export class HarnessManager {
                     log.warn("skipping external stdio MCP without command", { name });
                     continue;
                 }
-                const entry: Record<string, unknown> = {
+                const entry: HarnessMcpServerConfig = {
                     type: "stdio",
                     command: conn.command,
                 };
