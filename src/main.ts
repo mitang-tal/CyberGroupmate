@@ -155,6 +155,7 @@ function ensureDataDirs(): void {
     const dirs = [
         DATA_DIR,
         join(DATA_DIR, "tg-session"),
+        join(DATA_DIR, "dream-journal"),
     ];
     for (const dir of dirs) {
         if (!existsSync(dir)) {
@@ -1168,21 +1169,27 @@ async function main(): Promise<void> {
 
     // ─── Background Agent HarnessManager ───
     let harnessManager: import("./harness/manager.js").HarnessManager | null = null;
-    if (mcpServerInstance && appConfig.backgroundAgent?.harness === "claude-code") {
-        const { HarnessManager, ClaudeCodeLauncher } = await import("./harness/index.js");
+    const bgHarness = appConfig.backgroundAgent?.harness;
+    if (mcpServerInstance && (bgHarness === "claude-code" || bgHarness === "copilot")) {
+        const { HarnessManager, ClaudeCodeLauncher, CopilotCliLauncher } = await import("./harness/index.js");
+        const launcher = bgHarness === "copilot"
+            ? new CopilotCliLauncher(appConfig.backgroundAgent!.copilotPath)
+            : new ClaudeCodeLauncher(appConfig.backgroundAgent!.claudeCodePath);
+        const model = appConfig.backgroundAgent!.harnessModel ?? appConfig.backgroundAgent!.claudeModel;
         harnessManager = new HarnessManager({
-            launcher: new ClaudeCodeLauncher(appConfig.backgroundAgent.claudeCodePath),
+            launcher,
             workDir: process.cwd(),
             mcpUrl: `http://127.0.0.1:${mcpServerInstance.config.port}/mcp`,
             mcpToken: mcpServerInstance.config.authToken,
-            model: appConfig.backgroundAgent.claudeModel,
-            maxBudgetUsd: appConfig.backgroundAgent.maxBudgetUsd,
+            model,
+            maxBudgetUsd: appConfig.backgroundAgent!.maxBudgetUsd,
+            extraArgs: appConfig.backgroundAgent!.extraArgs,
         });
         harnessManager.onSpawnFailure = (error, pendingCount) => {
             globalState.addSessionDigest(`[Background Agent spawn failed] ${error} (${pendingCount} pending tasks)`);
         };
         if (dashboardDeps) dashboardDeps.harnessManager = harnessManager;
-        log.info("HarnessManager 已创建", { harness: "claude-code" });
+        log.info("HarnessManager 已创建", { harness: bgHarness });
     }
 
     // ─── Prometheus Metrics Exporter ───

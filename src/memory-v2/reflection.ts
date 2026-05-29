@@ -613,6 +613,50 @@ export async function runReflection(
         log.warn("Reflection Step 6: agent-state 写入失败", { error: String(err) });
     }
 
+    // ── Step 7: 更新 background-dreaming.md（做梦方向感）──
+    try {
+        const DREAMING_PATH = join(process.cwd(), "workspace", "background-dreaming.md");
+        const dreamingSections: string[] = [];
+
+        if (llmOutput.insights) {
+            dreamingSections.push(`- ${llmOutput.insights}`);
+        }
+        if (llmOutput.followupCandidates?.length) {
+            for (const fc of llmOutput.followupCandidates.slice(0, 5)) {
+                const parts = [fc.topic, fc.suggestedAction ?? fc.reason].filter(Boolean);
+                if (parts.length > 0) dreamingSections.push(`- ${parts.join("：")}`);
+            }
+        }
+        if (llmOutput.agentFeedback?.effectiveBehaviors?.length) {
+            dreamingSections.push(`- 有效互动方式：${llmOutput.agentFeedback.effectiveBehaviors.join("、")}`);
+        }
+
+        if (dreamingSections.length > 0) {
+            let existing = "";
+            if (existsSync(DREAMING_PATH)) {
+                existing = readFileSync(DREAMING_PATH, "utf-8");
+            }
+
+            const header = "# 做梦方向感\n\n> 由 Reflection 自动更新，记录最近的兴趣、关注和想进化的方向。\n\n";
+            const newBlock = `## ${startTime} (${chatId})\n\n${dreamingSections.join("\n")}\n`;
+
+            const body = existing.startsWith("# 做梦方向感")
+                ? existing.replace(/^# 做梦方向感.*?\n(?:>.*?\n)*\n?/, "")
+                : existing;
+            let merged = header + newBlock + "\n" + body.trim();
+
+            const maxChars = 4000;
+            if (merged.length > maxChars) {
+                merged = merged.slice(0, maxChars).replace(/\n[^\n]*$/, "\n");
+            }
+
+            writeFileSync(DREAMING_PATH, merged.trim() + "\n", "utf-8");
+            log.debug("Reflection Step 7: background-dreaming.md 已更新", { chatId });
+        }
+    } catch (err) {
+        log.warn("Reflection Step 7: background-dreaming.md 写入失败", { error: String(err) });
+    }
+
     return result;
 }
 

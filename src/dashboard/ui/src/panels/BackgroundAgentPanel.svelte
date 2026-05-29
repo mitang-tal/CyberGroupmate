@@ -50,6 +50,7 @@
       <div class="stat">
         <div class="stat-title">Status</div>
         <div class="stat-value text-lg">{status.running ? 'Running' : 'Idle'}</div>
+        <div class="stat-desc">{status.harness ?? 'unknown'}</div>
       </div>
       <div class="stat">
         <div class="stat-title">Queue</div>

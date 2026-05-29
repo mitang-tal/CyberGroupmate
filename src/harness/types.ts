@@ -6,6 +6,7 @@ export interface HarnessLaunchOptions {
     workDir: string;
     model?: string;
     maxBudgetUsd?: number;
+    extraArgs?: string[];
 }
 
 export interface HarnessLauncher {

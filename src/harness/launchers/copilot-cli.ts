@@ -4,14 +4,14 @@ import { join } from "node:path";
 import { createLogger } from "../../core/logger.js";
 import type { HarnessLaunchOptions, HarnessLauncher } from "../types.js";
 
-const log = createLogger("harness-claude-code");
+const log = createLogger("harness-copilot-cli");
 
-export class ClaudeCodeLauncher implements HarnessLauncher {
-    readonly name = "claude-code";
-    private claudePath: string;
+export class CopilotCliLauncher implements HarnessLauncher {
+    readonly name = "copilot";
+    private copilotPath: string;
 
-    constructor(claudePath?: string) {
-        this.claudePath = claudePath ?? "claude";
+    constructor(copilotPath?: string) {
+        this.copilotPath = copilotPath ?? "copilot";
     }
 
     async start(options: HarnessLaunchOptions): Promise<ChildProcess> {
@@ -21,35 +21,27 @@ export class ClaudeCodeLauncher implements HarnessLauncher {
 
         const args = [
             "-p", options.prompt,
-            "--verbose",
-            "--output-format", "stream-json",
-            "--dangerously-skip-permissions",
-            "--mcp-config", mcpConfigPath,
-            "--strict-mcp-config",
+            "--output-format", "json",
+            "--yolo",
+            "--additional-mcp-config", `@${mcpConfigPath}`,
         ];
 
         if (options.model) {
             args.push("--model", options.model);
         }
 
-        if (options.maxBudgetUsd) {
-            args.push("--max-budget-usd", String(options.maxBudgetUsd));
-        }
-
         if (options.extraArgs) {
             args.push(...options.extraArgs);
         }
 
-        log.info("launching claude code", {
-            claude: this.claudePath,
+        log.info("launching copilot cli", {
+            copilot: this.copilotPath,
             model: options.model ?? "(default)",
-            maxBudget: options.maxBudgetUsd ?? "(none)",
         });
 
-        const child = spawn(this.claudePath, args, {
+        const child = spawn(this.copilotPath, args, {
             cwd: options.workDir,
             stdio: ["ignore", "pipe", "pipe"],
-            env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: "background-agent" },
         });
 
         const cleanup = () => { try { unlinkSync(mcpConfigPath); } catch {} };

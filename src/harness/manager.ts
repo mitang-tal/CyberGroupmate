@@ -12,6 +12,7 @@ export interface HarnessManagerConfig {
     mcpToken: string;
     model?: string;
     maxBudgetUsd?: number;
+    extraArgs?: string[];
 }
 
 export class HarnessManager {
@@ -52,7 +53,7 @@ export class HarnessManager {
         this.enqueue({ content: "scheduled-dreaming", source: "scheduler" });
     }
 
-    getStatus(): { running: boolean; queueLength: number; historyCount: number; lastRun?: HarnessRunRecord; lastError: string | null; consecutiveFailures: number } {
+    getStatus(): { running: boolean; queueLength: number; historyCount: number; lastRun?: HarnessRunRecord; lastError: string | null; consecutiveFailures: number; harness: string } {
         return {
             running: this.running,
             queueLength: this.pendingQueue.length,
@@ -60,6 +61,7 @@ export class HarnessManager {
             lastRun: this.history[this.history.length - 1],
             lastError: this.lastError,
             consecutiveFailures: this.consecutiveFailures,
+            harness: this.config.launcher.name,
         };
     }
 
@@ -115,6 +117,7 @@ export class HarnessManager {
                 workDir: this.config.workDir,
                 model: this.config.model,
                 maxBudgetUsd: this.config.maxBudgetUsd,
+                extraArgs: this.config.extraArgs,
             });
 
             log.info("launch: harness started", {

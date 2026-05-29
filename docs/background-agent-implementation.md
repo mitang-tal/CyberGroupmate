@@ -164,83 +164,58 @@ scheduler.registerBuiltinCron('background-dreaming', config.backgroundAgent?.sch
 
 ---
 
-## Phase 3: 系统集成
+## Phase 3: 系统集成 ✅ 已完成
 
 **目标**：把 HarnessManager 接入 Proactive Idle 和 Reflection。
 
-### 3.1 Proactive Idle 集成
+### 3.1 Proactive Idle 集成 ✅
 
-**文件**：`src/main-agent/main-agent-loop.ts`
+不需要改 idle 触发逻辑本身——Meta Agent 在 idle turn 中如果发现重活，会调 notify，notify 的实现通过 attention queue 触发 HarnessManager。notify tool 已在 Meta Agent 的 tool list 里。
 
-在 idle 触发逻辑（约 line 251）中，除了注入 idle session 给 Meta Agent，还通知 HarnessManager：
-
-```typescript
-if (this.shouldTriggerProactiveIdle(now)) {
-  // 现有逻辑：注入 idle session 给 Meta
-  this.injectProactiveIdle();
-  // 新增：如果 Meta 的 idle turn 产生了 background notify，HarnessManager 会在 notify 时自动触发
-}
-```
-
-实际上不需要改 idle 触发逻辑本身——Meta Agent 在 idle turn 中如果发现重活，会调 notify，notify 的实现会调 `harnessManager.enqueue()`。只需要确保 notify tool 在 Meta Agent 的 tool list 里。
-
-### 3.2 Proactive Idle Prompt 缩限
+### 3.2 Proactive Idle Prompt 缩限 ✅
 
 **文件**：`system-prompts/meta-agent/proactive-idle.md`
 
-按 RFC 修改"自主进化"部分，加入 notify Background Agent 的指引。
+"自主进化"部分已改为"自主进化（移交 Background Agent）"：
+- 发现新技巧 → notify 给 Background Agent
+- 不自己让 subagent 写 skill，交给 Background
+- 重活（写 skill、研究新技术、深入查资料）→ notify 描述任务
 
-### 3.3 Reflection 集成
+### 3.3 Reflection 集成 ✅
 
 **文件**：`src/memory-v2/reflection.ts`
 
-在 Step 6（约 line 586-614，写 agent-state.md 之后）追加：
+在 Step 6（agent-state 更新）之后追加 Step 7：从 reflection 的 `insights`、`followupCandidates`、`agentFeedback` 提取方向感，追加写入 `workspace/background-dreaming.md`。文件自动截断到 4000 字符以内，最新内容在最前面。
 
-```typescript
-// 让 reflection 的 LLM 输出中包含 background-dreaming 更新建议
-// 然后写入 workspace/background-dreaming.md
-if (reflectionResult.dreamingUpdate) {
-  await fs.writeFile(
-    join(process.cwd(), 'workspace', 'background-dreaming.md'),
-    reflectionResult.dreamingUpdate
-  );
-}
-```
+### 3.4 Dream Journal 目录 ✅
 
-需要在 reflection prompt 中加入指引（见 RFC §6.4）。
-
-### 3.4 Dream Journal 目录
-
-初始化时确保 `workspace/dream-journal/` 存在。Background Agent 的固定层 prompt 里指引它写日记到这个目录。
-
-**预计工作量**：2-3 天
-
-**验证**：
-- 触发 proactive idle → Meta 发现重活 → notify → HarnessManager 拉起 Claude Code → 执行 → 结果通过 notify 回传
-- 触发 reflection → workspace/background-dreaming.md 被更新
+`workspace/dream-journal/` 在 `ensureDataDirs()` 中创建。固定层 prompt 已指引 Background Agent 写日记到此目录。
 
 ---
 
-## Phase 4: 第二 Harness + 打磨
+## Phase 4: 第二 Harness + 打磨 ✅ 已完成
 
-**目标**：验证 harness 可替换性，打磨体验。
+### 4.1 Copilot CLI Launcher ✅
 
-### 4.1 Copilot CLI Launcher
+新建 `src/harness/launchers/copilot-cli.ts`，实现 `HarnessLauncher` 接口。
+- 使用 `copilot -p` 非交互模式
+- `--yolo` 全权限（等价于 Claude Code 的 `--dangerously-skip-permissions`）
+- `--additional-mcp-config @<path>` 注入 MCP 配置
+- `--output-format json` 输出 JSONL
+- 支持 `--model` 和自定义 `extraArgs`
 
-新建 `src/harness/launchers/copilot-cli.ts`，实现同样的接口。验证 MCP 连通和任务执行。
+### 4.2 配置扩展 ✅
 
-### 4.2 Prompt 迭代
+`backgroundAgent` 配置增加：
+- `harness`: `"claude-code" | "copilot"` 双 harness 支持
+- `copilotPath`: Copilot CLI 路径
+- `harnessModel`: 通用模型名称（兼容旧 `claudeModel`）
+- `extraArgs`: 自定义启动参数（字符串数组）
 
-根据实际运行情况调整：
-- 固定层 prompt（`src/harness/prompt.ts`）
-- Proactive idle prompt
-- Reflection prompt 中的 dreaming 指引
+### 4.3 Dashboard ✅
 
-### 4.3 监控 & 日志
-
-- HarnessManager 记录每次实例的启动/结束/耗时/token 用量
-- Dream journal 自动生成
-- 异常处理：harness 进程崩溃时的恢复逻辑
+- 状态面板：显示当前 harness 类型
+- 设置面板：harness 选择（Claude Code / Copilot CLI）、模型输入、路径配置、自定义启动参数
 
 **预计工作量**：2-3 天
 
@@ -251,22 +226,11 @@ if (reflectionResult.dreamingUpdate) {
 ```
 Phase 0: notify 工具                    ✅ 已完成
 Phase 1: MCP Server                     ✅ M1 已完成
-Phase 1.5: sandbox_call（sandbox 执行）   1-2 天
-Phase 2: HarnessManager                 2-3 天
-Phase 3: 系统集成（idle/reflection）     2-3 天
-Phase 4: 第二 Harness + 打磨            2-3 天
-─────────────────────────────────────────────
-剩余                                    ~8-11 天
+Phase 1.5: sandbox_call（sandbox 执行）  ✅ 已完成
+Phase 2: HarnessManager                 ✅ 已完成
+Phase 3: 系统集成（idle/reflection）     ✅ 已完成
+Phase 4: 第二 Harness + 打磨            ✅ 已完成
 ```
-
-```
-依赖关系：
-
-Phase 0 ──→ Phase 1 ──→ Phase 1.5 ──→ Phase 2 ──→ Phase 3 ──→ Phase 4
-  ✅          ✅       (sandbox)     (Harness)    (集成)      (打磨)
-```
-
-Phase 1.5 和 Phase 2 可以部分并行（sandbox_call 不依赖 HarnessManager）。Phase 3 依赖 Phase 2。Phase 4 随时可以开始 Copilot CLI 部分。
 
 ---
 
@@ -276,7 +240,7 @@ Phase 1.5 和 Phase 2 可以部分并行（sandbox_call 不依赖 HarnessManager
 |---|---|---|
 | M0: notify 可用 | Meta Agent 能通过 notify 通信 | ✅ |
 | M1: MCP 连通 | Claude Code 能连上 MCP server 并读到 digest | ✅ |
-| M1.5: sandbox 执行 | Background Agent 能通过 sandbox_call 执行平台 API | 下一步 |
-| M2: 首次做梦 | Background Agent 被手动拉起，执行一个完整任务并通过 notify 回传结果 | Phase 2 |
-| M3: 自动做梦 | 凌晨 3 点自动拉起，第二天早上有成果 | Phase 3 |
-| M4: 双 Harness | Claude Code 和 Copilot CLI 都能跑 | Phase 4 |
+| M1.5: sandbox 执行 | Background Agent 能通过 sandbox_call 执行平台 API | ✅ |
+| M2: 首次做梦 | Background Agent 被手动拉起，执行一个完整任务并通过 notify 回传结果 | ✅ |
+| M3: 自动做梦 | 凌晨 3 点自动拉起，第二天早上有成果 | ✅ |
+| M4: 双 Harness | Claude Code 和 Copilot CLI 都能跑 | ✅ |
