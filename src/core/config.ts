@@ -472,6 +472,11 @@ export interface AppConfig {
         enabled?: boolean;
         mcpPort?: number;
         mcpToken?: string;
+        harness?: "claude-code";
+        claudeCodePath?: string;
+        claudeModel?: string;
+        schedule?: string;
+        maxBudgetUsd?: number;
     };
 }
 
@@ -964,6 +969,11 @@ function parseBackgroundAgentConfig(fileConfig: Record<string, unknown>): AppCon
         enabled: raw.enabled !== false,
         mcpPort: raw.mcp_port != null ? num(raw.mcp_port, 3100) : undefined,
         mcpToken: str(raw.mcp_token) ?? undefined,
+        harness: str(raw.harness) === "claude-code" ? "claude-code" : undefined,
+        claudeCodePath: str(raw.claude_code_path) ?? undefined,
+        claudeModel: str(raw.claude_model) ?? undefined,
+        schedule: str(raw.schedule) ?? undefined,
+        maxBudgetUsd: raw.max_budget_usd != null ? num(raw.max_budget_usd, 5) : undefined,
     };
 }
 
@@ -1493,6 +1503,11 @@ export function serializeConfigToObject(config: AppConfig): Record<string, unkno
         if (config.backgroundAgent.enabled != null) ba.enabled = config.backgroundAgent.enabled;
         if (config.backgroundAgent.mcpPort != null) ba.mcp_port = config.backgroundAgent.mcpPort;
         if (config.backgroundAgent.mcpToken != null) ba.mcp_token = config.backgroundAgent.mcpToken;
+        if (config.backgroundAgent.harness != null) ba.harness = config.backgroundAgent.harness;
+        if (config.backgroundAgent.claudeCodePath != null) ba.claude_code_path = config.backgroundAgent.claudeCodePath;
+        if (config.backgroundAgent.claudeModel != null) ba.claude_model = config.backgroundAgent.claudeModel;
+        if (config.backgroundAgent.schedule != null) ba.schedule = config.backgroundAgent.schedule;
+        if (config.backgroundAgent.maxBudgetUsd != null) ba.max_budget_usd = config.backgroundAgent.maxBudgetUsd;
         if (Object.keys(ba).length > 0) obj.background_agent = ba;
     }
 

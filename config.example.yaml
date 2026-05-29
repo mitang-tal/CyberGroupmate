@@ -445,3 +445,8 @@ metrics:
 #   enabled: true           # 是否启用 MCP Server（默认 true）
 #   mcp_port: 3100          # MCP Server 监听端口（默认 3100，仅本机 127.0.0.1）
 #   mcp_token: "your-token" # 认证 token（不设则每次启动随机生成）
+#   harness: "claude-code"  # 使用的 harness 类型（目前仅支持 claude-code）
+#   claude_code_path: "claude"  # claude CLI 路径（默认 PATH 中的 claude）
+#   claude_model: "sonnet"  # Claude Code 使用的模型
+#   max_budget_usd: 5       # 单次做梦的最大花费（美元）
+#   schedule: "0 3 * * *"   # 定时做梦的 cron 表达式（默认不启用定时）

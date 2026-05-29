@@ -1164,6 +1164,23 @@ async function main(): Promise<void> {
         }
     }
 
+    // ─── Background Agent HarnessManager ───
+    let harnessManager: import("./harness/manager.js").HarnessManager | null = null;
+    if (mcpServerInstance && appConfig.backgroundAgent?.harness === "claude-code") {
+        const { HarnessManager, ClaudeCodeLauncher } = await import("./harness/index.js");
+        const mcpPort = appConfig.backgroundAgent.mcpPort ?? 3100;
+        const mcpToken = appConfig.backgroundAgent.mcpToken ?? "";
+        harnessManager = new HarnessManager({
+            launcher: new ClaudeCodeLauncher(appConfig.backgroundAgent.claudeCodePath),
+            workDir: process.cwd(),
+            mcpUrl: `http://127.0.0.1:${mcpPort}/mcp`,
+            mcpToken,
+            model: appConfig.backgroundAgent.claudeModel,
+            maxBudgetUsd: appConfig.backgroundAgent.maxBudgetUsd,
+        });
+        log.info("HarnessManager 已创建", { harness: "claude-code" });
+    }
+
     // ─── Prometheus Metrics Exporter ───
     let metricsInstance: import("./metrics/index.js").MetricsInstance | null = null;
     const metricsEnabled = appConfig.metrics?.enabled !== false;
@@ -1393,6 +1410,11 @@ async function main(): Promise<void> {
         clearInterval(topicCleanupInterval);
         clearInterval(reflectionInterval);
         clearInterval(schedulerWatchdogInterval);
+
+        // 停止 Background Agent harness
+        if (harnessManager) {
+            await harnessManager.shutdown();
+        }
 
         // 停止 MCP server
         if (mcpServerInstance) {
