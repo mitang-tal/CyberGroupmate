@@ -1,9 +1,9 @@
 import type { ChildProcess } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "../core/logger.js";
 import { buildFixedLayerPrompt } from "./prompt.js";
-import type { HarnessLauncher, HarnessNotify, HarnessRunRecord } from "./types.js";
+import type { HarnessLauncher, HarnessNotify, HarnessRunEvent, HarnessRunRecord } from "./types.js";
 
 const log = createLogger("harness-manager");
 
@@ -25,6 +25,9 @@ export class HarnessManager {
     private child: ChildProcess | null = null;
     private pendingQueue: HarnessNotify[] = [];
     private history: HarnessRunRecord[] = [];
+    private currentRun: HarnessRunRecord | null = null;
+    private nextRunSeq = 1;
+    private nextEventSeq = 1;
     private consecutiveFailures = 0;
     private lastError: string | null = null;
     onSpawnFailure?: (error: string, pendingCount: number) => void;
@@ -56,16 +59,41 @@ export class HarnessManager {
         this.enqueue({ content: "scheduled-dreaming", source: "scheduler" });
     }
 
-    getStatus(): { running: boolean; queueLength: number; historyCount: number; lastRun?: HarnessRunRecord; lastError: string | null; consecutiveFailures: number; harness: string } {
+    getStatus(): {
+        running: boolean;
+        queueLength: number;
+        historyCount: number;
+        currentRun?: Omit<HarnessRunRecord, "events">;
+        lastRun?: Omit<HarnessRunRecord, "events">;
+        lastError: string | null;
+        consecutiveFailures: number;
+        harness: string;
+    } {
         return {
             running: this.running,
             queueLength: this.pendingQueue.length,
             historyCount: this.history.length,
-            lastRun: this.history[this.history.length - 1],
+            currentRun: this.currentRun ? this.summarizeRun(this.currentRun) : undefined,
+            lastRun: this.history.length > 0 ? this.summarizeRun(this.history[this.history.length - 1]) : undefined,
             lastError: this.lastError,
             consecutiveFailures: this.consecutiveFailures,
             harness: this.config.launcher.name,
         };
+    }
+
+    getRecentRuns(limit = 20): HarnessRunRecord[] {
+        const runs = [...this.history].reverse().slice(0, Math.max(0, limit));
+        return runs.map((run) => this.cloneRun(run));
+    }
+
+    getCurrentRun(): HarnessRunRecord | null {
+        return this.currentRun ? this.cloneRun(this.currentRun) : null;
+    }
+
+    getRun(runId: string): HarnessRunRecord | null {
+        if (this.currentRun?.id === runId) return this.cloneRun(this.currentRun);
+        const run = this.history.find((item) => item.id === runId);
+        return run ? this.cloneRun(run) : null;
     }
 
     async shutdown(): Promise<void> {
@@ -96,22 +124,35 @@ export class HarnessManager {
         const trigger = pending.some(n => n.source === "scheduler") ? "scheduled" : "enqueued";
         const prompt = buildFixedLayerPrompt(this.config.workDir, this.config.persona, pending);
 
+        const externalMcpServers = this.loadExternalMcpServers();
         const mcpConfig = {
             mcpServers: {
+                ...externalMcpServers,
                 cybergroupmate: {
                     type: "streamable-http" as const,
                     url: `${this.config.mcpUrl}?token=${this.config.mcpToken}`,
                 },
-                ...this.loadExternalMcpServers(),
             },
         };
+        const mcpServers = Object.keys(mcpConfig.mcpServers);
+
+        const runId = this.createRunId();
+        const logPath = join(this.config.workDir, "workspace", "dream-journal", `${runId}.jsonl`);
+        mkdirSync(join(this.config.workDir, "workspace", "dream-journal"), { recursive: true });
 
         const record: HarnessRunRecord = {
+            id: runId,
             startedAt: Date.now(),
             trigger,
             pendingCount: pending.length,
             harness: this.config.launcher.name,
+            mcpServers,
+            logPath,
+            events: [],
+            eventCount: 0,
         };
+        this.currentRun = record;
+        this.recordEvent(record, "system", "launch", `启动 ${record.harness}，触发方式 ${trigger}，待处理 ${pending.length} 条，MCP: ${mcpServers.join(", ")}`);
 
         let receivedResult = false;
 
@@ -126,6 +167,7 @@ export class HarnessManager {
             });
 
             record.pid = this.child.pid ?? undefined;
+            this.recordEvent(record, "system", "spawn", `进程已启动，pid=${record.pid ?? "unknown"}`);
 
             log.info("launch: harness started", {
                 launcher: this.config.launcher.name,
@@ -143,9 +185,11 @@ export class HarnessManager {
 
                 const durationSec = (record.durationMs / 1000).toFixed(1);
                 log.info("launch: harness exited", { code, durationSec, trigger, cost: record.costUsd });
+                this.recordEvent(record, "system", "exit", `进程退出，code=${code}, duration=${durationSec}s${record.costUsd != null ? `, cost=$${record.costUsd}` : ""}`);
 
                 this.child = null;
                 this.running = false;
+                this.currentRun = null;
 
                 if (code !== 0 && !this.shuttingDown && !receivedResult) {
                     this.handleSpawnFailure(`harness exited with code ${code}`, pending, record);
@@ -180,13 +224,16 @@ export class HarnessManager {
 
     private handleSpawnFailure(error: string, pending: HarnessNotify[], record: HarnessRunRecord): void {
         log.error("launch: harness spawn failed", { error, consecutiveFailures: this.consecutiveFailures + 1 });
+        this.recordEvent(record, "system", "failure", error);
         this.pendingQueue.unshift(...pending);
         if (!record.endedAt) record.endedAt = Date.now();
         if (record.exitCode == null) record.exitCode = -1;
+        if (record.durationMs == null) record.durationMs = record.endedAt - record.startedAt;
         this.history.push(record);
         if (this.history.length > 50) this.history.shift();
         this.child = null;
         this.running = false;
+        this.currentRun = null;
         this.consecutiveFailures++;
         this.lastError = error;
         this.onSpawnFailure?.(error, this.pendingQueue.length);
@@ -206,17 +253,48 @@ export class HarnessManager {
         const result: Record<string, Record<string, unknown>> = {};
         try {
             const raw = readFileSync(join(this.config.workDir, "workspace", "mcp-connections.json"), "utf-8");
-            const connections = JSON.parse(raw) as Array<Record<string, unknown>>;
+            const parsed = JSON.parse(raw);
+            const connections = Array.isArray(parsed) ? parsed as Array<Record<string, unknown>> : [];
             for (const conn of connections) {
-                const name = String(conn.name ?? "");
-                if (!name || !conn.url) continue;
-                const entry: Record<string, unknown> = {
-                    type: String(conn.transport ?? "streamable-http"),
-                    url: String(conn.url),
-                };
-                if (conn.headers && typeof conn.headers === "object") {
-                    entry.headers = conn.headers;
+                const name = typeof conn.name === "string" ? conn.name.trim() : "";
+                if (!name) continue;
+                if (name === "cybergroupmate") {
+                    log.warn("skipping external MCP with reserved name", { name });
+                    continue;
                 }
+
+                const transport = conn.transport === "stdio" || conn.transport === "streamable-http"
+                    ? conn.transport
+                    : typeof conn.url === "string" && conn.url.trim()
+                        ? "streamable-http"
+                        : "stdio";
+
+                if (transport === "streamable-http") {
+                    if (typeof conn.url !== "string" || !conn.url.trim()) {
+                        log.warn("skipping external HTTP MCP without url", { name });
+                        continue;
+                    }
+                    const entry: Record<string, unknown> = {
+                        type: "streamable-http",
+                        url: conn.url,
+                    };
+                    const headers = normalizeStringMap(conn.headers);
+                    if (headers) entry.headers = headers;
+                    result[name] = entry;
+                    continue;
+                }
+
+                if (typeof conn.command !== "string" || !conn.command.trim()) {
+                    log.warn("skipping external stdio MCP without command", { name });
+                    continue;
+                }
+                const entry: Record<string, unknown> = {
+                    type: "stdio",
+                    command: conn.command,
+                };
+                if (Array.isArray(conn.args)) entry.args = conn.args.map(String);
+                const env = normalizeStringMap(conn.env);
+                if (env) entry.env = env;
                 result[name] = entry;
             }
             if (Object.keys(result).length > 0) {
@@ -234,6 +312,53 @@ export class HarnessManager {
         return items;
     }
 
+    private createRunId(): string {
+        const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+        return `harness-${stamp}-${this.nextRunSeq++}`;
+    }
+
+    private recordEvent(
+        record: HarnessRunRecord,
+        stream: HarnessRunEvent["stream"],
+        kind: string,
+        text?: string,
+        event?: Record<string, unknown>,
+    ): void {
+        const entry: HarnessRunEvent = {
+            id: this.nextEventSeq++,
+            timestamp: Date.now(),
+            stream,
+            kind,
+            ...(text ? { text } : {}),
+            ...(event ? { event: trimJsonForDashboard(event) } : {}),
+        };
+        record.eventCount++;
+        record.events.push(entry);
+        if (record.events.length > 1000) record.events.shift();
+        if (record.logPath) {
+            try {
+                appendFileSync(record.logPath, JSON.stringify(entry) + "\n", "utf-8");
+            } catch (err) {
+                log.debug("failed to append harness run log", { runId: record.id, error: String(err) });
+            }
+        }
+    }
+
+    private summarizeRun(record: HarnessRunRecord): Omit<HarnessRunRecord, "events"> {
+        const { events: _events, ...summary } = record;
+        return { ...summary };
+    }
+
+    private cloneRun(record: HarnessRunRecord): HarnessRunRecord {
+        return {
+            ...record,
+            events: record.events.map((event) => ({
+                ...event,
+                event: event.event ? { ...event.event } : undefined,
+            })),
+        };
+    }
+
     private collectOutput(child: ChildProcess, record: HarnessRunRecord, onResult?: () => void): void {
         let stdoutBuffer = "";
         let stderrTail = "";
@@ -243,6 +368,7 @@ export class HarnessManager {
             try {
                 const event = JSON.parse(line) as Record<string, unknown>;
                 lastEvent = event;
+                this.recordEvent(record, "stdout", String(event.type ?? "json"), summarizeHarnessEvent(event), event);
                 // Claude Code: { type: "result", cost_usd, duration_ms, result }
                 // Copilot CLI: { type: "result", ... } (similar JSONL in --output-format json)
                 if (event.type === "result") {
@@ -254,6 +380,7 @@ export class HarnessManager {
                 }
             } catch {
                 log.debug("harness stdout", { line: line.slice(0, 200) });
+                this.recordEvent(record, "stdout", "text", line);
             }
         };
         child.stdout?.on("data", (chunk: Buffer) => {
@@ -279,7 +406,74 @@ export class HarnessManager {
             if (text) {
                 log.warn("harness stderr", { text: text.slice(0, 500) });
                 stderrTail = (stderrTail + "\n" + text).slice(-500);
+                this.recordEvent(record, "stderr", "stderr", text);
             }
         });
     }
+}
+
+function normalizeStringMap(value: unknown): Record<string, string> | undefined {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const entries = Object.entries(value as Record<string, unknown>)
+        .filter(([key]) => key.trim())
+        .map(([key, val]) => [key, String(val)] as const);
+    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function trimJsonForDashboard(value: Record<string, unknown>): Record<string, unknown> {
+    const json = JSON.stringify(value);
+    if (json.length <= 8000) return value;
+    return {
+        type: value.type,
+        truncated: true,
+        preview: json.slice(0, 8000),
+    };
+}
+
+function summarizeHarnessEvent(event: Record<string, unknown>): string {
+    const type = String(event.type ?? "json");
+    if (type === "result") {
+        const result = event.result != null ? String(event.result).trim() : "";
+        const cost = event.cost_usd != null ? ` cost=$${event.cost_usd}` : "";
+        const duration = event.duration_ms != null ? ` duration=${event.duration_ms}ms` : "";
+        return result ? `result:${cost}${duration} ${truncate(result, 500)}` : `result:${cost}${duration}`.trim();
+    }
+
+    const message = event.message;
+    if (message && typeof message === "object") {
+        const msg = message as Record<string, unknown>;
+        const role = typeof msg.role === "string" ? msg.role : type;
+        const content = msg.content;
+        const parts: string[] = [];
+        if (typeof content === "string") {
+            parts.push(content);
+        } else if (Array.isArray(content)) {
+            for (const part of content) {
+                if (!part || typeof part !== "object") continue;
+                const p = part as Record<string, unknown>;
+                if (p.type === "text" && typeof p.text === "string") {
+                    parts.push(p.text);
+                } else if (p.type === "tool_use") {
+                    const name = typeof p.name === "string" ? p.name : "tool";
+                    const input = p.input && typeof p.input === "object"
+                        ? Object.keys(p.input as Record<string, unknown>).join(",")
+                        : "";
+                    parts.push(`tool_use ${name}${input ? `(${input})` : ""}`);
+                } else if (p.type === "tool_result") {
+                    const contentText = typeof p.content === "string"
+                        ? p.content
+                        : JSON.stringify(p.content ?? "");
+                    parts.push(`tool_result ${truncate(contentText, 300)}`);
+                }
+            }
+        }
+        if (parts.length > 0) return `${role}: ${truncate(parts.join("\n"), 700)}`;
+    }
+
+    const subtype = event.subtype ? `/${String(event.subtype)}` : "";
+    return truncate(`${type}${subtype} ${JSON.stringify(event)}`, 700);
+}
+
+function truncate(text: string, max: number): string {
+    return text.length > max ? `${text.slice(0, max)}...` : text;
 }

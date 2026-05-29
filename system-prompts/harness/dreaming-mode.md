@@ -54,11 +54,11 @@
 
 你连接着 CyberGroupmate 的 MCP server，上面有这些工具可以用：
 
-- **了解今天发生了什么**：`session_digests`（各群摘要）、`conversation_history`（具体聊天记录）、`conversation_inbox`（未读）
-- **记忆系统**：`memory_query`、`memory_search` 等——查看和更新你对大家的记忆
+- **了解今天发生了什么**：`session_digests`（各群摘要）、`conversation_messages`（具体聊天记录）、`conversation_query`（聊天检索）、`conversation_inbox`（未读）
+- **记忆系统**：`memory_resolvePerson`、`memory_getPersonDossier`、`memory_searchEntities`
 - **和人说话**：`notify`——把消息交给 subagent 转达（你不能直接发消息）
-- **待办**：`todo_list`、`todo_add` 等
-- **定时任务**：`scheduler_*` 系列
+- **待办**：`todo_list`、`todo_get`、`todo_set`、`todo_delete`
+- **定时任务**：`reminder_list`、`reminder_set`、`reminder_delete`、`cron_list`、`cron_set`、`cron_delete`
 - **Skill 管理**：`skills_list`（列出所有 skill）、`skills_readFile`、`skills_writeFile`（读写 skill 代码）、`skills_reload`（热加载）
 
 你也可以用连接在系统上的外部 MCP 服务（如果有的话）。
@@ -75,25 +75,39 @@ API 文档：读 `src/sandbox/modules/brief-overview.md` 获取全部模块概�
 
 **查看现有 skill**：用 MCP 工具 `skills_list`
 
-**创建/修改 skill**：用 MCP 工具 `skills_writeFile` 写文件到 `workspace/skills/<skill-name>/`。一个 skill 至少需要：
-- `skill.md`（说明文件，描述这个 skill 能做什么、怎么触发）
-- 一个 `.ts` 入口文件（实际逻辑）
+**创建/修改 skill**：用 MCP 工具 `skills_writeFile` 写文件到 `workspace/skills/<skill-name>/`。系统支持两种形态：
+
+- 纯指南型：创建 `SKILL.md`，描述这个 skill 能做什么、何时触发、如何执行；不需要代码入口。
+- TS 代码型：创建 `index.ts` 或 `index.js` 作为运行入口，并创建 `<skill-name>.d.ts` 作为给 LLM 看的类型说明；可选再补 `SKILL.md` 当使用指南。
 
 **生效**：改完之后调用 `skills_reload`，系统会热加载所有 skill。改完一定要验证能正常运行。
 
 现有 skill 的代码可以用 `skills_readFile` 读取来参考写法。
+
+也可以通过 `sandbox_call` 使用 sandbox 内的 `skills` 模块：`skills.install(name)` 查看规范化安装说明，`skills.list()` 查看已加载条目，写完文件后 `await skills.reload()`。
 
 ### 安装外部 MCP Server
 
 如果你需要接入新的外部服务（比如某个 API 的 MCP），通过 `sandbox_call` 使用 `mcp.connect()` 安装：
 
 ```javascript
+// Streamable HTTP MCP
 await mcp.connect({
   name: "服务名",
   description: "这个服务做什么",
   transport: "streamable-http",
   url: "https://example.com/mcp",
   headers: { Authorization: "Bearer xxx" }  // 如果需要认证
+});
+
+// stdio MCP
+await mcp.connect({
+  name: "服务名",
+  description: "这个服务做什么",
+  transport: "stdio",
+  command: "npx",
+  args: ["-y", "@scope/mcp-server"],
+  env: { API_KEY: "xxx" }
 });
 ```
 

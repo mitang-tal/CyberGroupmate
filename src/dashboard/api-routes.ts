@@ -1870,7 +1870,12 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         if (!deps.harnessManager) {
             return res.json({ enabled: false });
         }
-        res.json({ enabled: true, ...deps.harnessManager.getStatus() });
+        res.json({
+            enabled: true,
+            ...deps.harnessManager.getStatus(),
+            currentRun: deps.harnessManager.getCurrentRun(),
+            runs: deps.harnessManager.getRecentRuns(20),
+        });
     });
 
     router.post("/background-agent/trigger", (_req, res) => {
@@ -1879,6 +1884,33 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         }
         deps.harnessManager.enqueue({ content: "manual-trigger-from-dashboard", source: "dashboard" });
         res.json({ ok: true, queueLength: deps.harnessManager.queueLength });
+    });
+
+    router.get("/background-agent/runs/:runId/events", (req, res) => {
+        if (!deps.harnessManager) {
+            return res.status(404).json({ error: "HarnessManager not configured" });
+        }
+        const run = deps.harnessManager.getRun(req.params.runId);
+        if (!run) {
+            return res.status(404).json({ error: "run not found" });
+        }
+        const after = Number(qs(req.query.after));
+        if (!run.logPath || !fs.existsSync(run.logPath)) {
+            const events = Number.isFinite(after)
+                ? run.events.filter((event) => event.id > after)
+                : run.events;
+            return res.json({ runId: run.id, events, source: "memory" });
+        }
+        try {
+            const events = fs.readFileSync(run.logPath, "utf-8")
+                .split(/\r?\n/)
+                .filter(Boolean)
+                .map((line) => JSON.parse(line))
+                .filter((event) => !Number.isFinite(after) || Number(event.id) > after);
+            res.json({ runId: run.id, events, source: "log", logPath: run.logPath });
+        } catch (err) {
+            res.status(500).json({ error: String(err) });
+        }
     });
 
     return router;

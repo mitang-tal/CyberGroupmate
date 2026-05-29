@@ -1,13 +1,13 @@
 import { z } from "zod";
 import { readdir, readFile, writeFile, mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { McpServerDeps } from "../types.js";
 
 export function registerSkillsTools(mcp: McpServer, deps: McpServerDeps): void {
     mcp.tool(
         "skills_list",
-        "List all available skills in workspace/skills/. Returns skill names and whether they have a .ts entry point or skill.md.",
+        "List all available skills in workspace/skills/. Returns skill names, code entry files, .d.ts docs, and SKILL.md presence.",
         async () => {
             const skillsDir = join(deps.workspaceRoot, "workspace", "skills");
             try {
@@ -17,10 +17,16 @@ export function registerSkillsTools(mcp: McpServer, deps: McpServerDeps): void {
                     if (!entry.isDirectory() || entry.name === "node_modules") continue;
                     const skillPath = join(skillsDir, entry.name);
                     const files = await readdir(skillPath).catch((): string[] => []);
+                    const hasCodeEntry = files.includes("index.ts") || files.includes("index.js");
+                    const hasDts = files.some((f: string) => f.endsWith(".d.ts"));
+                    const hasSkillMd = files.includes("SKILL.md");
                     skills.push({
                         name: entry.name,
-                        hasTs: files.some((f: string) => f.endsWith(".ts") || f.endsWith(".d.ts")),
-                        hasMd: files.includes("skill.md"),
+                        hasCodeEntry,
+                        hasDts,
+                        hasSkillMd,
+                        hasTs: files.includes("index.ts"),
+                        hasMd: hasSkillMd,
                         files,
                     });
                 }
@@ -67,7 +73,7 @@ export function registerSkillsTools(mcp: McpServer, deps: McpServerDeps): void {
             const skillDir = join(deps.workspaceRoot, "workspace", "skills", skillName);
             const filePath = join(skillDir, fileName);
             try {
-                await mkdir(skillDir, { recursive: true });
+                await mkdir(dirname(filePath), { recursive: true });
                 await writeFile(filePath, content, "utf-8");
                 return { content: [{ type: "text" as const, text: JSON.stringify({ written: true, path: filePath }) }] };
             } catch (err) {

@@ -19,16 +19,32 @@ export interface HarnessNotify {
     source?: string;
 }
 
+export type HarnessRunEventStream = "system" | "stdout" | "stderr";
+
+export interface HarnessRunEvent {
+    id: number;
+    timestamp: number;
+    stream: HarnessRunEventStream;
+    kind: string;
+    text?: string;
+    event?: Record<string, unknown>;
+}
+
 export interface HarnessRunRecord {
+    id: string;
     startedAt: number;
     endedAt?: number;
     exitCode?: number | null;
     trigger: "scheduled" | "enqueued";
     pendingCount: number;
     harness: string;
+    mcpServers?: string[];
+    logPath?: string;
     pid?: number;
     durationMs?: number;
     costUsd?: number;
     stderrTail?: string;
     resultSummary?: string;
+    events: HarnessRunEvent[];
+    eventCount: number;
 }
