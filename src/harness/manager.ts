@@ -3,7 +3,7 @@ import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkS
 import { basename, join } from "node:path";
 import { createLogger } from "../core/logger.js";
 import { getHarnessHome, getHarnessInstructionPath } from "./home.js";
-import { buildSystemPrompt, buildTaskPrompt } from "./prompt.js";
+import { buildSystemPrompt, buildTaskPrompt, renderPendingFile, selectPendingNotifications, PENDING_FILE } from "./prompt.js";
 import type {
     HarnessLauncher,
     HarnessMcpConfig,
@@ -163,6 +163,7 @@ export class HarnessManager {
         const pending = this.drainQueue();
         const trigger = pending.some(n => n.source === "scheduler") ? "scheduled" : "enqueued";
         this.regenerateDreamingDigest();
+        this.writePendingFile(pending);
         const systemPrompt = buildSystemPrompt(this.config.workDir, this.config.persona);
         const prompt = buildTaskPrompt(this.config.workDir, pending);
 
@@ -363,11 +364,13 @@ export class HarnessManager {
         if (!this.config.buildDreamingDigest) return;
         const path = join(this.config.workDir, "workspace", "background-dreaming.md");
         try {
-            // 一次性覆盖优先；否则默认从上次做梦的起始时间收集
+            // 一次性覆盖优先；否则默认从「上次成功做梦」的起始时间收集。
+            // 必须用成功的运行做基线：失败的 spawn（如 E2BIG）会作为 retry 反复入队，
+            // 若用「上一次运行」做基线，retry 会把窗口塌缩成 0，反而清掉刚写好的文件。
             const override = this.dreamingSinceOverride;
             this.dreamingSinceOverride = undefined;
-            const lastRun = this.history[this.history.length - 1];
-            const sinceTs = override !== undefined ? override : (lastRun?.startedAt ?? null);
+            const lastSuccessful = [...this.history].reverse().find((run) => run.exitCode === 0);
+            const sinceTs = override !== undefined ? override : (lastSuccessful?.startedAt ?? null);
             const digest = this.config.buildDreamingDigest(sinceTs);
             if (digest && digest.trim()) {
                 mkdirSync(join(this.config.workDir, "workspace"), { recursive: true });
@@ -383,6 +386,30 @@ export class HarnessManager {
             }
         } catch (err) {
             log.warn("background-dreaming.md 重建失败", { error: String(err) });
+        }
+    }
+
+    /**
+     * 启动前把「有人找你」的通知写入 workspace/background-pending.md，task prompt 只引用它，
+     * 不内联（通知可能很长）。没有真实通知时删除旧文件。
+     */
+    private writePendingFile(pending: HarnessNotify[]): void {
+        const path = join(this.config.workDir, PENDING_FILE);
+        try {
+            const meaningful = selectPendingNotifications(pending);
+            if (meaningful.length > 0) {
+                mkdirSync(join(this.config.workDir, "workspace"), { recursive: true });
+                writeFileSync(path, renderPendingFile(meaningful), "utf-8");
+                log.info("background-pending.md 已写入", { count: meaningful.length });
+            } else {
+                try {
+                    unlinkSync(path);
+                } catch {
+                    // 文件本就不存在，忽略
+                }
+            }
+        } catch (err) {
+            log.warn("background-pending.md 写入失败", { error: String(err) });
         }
     }
 

@@ -128,8 +128,11 @@ describe("Harness prompt and user home handling", () => {
             assert.match(systemPrompt, /后台同伴/);
             assert.doesNotMatch(taskPrompt, /你是「D酱」/);
             assert.doesNotMatch(taskPrompt, /后台同伴/);
-            assert.match(taskPrompt, /整理今天冒出来的工具想法/);
-            assert.match(taskPrompt, /检查 MCP 安装路径/);
+            // 任务 prompt 不内联任何可能很长的内容（避免 E2BIG），只指引 agent 去读文件
+            assert.doesNotMatch(taskPrompt, /整理今天冒出来的工具想法/);
+            assert.doesNotMatch(taskPrompt, /检查 MCP 安装路径/);
+            assert.match(taskPrompt, /background-dreaming\.md/);
+            assert.match(taskPrompt, /background-pending\.md/);
         } finally {
             rmSync(root, { recursive: true, force: true });
         }
