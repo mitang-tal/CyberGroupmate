@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { basename, join } from "node:path";
 import { createLogger } from "../core/logger.js";
 import { getHarnessHome, getHarnessInstructionPath } from "./home.js";
 import { buildSystemPrompt, buildTaskPrompt } from "./prompt.js";
@@ -14,6 +14,10 @@ import type {
 } from "./types.js";
 
 const log = createLogger("harness-manager");
+
+// dream-journal JSONL 文件每次运行可达数 MB，只保留最近若干份，由 manager 定时清理。
+const MAX_JOURNAL_FILES = 10;
+const JOURNAL_CLEANUP_INTERVAL_MS = 30 * 60_000;
 
 export interface HarnessManagerConfig {
     launcher: HarnessLauncher;
@@ -38,10 +42,13 @@ export class HarnessManager {
     private nextEventSeq = 1;
     private consecutiveFailures = 0;
     private lastError: string | null = null;
+    private cleanupTimer: ReturnType<typeof setInterval> | null = null;
     onSpawnFailure?: (error: string, pendingCount: number) => void;
 
     constructor(config: HarnessManagerConfig) {
         this.config = config;
+        this.cleanupTimer = setInterval(() => this.cleanupJournal(), JOURNAL_CLEANUP_INTERVAL_MS);
+        if (this.cleanupTimer.unref) this.cleanupTimer.unref();
     }
 
     get isRunning(): boolean {
@@ -106,6 +113,10 @@ export class HarnessManager {
 
     async shutdown(): Promise<void> {
         this.shuttingDown = true;
+        if (this.cleanupTimer) {
+            clearInterval(this.cleanupTimer);
+            this.cleanupTimer = null;
+        }
         if (this.child) {
             log.info("shutdown: killing harness process");
             this.child.kill("SIGTERM");
@@ -150,6 +161,7 @@ export class HarnessManager {
         const harnessHome = getHarnessHome();
         const instructionPath = getHarnessInstructionPath(harnessHome, this.config.launcher.name);
         mkdirSync(join(this.config.workDir, "workspace", "dream-journal"), { recursive: true });
+        this.cleanupJournal();
 
         const record: HarnessRunRecord = {
             id: runId,
@@ -330,6 +342,42 @@ export class HarnessManager {
     private createRunId(): string {
         const stamp = new Date().toISOString().replace(/[:.]/g, "-");
         return `harness-${stamp}-${this.nextRunSeq++}`;
+    }
+
+    /** 只保留最近 MAX_JOURNAL_FILES 份 dream-journal JSONL，删掉更早的，避免磁盘膨胀。 */
+    private cleanupJournal(): void {
+        const dir = join(this.config.workDir, "workspace", "dream-journal");
+        let names: string[];
+        try {
+            names = readdirSync(dir).filter((name) => name.startsWith("harness-") && name.endsWith(".jsonl"));
+        } catch {
+            return; // 目录还没建或不可读，无需清理
+        }
+        if (names.length <= MAX_JOURNAL_FILES) return;
+
+        const entries = names.map((name) => {
+            let mtime = 0;
+            try {
+                mtime = statSync(join(dir, name)).mtimeMs;
+            } catch {
+                // 取不到时间就当作最旧，优先淘汰
+            }
+            return { name, mtime };
+        });
+        entries.sort((a, b) => b.mtime - a.mtime); // 新的在前
+
+        const currentName = this.currentRun?.logPath ? basename(this.currentRun.logPath) : null;
+        let removed = 0;
+        for (const entry of entries.slice(MAX_JOURNAL_FILES)) {
+            if (entry.name === currentName) continue; // 别删正在写入的那份
+            try {
+                unlinkSync(join(dir, entry.name));
+                removed++;
+            } catch (err) {
+                log.debug("failed to remove old dream-journal log", { name: entry.name, error: String(err) });
+            }
+        }
+        if (removed > 0) log.info("dream-journal cleanup removed old logs", { removed, kept: MAX_JOURNAL_FILES });
     }
 
     private recordEvent(
