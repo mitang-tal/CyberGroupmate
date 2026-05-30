@@ -201,6 +201,7 @@ export function createTelegramClientProxy(
         useChatAdministration: async () => useTelegramGuide("useChatAdministration"),
         useInvites: async () => useTelegramGuide("useInvites"),
         useForumTopics: async () => useTelegramGuide("useForumTopics"),
+        useMediaDownload: async () => useTelegramGuide("useMediaDownload"),
 
         getMe: async () => callTelegramHost("telegram.getMe", []),
         sendText: async (chatId: number | string, text: string, opts?: { replyTo?: number }) => {

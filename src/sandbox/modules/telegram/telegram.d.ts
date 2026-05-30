@@ -63,6 +63,8 @@ declare const telegram: {
     useInvites(): Promise<string>;
     /** 加载论坛话题指南。用于确认群是否开启 Forum、列出话题或定位 topic id；调用本方法只披露相关 API。 */
     useForumTopics(): Promise<string>;
+    /** 加载媒体下载指南。包含：1) 用 fs.writeFileBinary() 正确保存 base64 buffer 的方法；2) GIF/短视频抽帧分析时避免 60s 超时的策略（默认 4-6 帧、复用已有文件、先发进度）。遇到 downloadMedia 或 GIF 分析相关问题时调用。 */
+    useMediaDownload(): Promise<string>;
     // ─── 发送与交互 ───
     /** 发送普通文本消息 */
     sendText(chatId: number | string, text: string, opts?: { replyTo?: number; silent?: boolean; }): Promise<{ id: number; text: string; date: Date; chat: { id: number; title?: string; username?: string; type: "private" | "group" | "supergroup" | "channel"; }; sender: { id: number; displayName?: string; title?: string; username?: string; }; isMention: boolean; replyToMessage?: { id: number } | null; media?: unknown; mediaInfo?: { type: "photo" | "sticker" | "video" | "document" | "animation" | "audio" | "other"; rawType?: string; fileId?: string; uniqueFileId?: string; emoji?: string; mimeType?: string; fileName?: string; width?: number; height?: number; fileSize?: number; filePath?: string; downloadStatus?: "downloaded" | "cached" | "too_large" | "failed"; downloadError?: string; }; }>;
@@ -156,12 +158,21 @@ declare const telegram: {
      * @param chatId  可选，用于 file reference 过期时自动 refetch
      * @param messageId 可选，同上
      * @param uniqueFileId 可选，用于缓存命中
+     *
+     * ⚠️ **保存到磁盘必须用 `fs.writeFileBinary()`，不能用 `fs.writeFile()`。**
+     * `data.buffer` 是 base64 字符串；`fs.writeFile` 会把它当 UTF-8 文本写入导致文件损坏。
+     *
      * @example
+     * // ✅ 正确：下载并保存为可用的图片文件
      * const msg = messages[0];
      * if (msg.mediaInfo?.fileId) {
      *   const data = await telegram.downloadMedia(msg.mediaInfo.fileId, chatId, msg.id, msg.mediaInfo.uniqueFileId);
-     *   // data.buffer 是 base64 编码的文件内容, data.size 是字节数
+     *   fs.writeFileBinary("workspace/Downloads/photo.jpg", data.buffer);
+     *   // 之后可以 vision.see("workspace/Downloads/photo.jpg") 或 sendMedia(chatId, { type: 'photo', file: 'workspace/Downloads/photo.jpg' })
      * }
+     * @example
+     * // ❌ 错误：writeFile 写入 base64 字符串，文件损坏
+     * // fs.writeFile("photo.jpg", data.buffer);
      * @example
      * // 错误：await telegram.downloadMedia(msg.mediaInfo)
      * // 正确：await telegram.downloadMedia(msg.mediaInfo.fileId, msg.chat.id, msg.id, msg.mediaInfo.uniqueFileId)
