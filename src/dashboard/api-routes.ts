@@ -1878,12 +1878,33 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         });
     });
 
-    router.post("/background-agent/trigger", (_req, res) => {
+    router.post("/background-agent/trigger", (req, res) => {
         if (!deps.harnessManager) {
             return res.status(404).json({ error: "HarnessManager not configured" });
         }
-        deps.harnessManager.enqueue({ content: "manual-trigger-from-dashboard", source: "dashboard" });
-        res.json({ ok: true, queueLength: deps.harnessManager.queueLength });
+        // 可选的收集起点：
+        //   省略         → 默认（上次做梦起始时间起）
+        //   "all"        → 收集全部留存任务（不限起点）
+        //   ISO / epoch  → 从该时刻起
+        const sinceRaw = req.body?.since ?? qs(req.query.since);
+        let sinceTs: number | null | undefined = undefined;
+        if (sinceRaw !== undefined && sinceRaw !== null && String(sinceRaw).trim() !== "") {
+            const value = String(sinceRaw).trim();
+            if (value === "all") {
+                sinceTs = null;
+            } else {
+                const ms = /^\d+$/.test(value) ? Number(value) : Date.parse(value);
+                if (!Number.isFinite(ms)) {
+                    return res.status(400).json({ error: `invalid 'since': ${value}` });
+                }
+                sinceTs = ms;
+            }
+        }
+        deps.harnessManager.triggerManual(
+            { content: "manual-trigger-from-dashboard", source: "dashboard" },
+            sinceTs,
+        );
+        res.json({ ok: true, queueLength: deps.harnessManager.queueLength, sinceTs: sinceTs ?? null });
     });
 
     router.get("/background-agent/runs/:runId/events", (req, res) => {

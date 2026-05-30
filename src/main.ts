@@ -1173,6 +1173,7 @@ async function main(): Promise<void> {
     const bgHarness = appConfig.backgroundAgent?.harness;
     if (mcpServerInstance && (bgHarness === "claude-code" || bgHarness === "copilot")) {
         const { HarnessManager, ClaudeCodeLauncher, CopilotCliLauncher } = await import("./harness/index.js");
+        const { buildDreamingDigest } = await import("./harness/dreaming-context.js");
         const launcher = bgHarness === "copilot"
             ? new CopilotCliLauncher(appConfig.backgroundAgent!.copilotPath)
             : new ClaudeCodeLauncher(appConfig.backgroundAgent!.claudeCodePath);
@@ -1186,6 +1187,11 @@ async function main(): Promise<void> {
             model,
             maxBudgetUsd: appConfig.backgroundAgent!.maxBudgetUsd,
             extraArgs: appConfig.backgroundAgent!.extraArgs,
+            buildDreamingDigest: (sinceTs) => buildDreamingDigest({
+                listTasks: () => globalState.listDispatchedSubagentTasks({ limit: 200 }).tasks,
+                memory,
+                sinceTs,
+            }),
         });
         harnessManager.onSpawnFailure = (error, pendingCount) => {
             globalState.addSessionDigest(`[Background Agent spawn failed] ${error} (${pendingCount} pending tasks)`);

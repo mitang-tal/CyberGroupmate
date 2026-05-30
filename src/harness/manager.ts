@@ -1,5 +1,5 @@
 import type { ChildProcess } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { createLogger } from "../core/logger.js";
 import { getHarnessHome, getHarnessInstructionPath } from "./home.js";
@@ -28,6 +28,11 @@ export interface HarnessManagerConfig {
     model?: string;
     maxBudgetUsd?: number;
     extraArgs?: string[];
+    /**
+     * 启动前重建 background-dreaming.md 内容（本周期 subagent 任务回顾 + 群关系画像）。
+     * 参数 sinceTs 是上次做梦的起始时间（ms），用于界定「本周期」。返回 null 表示无可用内容。
+     */
+    buildDreamingDigest?: (sinceTs: number | null) => string | null;
 }
 
 export class HarnessManager {
@@ -42,6 +47,8 @@ export class HarnessManager {
     private nextEventSeq = 1;
     private consecutiveFailures = 0;
     private lastError: string | null = null;
+    // 一次性的做梦收集起点覆盖：undefined=默认（上次做梦起始），null=全部，number=指定时刻(ms)
+    private dreamingSinceOverride: number | null | undefined = undefined;
     private cleanupTimer: ReturnType<typeof setInterval> | null = null;
     onSpawnFailure?: (error: string, pendingCount: number) => void;
 
@@ -68,6 +75,19 @@ export class HarnessManager {
         } else {
             log.info("enqueue: instance running, queued", { queueLength: this.pendingQueue.length });
         }
+    }
+
+    /**
+     * 手动触发一次做梦，可覆盖本周期收集起点 sinceTs（ms）：
+     * - number：从该时刻起收集 subagent 任务
+     * - null：收集全部留存任务（不限起点）
+     * - undefined：沿用默认（上次做梦的起始时间）
+     * 覆盖值是一次性的，只作用于下一次启动。
+     */
+    triggerManual(notify: HarnessNotify, sinceTs?: number | null): void {
+        if (this.shuttingDown) return;
+        if (sinceTs !== undefined) this.dreamingSinceOverride = sinceTs;
+        this.enqueue(notify);
     }
 
     triggerScheduled(): void {
@@ -142,6 +162,7 @@ export class HarnessManager {
 
         const pending = this.drainQueue();
         const trigger = pending.some(n => n.source === "scheduler") ? "scheduled" : "enqueued";
+        this.regenerateDreamingDigest();
         const systemPrompt = buildSystemPrompt(this.config.workDir, this.config.persona);
         const prompt = buildTaskPrompt(this.config.workDir, pending);
 
@@ -332,6 +353,37 @@ export class HarnessManager {
             // no external connections or file unreadable — fine
         }
         return result;
+    }
+
+    /**
+     * 启动前重建 workspace/background-dreaming.md：本周期（上次做梦以来）的 subagent
+     * 任务回顾 + 群关系画像。无内容时删除旧文件，避免做梦时读到上个周期的陈旧内容。
+     */
+    private regenerateDreamingDigest(): void {
+        if (!this.config.buildDreamingDigest) return;
+        const path = join(this.config.workDir, "workspace", "background-dreaming.md");
+        try {
+            // 一次性覆盖优先；否则默认从上次做梦的起始时间收集
+            const override = this.dreamingSinceOverride;
+            this.dreamingSinceOverride = undefined;
+            const lastRun = this.history[this.history.length - 1];
+            const sinceTs = override !== undefined ? override : (lastRun?.startedAt ?? null);
+            const digest = this.config.buildDreamingDigest(sinceTs);
+            if (digest && digest.trim()) {
+                mkdirSync(join(this.config.workDir, "workspace"), { recursive: true });
+                writeFileSync(path, digest.trim() + "\n", "utf-8");
+                log.info("background-dreaming.md 已重建", { sinceTs, length: digest.length });
+            } else {
+                try {
+                    unlinkSync(path);
+                    log.info("本周期无 subagent 任务，已清除旧 background-dreaming.md");
+                } catch {
+                    // 文件本就不存在，忽略
+                }
+            }
+        } catch (err) {
+            log.warn("background-dreaming.md 重建失败", { error: String(err) });
+        }
     }
 
     private drainQueue(): HarnessNotify[] {

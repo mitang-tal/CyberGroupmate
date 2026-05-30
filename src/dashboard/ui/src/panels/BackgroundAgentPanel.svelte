@@ -5,6 +5,8 @@
   let status = null;
   let loading = true;
   let triggering = false;
+  let sinceMode = 'default'; // default | 6h | 24h | 3d | all | custom
+  let customSince = '';      // datetime-local 值（本地时区）
   let selectedRunId = null;
   let autoScroll = true;
   let logEl;
@@ -49,10 +51,35 @@
     loading = false;
   }
 
+  // 把收集起点选项转换成发给后端的 since 值（undefined=默认/沿用上次做梦起点）
+  function resolveSince() {
+    const now = Date.now();
+    switch (sinceMode) {
+      case '6h': return new Date(now - 6 * 3600e3).toISOString();
+      case '24h': return new Date(now - 24 * 3600e3).toISOString();
+      case '3d': return new Date(now - 3 * 24 * 3600e3).toISOString();
+      case 'all': return 'all';
+      case 'custom': {
+        if (!customSince) return undefined;
+        const ms = new Date(customSince).getTime();
+        return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
+      }
+      default: return undefined;
+    }
+  }
+
   async function trigger() {
+    if (sinceMode === 'custom' && !customSince) {
+      alert('请选择自定义开始时间');
+      return;
+    }
     triggering = true;
     try {
-      await api('/background-agent/trigger', { method: 'POST' });
+      const since = resolveSince();
+      await api('/background-agent/trigger', {
+        method: 'POST',
+        ...(since === undefined ? {} : { body: { since } }),
+      });
       await refresh();
     } catch (e) {
       alert('Trigger failed: ' + e);
@@ -385,7 +412,21 @@
         <h2 class="text-xl font-bold">做梦系统</h2>
         <p class="text-sm text-base-content/70">Background Agent harness 输出、动作和结果记录。</p>
       </div>
-      <div class="flex flex-wrap gap-2">
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="flex items-center gap-1" title="本周期 subagent 任务的收集起点">
+          <span class="text-xs text-base-content/60">收集起点</span>
+          <select class="select select-bordered select-sm" bind:value={sinceMode} disabled={!status?.enabled}>
+            <option value="default">默认（上次做梦后）</option>
+            <option value="6h">最近 6 小时</option>
+            <option value="24h">最近 24 小时</option>
+            <option value="3d">最近 3 天</option>
+            <option value="all">全部留存任务</option>
+            <option value="custom">自定义…</option>
+          </select>
+          {#if sinceMode === 'custom'}
+            <input type="datetime-local" class="input input-bordered input-sm" bind:value={customSince} />
+          {/if}
+        </div>
         <button class="btn btn-primary btn-sm" onclick={trigger} disabled={triggering || !status?.enabled}>
           {triggering ? '触发中...' : '立即做梦'}
         </button>

@@ -613,47 +613,9 @@ export async function runReflection(
         log.warn("Reflection Step 6: agent-state 写入失败", { error: String(err) });
     }
 
-    // ── Step 7: 更新 background-dreaming.md（做梦方向感）──
-    // 只从 insights 和 agentFeedback 提取方向感，不用 followupCandidates（那些是具体任务）
-    try {
-        const DREAMING_PATH = join(process.cwd(), "workspace", "background-dreaming.md");
-        const dreamingSections: string[] = [];
-
-        if (llmOutput.insights) {
-            dreamingSections.push(`- ${llmOutput.insights}`);
-        }
-        if (llmOutput.agentFeedback?.effectiveBehaviors?.length) {
-            dreamingSections.push(`- 有效互动方式：${llmOutput.agentFeedback.effectiveBehaviors.join("、")}`);
-        }
-        if (llmOutput.agentFeedback?.toneHints?.length) {
-            dreamingSections.push(`- 语气方向：${llmOutput.agentFeedback.toneHints.join("、")}`);
-        }
-
-        if (dreamingSections.length > 0) {
-            let existing = "";
-            if (existsSync(DREAMING_PATH)) {
-                existing = readFileSync(DREAMING_PATH, "utf-8");
-            }
-
-            const header = "# 做梦方向感\n\n> 由 Reflection 自动更新，记录最近的兴趣、关注和想进化的方向。\n\n";
-            const newBlock = `## ${startTime} (${chatId})\n\n${dreamingSections.join("\n")}\n`;
-
-            const body = existing.startsWith("# 做梦方向感")
-                ? existing.replace(/^# 做梦方向感.*?\n(?:>.*?\n)*\n?/, "")
-                : existing;
-            let merged = header + newBlock + "\n" + body.trim();
-
-            const maxChars = 4000;
-            if (merged.length > maxChars) {
-                merged = merged.slice(0, maxChars).replace(/\n[^\n]*$/, "\n");
-            }
-
-            writeFileSync(DREAMING_PATH, merged.trim() + "\n", "utf-8");
-            log.debug("Reflection Step 7: background-dreaming.md 已更新", { chatId });
-        }
-    } catch (err) {
-        log.warn("Reflection Step 7: background-dreaming.md 写入失败", { error: String(err) });
-    }
+    // NOTE: background-dreaming.md 不再由 reflection 生成。
+    // 做梦上下文改由 harness 启动前从本周期 subagent 任务 + 群关系画像重建，
+    // 见 src/harness/dreaming-context.ts。
 
     return result;
 }

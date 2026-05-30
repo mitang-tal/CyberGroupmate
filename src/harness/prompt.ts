@@ -30,9 +30,16 @@ export function buildTaskPrompt(
 ): string {
     const sections: string[] = [];
 
+    // 不把回顾内容内联进 prompt（可达上百 KB，会撑爆命令行参数导致 spawn E2BIG），
+    // 只指引 agent 自己去读这个文件。
     const dreaming = tryRead(join(workDir, "workspace", "background-dreaming.md"));
     if (dreaming) {
-        sections.push(`# 最近的方向感\n\n这是你从最近的日常聊天中积累下来的感受和想法，可以参考，但不用被它牵着走。\n\n${dreaming}`);
+        sections.push(
+            "# 本周期回顾\n\n" +
+            "`workspace/background-dreaming.md` 里是你这个周期（上次做梦以来）通过 subagent 实际做过的事，" +
+            "按聊天分组，并附了每个群的关系画像和可用的 MCP 探索入口。\n\n" +
+            "先把它完整读一遍，作为今晚做梦的起点。",
+        );
     }
 
     if (pending.length > 0) {
