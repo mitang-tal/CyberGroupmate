@@ -47,6 +47,7 @@ export class HarnessManager {
 
     constructor(config: HarnessManagerConfig) {
         this.config = config;
+        this.hydrateHistory();
         this.cleanupTimer = setInterval(() => this.cleanupJournal(), JOURNAL_CLEANUP_INTERVAL_MS);
         if (this.cleanupTimer.unref) this.cleanupTimer.unref();
     }
@@ -342,6 +343,90 @@ export class HarnessManager {
     private createRunId(): string {
         const stamp = new Date().toISOString().replace(/[:.]/g, "-");
         return `harness-${stamp}-${this.nextRunSeq++}`;
+    }
+
+    /** 启动时从 dream-journal 目录把历史运行记录读回内存，避免重启后界面记录清空。 */
+    private hydrateHistory(): void {
+        const dir = join(this.config.workDir, "workspace", "dream-journal");
+        let names: string[];
+        try {
+            names = readdirSync(dir).filter((name) => name.startsWith("harness-") && name.endsWith(".jsonl"));
+        } catch {
+            return; // 目录还没建，首次运行无需恢复
+        }
+        names.sort(); // 文件名内嵌 ISO 时间戳，字典序≈时间序（旧 → 新）
+        const records: HarnessRunRecord[] = [];
+        for (const name of names) {
+            try {
+                const record = this.parseRunFile(dir, name);
+                if (record) records.push(record);
+            } catch (err) {
+                log.debug("failed to hydrate dream-journal run", { name, error: String(err) });
+            }
+        }
+        this.history = records.slice(-50); // 与运行期保持一致的上限
+        if (this.history.length > 0) log.info("hydrated dream-journal history", { runs: this.history.length });
+    }
+
+    /** 把一份 JSONL 日志还原成 HarnessRunRecord（尽量补齐时间、退出码、花费、结果等元信息）。 */
+    private parseRunFile(dir: string, name: string): HarnessRunRecord | null {
+        const logPath = join(dir, name);
+        const lines = readFileSync(logPath, "utf-8").split(/\r?\n/).filter(Boolean);
+        const events: HarnessRunEvent[] = [];
+        for (const line of lines) {
+            try {
+                events.push(JSON.parse(line) as HarnessRunEvent);
+            } catch {
+                // 跳过坏行
+            }
+        }
+        if (!events.length) return null;
+
+        const first = events[0];
+        const last = events[events.length - 1];
+        const record: HarnessRunRecord = {
+            id: name.replace(/\.jsonl$/, ""),
+            startedAt: first.timestamp ?? Date.now(),
+            endedAt: last.timestamp, // 从磁盘读回的运行必然已结束
+            trigger: "enqueued",
+            pendingCount: 0,
+            harness: this.config.launcher.name,
+            logPath,
+            events: events.slice(-1000), // 与运行期内存上限一致；详情仍从文件读取
+            eventCount: events.length,
+        };
+
+        for (const ev of events) {
+            const raw = ev.event as Record<string, unknown> | undefined;
+            if (ev.kind === "launch" && ev.text) {
+                if (ev.text.includes("scheduled")) record.trigger = "scheduled";
+                const mcpMatch = ev.text.match(/MCP:\s*(.+)$/);
+                if (mcpMatch) record.mcpServers = mcpMatch[1].split(",").map((s) => s.trim()).filter(Boolean);
+            } else if (ev.kind === "home" && ev.text) {
+                const homeMatch = ev.text.match(/HOME=([^；;]+)/);
+                if (homeMatch) record.harnessHome = homeMatch[1].trim();
+            } else if (ev.kind === "spawn" && ev.text) {
+                const pidMatch = ev.text.match(/pid=(\d+)/);
+                if (pidMatch) record.pid = Number(pidMatch[1]);
+            } else if (ev.kind === "exit" && ev.text) {
+                const codeMatch = ev.text.match(/code=(-?\d+)/);
+                if (codeMatch) record.exitCode = Number(codeMatch[1]);
+            }
+            if (raw && raw.type === "result") {
+                if (raw.total_cost_usd != null) record.costUsd = Number(raw.total_cost_usd);
+                else if (raw.cost_usd != null) record.costUsd = Number(raw.cost_usd);
+                if (raw.duration_ms != null) record.durationMs = Number(raw.duration_ms);
+                else if (raw.usage && typeof raw.usage === "object") {
+                    const usage = raw.usage as Record<string, unknown>;
+                    if (usage.sessionDurationMs != null) record.durationMs = Number(usage.sessionDurationMs);
+                }
+                if (typeof raw.result === "string") record.resultSummary = raw.result.slice(0, 500);
+                if (record.exitCode == null && raw.exitCode != null) record.exitCode = Number(raw.exitCode);
+            }
+        }
+        if (record.durationMs == null && record.endedAt != null) record.durationMs = record.endedAt - record.startedAt;
+        if (record.exitCode === undefined) record.exitCode = null; // 已结束但退出码未知
+        return record;
     }
 
     /** 只保留最近 MAX_JOURNAL_FILES 份 dream-journal JSONL，删掉更早的，避免磁盘膨胀。 */
