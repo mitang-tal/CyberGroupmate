@@ -1,5 +1,5 @@
 /**
- * sandbox-pool.test.ts — SandboxPool 与后台 shell.run 监视器的生命周期交互
+ * sandbox-pool.test.ts — SandboxPool 与后台 shell.runBackground 监视器的生命周期交互
  *
  * 重点验证 P1：有后台命令在跑的 sandbox 不能被空闲回收（否则会静默 kill 进程且不发 shell_wake）。
  * 注意：本文件会启动真实 PTY worker，故被 run-tests 默认排除（文件名含 "sandbox"）。
@@ -8,7 +8,7 @@ import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
 import { SandboxPool } from "../src/sandbox/sandbox-pool.js";
 
-describe("SandboxPool × background shell.run", () => {
+describe("SandboxPool × background shell.runBackground", () => {
     const pools: SandboxPool[] = [];
 
     function makePool(idleTimeout: number): SandboxPool {

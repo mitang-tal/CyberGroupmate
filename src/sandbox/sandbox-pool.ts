@@ -92,7 +92,7 @@ export class SandboxPool {
         const existing = this.pool.get(chatId);
         if (existing) {
             const staleSkills = existing.skillGeneration < this._skillGeneration;
-            // skill 过期需要重建——但绝不能 stop 正在跑后台 shell.run 的实例（会违背 wake-not-kill）。
+            // skill 过期需要重建——但绝不能 stop 正在跑后台 shell.runBackground 的实例（会违背 wake-not-kill）。
             // 此时继续复用旧实例（沿用旧 skill 环境），等后台命令结束后的下次 acquire 再替换。
             if (staleSkills && !existing.sandbox.hasActiveBackgroundTasks()) {
                 log.info("acquire: skill 已更新，回收旧实例", { chatId });
@@ -263,7 +263,7 @@ export class SandboxPool {
     /**
      * 淘汰一个实例为新实例腾位。
      *
-     * 铁律：**绝不淘汰正在跑后台 shell.run 命令的实例**（否则会静默 kill 进程、
+     * 铁律：**绝不淘汰正在跑后台 shell.runBackground 命令的实例**（否则会静默 kill 进程、
      * 违背 wake-not-kill 承诺）。在可淘汰候选里优先选"空闲"，其次才退而淘汰
      * "使用中"的最老者。若所有实例都有后台命令在跑，则抛错做 backpressure，
      * 让调用方等待 / 重试，而不是破坏后台任务。
@@ -275,7 +275,7 @@ export class SandboxPool {
         if (evictable.length === 0) {
             throw new Error(
                 `SandboxPool 已满 (${this.pool.size}/${this.config.maxInstances})，` +
-                `且所有实例都有后台 shell.run 命令在运行，无法淘汰。` +
+                `且所有实例都有后台 shell.runBackground 命令在运行，无法淘汰。` +
                 `请等待后台命令结束或先 shell.kill 释放后重试。`,
             );
         }
@@ -298,7 +298,7 @@ export class SandboxPool {
     }
 
     /**
-     * 回收闲置实例。**跳过正在跑后台 shell.run 命令的实例**（否则会静默 kill）；
+     * 回收闲置实例。**跳过正在跑后台 shell.runBackground 命令的实例**（否则会静默 kill）；
      * 这些实例会保持存活，待后台命令结束后由后续 cleanupIdle / acquire 处理。
      */
     evictIdle(): number {
@@ -341,7 +341,7 @@ export class SandboxPool {
 
         for (const [chatId, entry] of this.pool.entries()) {
             if (!entry.inUse && (now - entry.lastUsedAt) > this.config.idleTimeout) {
-                // 有后台 shell.run 命令在跑的实例不回收，否则会静默 kill 进程且不发 shell_wake。
+                // 有后台 shell.runBackground 命令在跑的实例不回收，否则会静默 kill 进程且不发 shell_wake。
                 // 命令结束后 monitor 清空，实例会在下一轮重新变为可回收。
                 if (entry.sandbox.hasActiveBackgroundTasks()) {
                     log.debug("cleanupIdle: 跳过（有后台命令运行中）", { chatId });

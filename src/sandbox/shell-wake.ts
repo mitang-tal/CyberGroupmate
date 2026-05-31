@@ -1,5 +1,5 @@
 /**
- * shell-wake.ts — 后台 shell.run 命令的唤醒任务描述构建
+ * shell-wake.ts — 后台 shell.runBackground 命令的唤醒任务描述构建
  *
  * Sandbox 在后台命令完成 / 空闲 / 硬超时时 emit "shell_wake"，
  * main 侧据此派发一个新的唤醒任务。此处把"原因 → 自然语言任务描述"
@@ -18,7 +18,7 @@ export function buildShellWakeDescription(event: ShellWakeEvent): string {
     switch (event.reason) {
         case "exit":
             return (
-                `你之前用 shell.run 在后台 tab "${event.tabId}" 启动的命令已结束` +
+                `你之前用 shell.runBackground 在后台 tab "${event.tabId}" 启动的命令已结束` +
                 `（退出码 ${event.exitCode ?? "未知"}）：\`${event.command}\`。` +
                 `用 shell.read("${event.tabId}") 查看完整输出并决定下一步。${tail}`
             );

@@ -73,7 +73,7 @@ export type ShellWakeReason =
     /** 运行时长达到 maxDuration 硬上限仍未结束（不 kill，交给 agent 决策） */
     | "hard";
 
-/** shell.run() 后台命令唤醒事件载荷（Sandbox emit "shell_wake"） */
+/** shell.runBackground() 后台命令唤醒事件载荷（Sandbox emit "shell_wake"） */
 export interface ShellWakeEvent {
     tabId: string;
     reason: ShellWakeReason;
@@ -138,7 +138,7 @@ interface PtyTab {
     outputBuffer: string;
     /** 超时后保存的 sentinel ID，用于检测迟到的命令完成 */
     lastSentinelId?: string;
-    /** 后台 shell.run() 命令的监视器（非阻塞，完成/超时时 emit shell_wake） */
+    /** 后台 shell.runBackground() 命令的监视器（非阻塞，完成/超时时 emit shell_wake） */
     monitor: ShellMonitor | null;
 }
 
@@ -198,9 +198,9 @@ export class Sandbox extends EventEmitter {
     private static MAX_TABS = 5;
     /** 每个 Tab 的滚动缓冲区最大行数 */
     private static MAX_SCROLLBACK_LINES = 500;
-    /** shell.run 默认空闲超时（无输出多久判定空闲）：2 分钟 */
+    /** shell.runBackground 默认空闲超时（无输出多久判定空闲）：2 分钟 */
     private static DEFAULT_IDLE_TIMEOUT = 120_000;
-    /** shell.run 默认硬运行上限：30 分钟 */
+    /** shell.runBackground 默认硬运行上限：30 分钟 */
     private static DEFAULT_MAX_DURATION = 1_800_000;
     /** 自动命名后台 tab 的计数器 */
     private bgTabCounter = 0;
@@ -748,7 +748,7 @@ export class Sandbox extends EventEmitter {
             tab.scrollbackBase += removed;
         }
 
-        // ─── 后台 shell.run() 监视：重置空闲计时器 + 完成检测 ───
+        // ─── 后台 shell.runBackground() 监视：重置空闲计时器 + 完成检测 ───
         if (tab.monitor) {
             this.armIdleTimer(tab);
             tab.outputBuffer += data;
@@ -913,11 +913,11 @@ export class Sandbox extends EventEmitter {
         opts?: { tabId?: string; idleTimeout?: number; maxDuration?: number },
     ): Promise<{ tabId: string }> {
         if (!command || !command.trim()) {
-            throw new Error("shell.run: command 不能为空");
+            throw new Error("shell.runBackground: command 不能为空");
         }
         let tabId = opts?.tabId?.trim();
         if (tabId === "default") {
-            throw new Error("shell.run 不能使用 'default'，请用独立的后台 tab 名（或省略自动命名）");
+            throw new Error("shell.runBackground 不能使用 'default'，请用独立的后台 tab 名（或省略自动命名）");
         }
         if (tabId && this.ptyTabs.has(tabId)) {
             throw new Error(`终端 Tab '${tabId}' 已存在，请换名或先 shell.kill('${tabId}')`);
@@ -959,7 +959,7 @@ export class Sandbox extends EventEmitter {
         this.armIdleTimer(tab);
 
         tab.process.write(`${command}\necho '${sentinel}'_$?_$(pwd)__\n`);
-        log.info("shell.run started", { chatId: this.chatId, tabId, idleTimeout, maxDuration });
+        log.info("shell.runBackground started", { chatId: this.chatId, tabId, idleTimeout, maxDuration });
         return { tabId };
     }
 
@@ -1087,7 +1087,7 @@ export class Sandbox extends EventEmitter {
     }
 
     /**
-     * 是否有正在运行的后台 shell.run 命令。
+     * 是否有正在运行的后台 shell.runBackground 命令。
      * 供 SandboxPool 判断：有后台命令在跑时不应空闲回收（否则会静默 kill）。
      */
     hasActiveBackgroundTasks(): boolean {

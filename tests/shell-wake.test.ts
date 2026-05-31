@@ -1,5 +1,5 @@
 /**
- * shell-wake.test.ts — shell.run 唤醒任务描述构建
+ * shell-wake.test.ts — shell.runBackground 唤醒任务描述构建
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";

@@ -1,5 +1,5 @@
 /**
- * pool-lifecycle.test.ts — SandboxPool 回收路径对"后台 shell.run 命令"的保护（非 PTY）
+ * pool-lifecycle.test.ts — SandboxPool 回收路径对"后台 shell.runBackground 命令"的保护（非 PTY）
  *
  * 用 mock sandbox 注入 pool 内部，覆盖所有静默 kill 路径：
  * cleanupIdle / evictLRU / evictIdle / invalidateSkills / acquire(stale skills)。
@@ -59,7 +59,7 @@ afterEach(() => {
     pools = [];
 });
 
-describe("SandboxPool reclaim paths protect background shell.run", () => {
+describe("SandboxPool reclaim paths protect background shell.runBackground", () => {
     it("cleanupIdle skips a bg-active idle sandbox but reclaims a plain idle one", () => {
         const pool = makePool({ idleTimeout: 1 });
         const bg = mockSandbox(true);

@@ -14,7 +14,6 @@ import { NotificationCenter, type NotificationEvent } from "./event/notification
 import { ensureCompositeId, getRawId, getPlatform, getGroupModelKey } from "./core/chat-id.js";
 import { SandboxPool } from "./sandbox/sandbox-pool.js";
 import type { ShellWakeEvent } from "./sandbox/sandbox.js";
-import { buildShellWakeDescription } from "./sandbox/shell-wake.js";
 import { installSkillsDependencies } from "./sandbox/skill-loader.js";
 import { createSandboxHostCallHandler } from "./sandbox/host-call-handler.js";
 import { MemoryStoreV2 } from "./memory-v2/index.js";
@@ -57,6 +56,10 @@ import { matchesCron } from "./core/cron-matcher.js";
 import { autoReconnect as autoReconnectMcp, initMcpBridge, mcpBridge } from "./sandbox/modules/mcp-bridge/index.js";
 import { CodeActExecutor, refreshModuleRegistryCache } from "./subagent/code-act-executor.js";
 import { PostTaskWindowManager, buildDispatchedRecordForPostTaskDirect } from "./subagent/post-task-window.js";
+import {
+    buildDispatchedRecordForShellWakeDirect,
+    buildShellWakeDirectTask,
+} from "./subagent/shell-wake-task.js";
 import type { ActiveUserProfile } from "./subagent/types.js";
 import { MetaSandbox } from "./meta-sandbox/meta-sandbox.js";
 import { buildMetaApiContext } from "./meta-sandbox/meta-api/index.js";
@@ -364,20 +367,9 @@ async function main(): Promise<void> {
             sandbox.on("notify", (event: Record<string, unknown>) => {
                 nc.push(event as { type: string;[key: string]: unknown });
             });
-            // shell.run() 后台命令的完成 / 空闲 / 硬超时 → 派发一个新唤醒任务
+            // shell.runBackground() 完成 / 空闲 / 硬超时 → 直达原 Subagent 续接任务
             sandbox.on("shell_wake", (event: ShellWakeEvent) => {
-                const id = `shellwake_${event.tabId}_${event.reason}_${Date.now()}`;
-                const description = buildShellWakeDescription(event);
-                const sub = subagentManager.getOrCreate(chatId);
-                const entry = sub.buildQueueEntry("SCHEDULER_TRIGGER");
-                entry.schedulerTriggers = [{ id, type: "reminder", description }];
-                accumulator.ingest(1, createSchedulerItem(chatId, {
-                    type: "reminder",
-                    id,
-                    description,
-                    queueEntry: entry,
-                }));
-                log.info("shell_wake → Layer1", { chatId, tabId: event.tabId, reason: event.reason });
+                enqueueShellWakeDirectTask(chatId, event);
             });
             sandbox.setHostCallHandler(createSandboxHostCallHandler(chatId, {
                 appConfig,
@@ -977,6 +969,100 @@ async function main(): Promise<void> {
         };
     };
 
+    function initializeCodeActExecutor(executor: CodeActExecutor, chatId: string): void {
+        const currentConfig = loadConfig();
+        const persona = currentConfig.persona;
+        const visionConfig = currentConfig.vision;
+        const visionLlmConfig = currentConfig.llmRouting.vision
+            ? resolveComponentProfiles("vision", currentConfig)[0]
+            : undefined;
+        const chatAdapter = adapters.find((item) => chatId.startsWith(item.platform + ":"));
+        const formatMention = chatAdapter
+            ? (rawId: string, username?: string) => chatAdapter.formatMention(rawId, username)
+            : undefined;
+
+        executor.setCallbackHandler((cb) => {
+            postTaskWindows?.handleCallback(cb);
+
+            setTimeout(() => {
+                try {
+                    const sub = subagentManager.get(cb.chatId);
+                    if (sub?.recordingPipeline) {
+                        sub.recordingPipeline.flush();
+                    }
+                } catch (error) {
+                    log.debug("post-session flush failed", { chatId: cb.chatId, error: String(error) });
+                }
+            }, 60_000);
+        });
+        executor.setPendingMessageDrainHandler((messages, source) => {
+            postTaskWindows?.markMessagesInjected(
+                chatId,
+                messages.map((message) => message.messageId),
+                `mid-turn-${source}`,
+            );
+        });
+        executor.setDependencies(
+            sandboxPool,
+            nc,
+            persona,
+            memory,
+            visionConfig,
+            buildDownloadFn(chatId),
+            sendTyping,
+            visionLlmConfig,
+            sharedMediaDownloader,
+            formatMention,
+            globalState,
+        );
+    }
+
+    function ensureCodeActExecutor(chatId: string): CodeActExecutor {
+        const subagent = subagentManager.getOrCreate(chatId);
+        let executor = subagent.codeActExecutor as CodeActExecutor | null | undefined;
+        if (!executor) {
+            executor = new CodeActExecutor(chatId);
+            subagent.codeActExecutor = executor;
+        }
+
+        if (!executor.getSessionFilePath()) {
+            executor.setSessionFilePath(subagentManager.getSessionFilePath(chatId));
+            executor.loadSession();
+        }
+
+        initializeCodeActExecutor(executor, chatId);
+        return executor;
+    }
+
+    function enqueueShellWakeDirectTask(chatId: string, event: ShellWakeEvent): void {
+        try {
+            const subagent = subagentManager.getOrCreate(chatId);
+            const executor = ensureCodeActExecutor(chatId);
+            const task = buildShellWakeDirectTask({
+                chatId,
+                event,
+                queueEntry: subagent.buildQueueEntry("SCHEDULER_TRIGGER"),
+            });
+
+            globalState.recordDispatchedSubagentTask(buildDispatchedRecordForShellWakeDirect(task, event));
+            executor.enqueue(task);
+            markDirectSubagentDeliveryAsRead(chatId, "shell-wake");
+            log.info("shell_wake → subagent", {
+                chatId,
+                taskId: task.taskId,
+                tabId: event.tabId,
+                reason: event.reason,
+            });
+        } catch (error) {
+            log.error("shell_wake direct enqueue failed", {
+                chatId,
+                tabId: event.tabId,
+                reason: event.reason,
+                error: error instanceof Error ? error.stack ?? error.message : String(error),
+            });
+        }
+    }
+
     let activeUserProfilesForDispatch = new Map<string, ActiveUserProfile[]>();
     let metaSandbox: MetaSandbox | null = null;
     let harnessManager: import("./harness/manager.js").HarnessManager | null = null;
@@ -994,52 +1080,7 @@ async function main(): Promise<void> {
             metricsInstance?.groupCollector.onAttend(task.chatId, "REPLY");
         },
         initializeExecutor: (executor, chatId) => {
-            const realExecutor = executor as CodeActExecutor;
-            const currentConfig = loadConfig();
-            const persona = currentConfig.persona;
-            const visionConfig = currentConfig.vision;
-            const visionLlmConfig = currentConfig.llmRouting.vision
-                ? resolveComponentProfiles("vision", currentConfig)[0]
-                : undefined;
-            const chatAdapter = adapters.find((item) => chatId.startsWith(item.platform + ":"));
-            const formatMention = chatAdapter
-                ? (rawId: string, username?: string) => chatAdapter.formatMention(rawId, username)
-                : undefined;
-
-            realExecutor.setCallbackHandler((cb) => {
-                postTaskWindows.handleCallback(cb);
-
-                setTimeout(() => {
-                    try {
-                        const sub = subagentManager.get(cb.chatId);
-                        if (sub?.recordingPipeline) {
-                            sub.recordingPipeline.flush();
-                        }
-                    } catch (error) {
-                        log.debug("post-session flush failed", { chatId: cb.chatId, error: String(error) });
-                    }
-                }, 60_000);
-            });
-            realExecutor.setPendingMessageDrainHandler((messages, source) => {
-                postTaskWindows.markMessagesInjected(
-                    chatId,
-                    messages.map((message) => message.messageId),
-                    `mid-turn-${source}`,
-                );
-            });
-            realExecutor.setDependencies(
-                sandboxPool,
-                nc,
-                persona,
-                memory,
-                visionConfig,
-                buildDownloadFn(chatId),
-                sendTyping,
-                visionLlmConfig,
-                sharedMediaDownloader,
-                formatMention,
-                globalState,
-            );
+            initializeCodeActExecutor(executor as CodeActExecutor, chatId);
         },
     });
     sandboxDispatchApi = metaApiContext.dispatch;

@@ -440,7 +440,7 @@ describe("Sandbox", () => {
         assert.ok(result.output.includes("line2"));
     });
 
-    it("shell.run launches non-blocking and emits shell_wake 'exit' on completion", async () => {
+    it("shell.runBackground launches non-blocking and emits shell_wake 'exit' on completion", async () => {
         const sb = await makeSandbox();
         const wake = new Promise<any>((resolve) => sb.once("shell_wake", resolve));
         // 立即返回（非阻塞），命令仍在后台跑
@@ -454,7 +454,7 @@ describe("Sandbox", () => {
         assert.ok(!ev.recentOutput.includes("__SANDBOX_DONE_"));
     });
 
-    it("shell.run emits shell_wake 'exit' with the real non-zero exit code", async () => {
+    it("shell.runBackground emits shell_wake 'exit' with the real non-zero exit code", async () => {
         const sb = await makeSandbox();
         const wake = new Promise<any>((resolve) => sb.once("shell_wake", resolve));
         await sb.runShellBackground("false", { idleTimeout: 0 });
@@ -463,7 +463,7 @@ describe("Sandbox", () => {
         assert.equal(ev.exitCode, 1);
     });
 
-    it("shell.run wakes with 'idle' when output goes quiet, without killing the process", async () => {
+    it("shell.runBackground wakes with 'idle' when output goes quiet, without killing the process", async () => {
         const sb = await makeSandbox();
         const wake = new Promise<any>((resolve) => sb.once("shell_wake", resolve));
         // 打印一行后长时间静默；idleTimeout 很短 → 触发 idle 唤醒
@@ -477,7 +477,7 @@ describe("Sandbox", () => {
         assert.ok(t && t.state === "busy", "idle 唤醒不应 kill 进程");
     });
 
-    it("shell.run wakes with 'hard' when maxDuration elapses while still printing, without killing", async () => {
+    it("shell.runBackground wakes with 'hard' when maxDuration elapses while still printing, without killing", async () => {
         const sb = await makeSandbox();
         const wake = new Promise<any>((resolve) => sb.once("shell_wake", resolve));
         // 持续刷输出，所以 idle 不会触发；maxDuration 很短 → 触发 hard
@@ -493,7 +493,7 @@ describe("Sandbox", () => {
         await sb.killShellTab(tabId);
     });
 
-    it("shell.run rejects 'default' as a background tab id", async () => {
+    it("shell.runBackground rejects 'default' as a background tab id", async () => {
         const sb = await makeSandbox();
         await assert.rejects(() => sb.runShellBackground("echo x", { tabId: "default" }), /default/);
     });
