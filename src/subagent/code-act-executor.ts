@@ -49,6 +49,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { shouldCompact, compact as contextManagerCompact } from "../memory-v2/context-manager.js";
+import { DEFAULT_BANNED_WORDS } from "../core/banned-words.js";
 
 const log = createLogger("code-act-executor");
 
@@ -813,10 +814,12 @@ export class CodeActExecutor {
         const sentCollector = new SentMessageCollector(this.memory ?? undefined);
         const sandbox = await this.sandboxPool!.acquire(this.chatId);
         const deduplicateSentMessages = currentConfig.subagent?.deduplicateSentMessages !== false;
+        const bannedWords = currentConfig.subagent?.bannedWords ?? DEFAULT_BANNED_WORDS;
 
         // 设置平台标识，供 capability-registry 和 scene.current 使用
         await sandbox.execute(`__setPlatform(${JSON.stringify(platform)})`, 5000);
         await sandbox.execute(`__setDuplicateMessageBlocking(${JSON.stringify(deduplicateSentMessages)})`, 5000);
+        await sandbox.execute(`__setBannedWords(${JSON.stringify(bannedWords)})`, 5000);
         // 注册 notify 监听器收集已发消息
         const rawChatId = getRawId(this.chatId);
         const notifyListener = (event: Record<string, unknown>) => {

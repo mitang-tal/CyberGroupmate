@@ -13,6 +13,7 @@ import type { CodeActExecutor } from "../subagent/code-act-executor.js";
 import { refreshModuleRegistryCache } from "../subagent/code-act-executor.js";
 import { createLogger } from "../core/logger.js";
 import { loadConfig, validateConfig, saveConfig } from "../core/config.js";
+import { DEFAULT_BANNED_WORDS } from "../core/banned-words.js";
 import { rateLimiter } from "../core/llm-rate-limiter.js";
 import { discoverSkills } from "../sandbox/skill-loader.js";
 import {
@@ -977,9 +978,12 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             const sandbox = await deps.sandboxPool.acquire(chatId);
             try {
                 const platform = getPlatform(chatId);
-                const deduplicateSentMessages = loadConfig("config.yaml", true).subagent?.deduplicateSentMessages !== false;
+                const cfg = loadConfig("config.yaml", true);
+                const deduplicateSentMessages = cfg.subagent?.deduplicateSentMessages !== false;
+                const bannedWords = cfg.subagent?.bannedWords ?? DEFAULT_BANNED_WORDS;
                 await sandbox.execute(`__setPlatform(${JSON.stringify(platform)})`, 5_000);
                 await sandbox.execute(`__setDuplicateMessageBlocking(${JSON.stringify(deduplicateSentMessages)})`, 5_000);
+                await sandbox.execute(`__setBannedWords(${JSON.stringify(bannedWords)})`, 5_000);
 
                 const result = await sandbox.execute(code, timeoutMs);
                 res.json({

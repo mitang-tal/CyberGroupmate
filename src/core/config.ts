@@ -267,6 +267,12 @@ export interface SubagentExternalConfig {
     restrictAdapterWritesToBoundChat?: boolean;
     /** 是否启用 session 内重复发送拦截。默认 true */
     deduplicateSentMessages?: boolean;
+    /**
+     * Subagent 发言前禁用词列表。
+     * 若文本消息中包含列表中的任一词语，发送将被拦截并向 LLM 发出警告提示改写。
+     * 若不配置，使用内置默认词表（见 src/core/banned-words.ts DEFAULT_BANNED_WORDS）。
+     */
+    bannedWords?: string[];
     cosineDecay?: {
         defaultCyclePeriod?: number;
     };
@@ -841,6 +847,7 @@ function parseSubagentConfig(fileConfig: Record<string, unknown>): SubagentExter
         postTaskWindowMs: raw.post_task_window_ms != null ? num(raw.post_task_window_ms, 120000) : undefined,
         restrictAdapterWritesToBoundChat: raw.restrict_adapter_writes_to_bound_chat != null ? Boolean(raw.restrict_adapter_writes_to_bound_chat) : undefined,
         deduplicateSentMessages: raw.deduplicate_sent_messages != null ? Boolean(raw.deduplicate_sent_messages) : undefined,
+        bannedWords: Array.isArray(raw.banned_words) ? (raw.banned_words as unknown[]).map(String) : undefined,
         cosineDecay: Object.keys(rawCD).length > 0 ? {
             defaultCyclePeriod: rawCD.default_cycle_period != null ? num(rawCD.default_cycle_period, 20) : undefined,
         } : undefined,
@@ -1394,6 +1401,9 @@ export function serializeConfigToObject(config: AppConfig): Record<string, unkno
         }
         if (sa.deduplicateSentMessages != null) {
             s.deduplicate_sent_messages = sa.deduplicateSentMessages;
+        }
+        if (sa.bannedWords != null) {
+            s.banned_words = sa.bannedWords;
         }
         if (sa.cosineDecay) s.cosine_decay = { default_cycle_period: sa.cosineDecay.defaultCyclePeriod };
         if (sa.stickiness) {
