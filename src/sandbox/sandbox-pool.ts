@@ -257,9 +257,10 @@ export class SandboxPool {
      * 淘汰最久未使用的非活跃实例
      */
     private evictLRU(): void {
+        // 优先淘汰：非使用中 且 没有后台命令在跑的实例
         let oldest: PoolEntry | null = null;
         for (const entry of this.pool.values()) {
-            if (!entry.inUse) {
+            if (!entry.inUse && !entry.sandbox.hasActiveBackgroundTasks()) {
                 if (!oldest || entry.lastUsedAt < oldest.lastUsedAt) {
                     oldest = entry;
                 }
@@ -319,6 +320,12 @@ export class SandboxPool {
 
         for (const [chatId, entry] of this.pool.entries()) {
             if (!entry.inUse && (now - entry.lastUsedAt) > this.config.idleTimeout) {
+                // 有后台 shell.run 命令在跑的实例不回收，否则会静默 kill 进程且不发 shell_wake。
+                // 命令结束后 monitor 清空，实例会在下一轮重新变为可回收。
+                if (entry.sandbox.hasActiveBackgroundTasks()) {
+                    log.debug("cleanupIdle: 跳过（有后台命令运行中）", { chatId });
+                    continue;
+                }
                 toRemove.push(chatId);
             }
         }

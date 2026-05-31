@@ -497,4 +497,24 @@ describe("Sandbox", () => {
         const sb = await makeSandbox();
         await assert.rejects(() => sb.runShellBackground("echo x", { tabId: "default" }), /default/);
     });
+
+    it("shell.read does not leak internal sentinel lines", async () => {
+        const sb = await makeSandbox();
+        const wake = new Promise<any>((resolve) => sb.once("shell_wake", resolve));
+        const { tabId } = await sb.runShellBackground("echo READ_VISIBLE", { idleTimeout: 0 });
+        await wake; // 等命令跑完（含 sentinel 写入 scrollback）
+        const out = await sb.readShellTab(tabId, 100);
+        assert.ok(out.includes("READ_VISIBLE"), `read output: ${JSON.stringify(out)}`);
+        assert.ok(!out.includes("__SANDBOX_DONE_"), `sentinel leaked into read(): ${JSON.stringify(out)}`);
+    });
+
+    it("hasActiveBackgroundTasks tracks the background monitor lifecycle", async () => {
+        const sb = await makeSandbox();
+        assert.equal(sb.hasActiveBackgroundTasks(), false);
+        const wake = new Promise<any>((resolve) => sb.once("shell_wake", resolve));
+        await sb.runShellBackground("sleep 1; echo done", { idleTimeout: 0 });
+        assert.equal(sb.hasActiveBackgroundTasks(), true);
+        await wake;
+        assert.equal(sb.hasActiveBackgroundTasks(), false);
+    });
 });

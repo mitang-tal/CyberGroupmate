@@ -1081,7 +1081,20 @@ export class Sandbox extends EventEmitter {
             throw new Error(`终端 Tab '${id}' 不存在。可用 Tabs: ${available}`);
         }
         const n = Math.min(lines ?? 50, Sandbox.MAX_SCROLLBACK_LINES);
-        return tab.scrollback.slice(-n).join("\n");
+        // 过滤内部 sentinel 行（PTY 握手 / 命令完成标记），避免污染 agent 判断
+        const clean = tab.scrollback.filter((line) => !line.includes("__SANDBOX_DONE_"));
+        return clean.slice(-n).join("\n");
+    }
+
+    /**
+     * 是否有正在运行的后台 shell.run 命令。
+     * 供 SandboxPool 判断：有后台命令在跑时不应空闲回收（否则会静默 kill）。
+     */
+    hasActiveBackgroundTasks(): boolean {
+        for (const [, tab] of this.ptyTabs) {
+            if (tab.monitor) return true;
+        }
+        return false;
     }
 
     sendShellInput(input: string, tabId?: string): void {

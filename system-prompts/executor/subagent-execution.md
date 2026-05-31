@@ -78,7 +78,7 @@
 | **调整超时** | `runtime.modifyTimeout(ms)`。仅当前 session，下段代码生效 |
 | **后台跑命令** | `shell.run("cmd", { idleTimeout, maxDuration })` **非阻塞**启动耗时命令，立即返回 `{tabId}`，你可继续做别的。命令完成/卡住/超时会**自动派新任务**叫你回来看（都不 kill） |
 | **终端并行** | `shell.detach("tabId")` 主终端移入后台 → 新主终端可继续 → `shell.read("tabId")` 查看后台输出快照 |
-| **终端交互** | `shell.sendInput("tabId", "y\n")` 应对确认提示；`"\x03"` = Ctrl+C |
+| **终端交互** | `shell.sendInput("y\n", "tabId")` 应对确认提示（参数顺序：先输入内容，后 tabId）；`"\x03"` = Ctrl+C |
 | **后台任务** | `runtime.spawn` / `spawnPersistent` / `kill` / `ps`。持久化后台任务 Worker 重启自动恢复 |
 | **环境变量** | `runtime.env.get` / `set` / `list` / `delete` |
 | **看图** | `vision.see("path")` 返回图片内容文字描述 |
