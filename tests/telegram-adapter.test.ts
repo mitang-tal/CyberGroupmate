@@ -10,11 +10,23 @@ import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import { execFileSync } from "node:child_process";
 import { NotificationCenter } from "../src/event/notification-center.js";
+import type { NotificationEvent } from "../src/event/notification-center.js";
 import { TelegramAdapter } from "../src/adapter/telegram-adapter.js";
 import type { TelegramConfig } from "../src/core/config.js";
 
 function makeNC(): NotificationCenter {
-    return new NotificationCenter(join(tmpdir(), `tg-adapter-${randomUUID()}.jsonl`), false);
+    // logPath/enableWatch are deprecated no-ops; NC no longer persists to disk.
+    return new NotificationCenter();
+}
+
+/**
+ * Capture every event pushed to an NC. Replaces the removed nc.drain() batching API
+ * with a synchronous onPush() collector that mirrors what drain used to return.
+ */
+function captureEvents(nc: NotificationCenter): NotificationEvent[] {
+    const events: NotificationEvent[] = [];
+    nc.onPush(event => events.push(event));
+    return events;
 }
 
 function makeConfig(overrides: Partial<TelegramConfig> = {}): TelegramConfig {
@@ -157,6 +169,7 @@ describe("TelegramAdapter", () => {
 
     it("should normalize incoming messages into nc.message events", async () => {
         const nc = makeNC();
+        const events = captureEvents(nc);
         let newMessageHandler: ((msg: unknown) => void | Promise<void>) | null = null;
 
         const fakeClient = {
@@ -194,11 +207,10 @@ describe("TelegramAdapter", () => {
             sender: { id: 777, displayName: "Alice", isBot: false },
         });
 
-        const events = await nc.drain(0, 10);
-        assert.equal(events.length, 1);
         assert.equal(events[0].type, "nc.message");
         assert.equal(events[0].scene, "telegram");
-        assert.equal(events[0].chatId, "-100123");
+        // chatId/userId are now normalized to composite chat-ids ("telegram:<id>").
+        assert.equal(events[0].chatId, "telegram:-100123");
         assert.equal(events[0].messageId, "555");
         assert.equal(events[0].displayName, "Alice");
         assert.equal(events[0].mentionsAgent, true);
@@ -206,8 +218,8 @@ describe("TelegramAdapter", () => {
         assert.deepEqual(events[0].source, {
             scene: "telegram",
             platform: "telegram",
-            chatId: "-100123",
-            userId: "777",
+            chatId: "telegram:-100123",
+            userId: "telegram:777",
             chatType: "supergroup",
             messageId: "555",
             replyToMessageId: undefined,
@@ -694,7 +706,8 @@ interface TelegramClient {
         // Should send confirmation, not push to NC
         assert.ok(sentTexts.length >= 1, "should send confirmation message");
         assert.ok(String(sentTexts[0][1]).includes("隐身"), "confirmation should mention 隐身");
-        assert.ok(adapter.isUserInvisible("42"), "user should be invisible");
+        // userId is stored as a composite chat-id ("telegram:42") after normalization.
+        assert.ok(adapter.isUserInvisible("telegram:42"), "user should be invisible");
 
         // Subsequent message from user 42 should be dropped
         sentTexts.length = 0;
@@ -714,7 +727,7 @@ interface TelegramClient {
             chat: { id: -100, title: "Test", type: "group" },
             sender: { id: 42, displayName: "Alice", isBot: false },
         });
-        assert.ok(!adapter.isUserInvisible("42"), "user should no longer be invisible");
+        assert.ok(!adapter.isUserInvisible("telegram:42"), "user should no longer be invisible");
         assert.ok(sentTexts.length >= 1, "should send un-invisible confirmation");
 
         await adapter.stop();
@@ -759,7 +772,8 @@ interface TelegramClient {
             sender: { id: 50, displayName: "Bob", isBot: false },
         });
 
-        assert.ok(adapter.isChatMuted("-200"), "chat should be muted");
+        // chatId is stored as a composite chat-id ("telegram:-200") after normalization.
+        assert.ok(adapter.isChatMuted("telegram:-200"), "chat should be muted");
         assert.ok(sentTexts.length >= 1);
         assert.ok(String(sentTexts[0][1]).includes("禁言"));
 
@@ -779,7 +793,7 @@ interface TelegramClient {
             chat: { id: -200, title: "Test", type: "group" },
             sender: { id: 50, displayName: "Bob", isBot: false },
         });
-        assert.ok(!adapter.isChatMuted("-200"), "chat should be unmuted after toggle");
+        assert.ok(!adapter.isChatMuted("telegram:-200"), "chat should be unmuted after toggle");
         assert.ok(sentTexts.length >= 1);
         assert.ok(String(sentTexts[0][1]).includes("解除"));
 
@@ -817,7 +831,7 @@ interface TelegramClient {
             chat: { id: -300, title: "Test", type: "group" },
             sender: { id: 60, displayName: "Carol", isBot: false },
         });
-        assert.ok(adapter.isChatMuted("-300"));
+        assert.ok(adapter.isChatMuted("telegram:-300"));
         assert.ok(String(sentTexts[0][1]).includes("24"));  // should say 24 hours
 
         await adapter.stop();
@@ -854,7 +868,7 @@ interface TelegramClient {
             chat: { id: -400, title: "Test", type: "group" },
             sender: { id: 70, displayName: "Dave", isBot: false },
         });
-        assert.ok(adapter.isChatMuted("-400"));
+        assert.ok(adapter.isChatMuted("telegram:-400"));
 
         // Unmute
         sentTexts.length = 0;
@@ -863,7 +877,7 @@ interface TelegramClient {
             chat: { id: -400, title: "Test", type: "group" },
             sender: { id: 70, displayName: "Dave", isBot: false },
         });
-        assert.ok(!adapter.isChatMuted("-400"));
+        assert.ok(!adapter.isChatMuted("telegram:-400"));
         assert.ok(String(sentTexts[0][1]).includes("解除"));
 
         await adapter.stop();
@@ -872,6 +886,7 @@ interface TelegramClient {
 
     it("should drop group messages when whitelist enabled and group not listed", async () => {
         const nc = makeNC();
+        const events = captureEvents(nc);
         let newMessageHandler: ((msg: unknown) => void | Promise<void>) | null = null;
 
         const fakeClient = {
@@ -911,7 +926,6 @@ interface TelegramClient {
             sender: { id: 777, displayName: "Alice", isBot: false },
         });
 
-        const events = await nc.drain(0, 10);
         assert.equal(events.length, 0);
 
         await adapter.stop();
@@ -920,6 +934,7 @@ interface TelegramClient {
 
     it("should allow group messages when whitelist lists the group id", async () => {
         const nc = makeNC();
+        const events = captureEvents(nc);
         let newMessageHandler: ((msg: unknown) => void | Promise<void>) | null = null;
 
         const fakeClient = {
@@ -957,7 +972,6 @@ interface TelegramClient {
             sender: { id: 777, displayName: "Alice", isBot: false },
         });
 
-        const events = await nc.drain(0, 10);
         assert.equal(events.length, 1);
         assert.equal(events[0].type, "nc.message");
 
@@ -967,6 +981,7 @@ interface TelegramClient {
 
     it("should allow private chat when whitelist lists user id", async () => {
         const nc = makeNC();
+        const events = captureEvents(nc);
         let newMessageHandler: ((msg: unknown) => void | Promise<void>) | null = null;
 
         const fakeClient = {
@@ -1004,7 +1019,6 @@ interface TelegramClient {
             sender: { id: 888888, displayName: "Bob", isBot: false },
         });
 
-        const events = await nc.drain(0, 10);
         assert.equal(events.length, 1);
 
         await adapter.stop();

@@ -38,6 +38,7 @@ describe("Telegram builtin guides", () => {
         assert.ok(brief.includes("useAccountProfile"));
         assert.ok(brief.includes("useChatAdministration"));
         assert.ok(brief.includes("forwardMessage"));
+        assert.ok(brief.includes("useMediaDownload"));
         assert.equal(brief.includes("用于转发、复制、评论"), false);
         assert.ok(brief.includes("用于创建投票/测验、读取投票结果等成组流程"));
         assert.ok(brief.includes("downloadMedia"));
@@ -51,7 +52,6 @@ describe("Telegram builtin guides", () => {
         assert.equal(brief.includes("queryInlineBot("), false);
         assert.equal(brief.includes("sendInlineBotResult("), false);
         assert.equal(brief.includes("sendPoll"), false);
-        assert.equal(brief.includes("useMediaDownload"), false);
     });
 
     it("injects full inline bot guide through two-pass docs", () => {

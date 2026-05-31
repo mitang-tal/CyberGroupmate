@@ -252,15 +252,14 @@ describe("MainAgentLoop meta session path", () => {
                 ].join("\n"),
             },
             {
+                // 第二轮只做只读确认，不再重复下发同一任务。
+                // 历史上这里曾用 legacy `context: {...}` 字段，会被 assertNoLegacyContext 抛出而不入队；
+                // commit 5a53808 改为 quote-based dispatch 后，若仍调用 taskToGroup 就会真正入队第二个任务，
+                // 与本用例“单次 dispatch”的断言不符，因此改为 listTasks 的只读延续轮。
                 content: [
-                    "根据注入的 dispatch 文档重新下发。",
+                    "确认任务已下发。",
                     "```ts",
-                    "await dispatch.taskToGroup(\"telegram:g1\", {",
-                    "  contentDirection: \"reply from meta session\",",
-                    "  toneGuidance: \"calm\",",
-                    "  quotes: [\"source: meta-session\"],",
-                    "  useSkills: [\"memory\"],",
-                    "});",
+                    "await dispatch.listTasks({ chatId: \"telegram:g1\" });",
                     "```",
                 ].join("\n"),
             },
