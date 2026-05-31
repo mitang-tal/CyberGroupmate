@@ -13,6 +13,7 @@
 import { NotificationCenter, type NotificationEvent } from "./event/notification-center.js";
 import { ensureCompositeId, getRawId, getPlatform, getGroupModelKey } from "./core/chat-id.js";
 import { SandboxPool } from "./sandbox/sandbox-pool.js";
+import type { ShellWakeEvent } from "./sandbox/sandbox.js";
 import { installSkillsDependencies } from "./sandbox/skill-loader.js";
 import { createSandboxHostCallHandler } from "./sandbox/host-call-handler.js";
 import { MemoryStoreV2 } from "./memory-v2/index.js";
@@ -361,6 +362,44 @@ async function main(): Promise<void> {
             // 每个新建的 sandbox 实例注册 host call handler
             sandbox.on("notify", (event: Record<string, unknown>) => {
                 nc.push(event as { type: string;[key: string]: unknown });
+            });
+            // shell.run() 后台命令的完成 / 空闲 / 硬超时 → 派发一个新唤醒任务
+            sandbox.on("shell_wake", (event: ShellWakeEvent) => {
+                const id = `shellwake_${event.tabId}_${event.reason}_${Date.now()}`;
+                const tail = event.recentOutput?.trim()
+                    ? `\n最近输出：\n${event.recentOutput.trim()}`
+                    : "";
+                let description: string;
+                switch (event.reason) {
+                    case "exit":
+                        description =
+                            `你之前用 shell.run 在后台 tab "${event.tabId}" 启动的命令已结束` +
+                            `（退出码 ${event.exitCode ?? "未知"}）：\`${event.command}\`。` +
+                            `用 shell.read("${event.tabId}") 查看完整输出并决定下一步。${tail}`;
+                        break;
+                    case "idle":
+                        description =
+                            `你在后台 tab "${event.tabId}" 跑的命令 \`${event.command}\` 已经一段时间没有新输出，` +
+                            `可能卡住或在等待输入（进程仍在运行，未被 kill）。` +
+                            `用 shell.read("${event.tabId}") 看看，然后决定：继续等 / shell.sendInput 喂输入 / shell.kill 终止。${tail}`;
+                        break;
+                    case "hard":
+                        description =
+                            `你在后台 tab "${event.tabId}" 跑的命令 \`${event.command}\` 已达到运行时长上限但仍未结束` +
+                            `（进程仍在运行，未被 kill）。` +
+                            `用 shell.read("${event.tabId}") 看看进度，决定继续等还是 shell.kill 终止。${tail}`;
+                        break;
+                }
+                const sub = subagentManager.getOrCreate(chatId);
+                const entry = sub.buildQueueEntry("SCHEDULER_TRIGGER");
+                entry.schedulerTriggers = [{ id, type: "reminder", description }];
+                accumulator.ingest(1, createSchedulerItem(chatId, {
+                    type: "reminder",
+                    id,
+                    description,
+                    queueEntry: entry,
+                }));
+                log.info("shell_wake → Layer1", { chatId, tabId: event.tabId, reason: event.reason });
             });
             sandbox.setHostCallHandler(createSandboxHostCallHandler(chatId, {
                 appConfig,

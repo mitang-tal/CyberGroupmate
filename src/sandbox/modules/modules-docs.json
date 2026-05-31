@@ -37,7 +37,7 @@
       {
         "name": "sendReaction",
         "brief": "对指定消息添加表情反应。支持 Unicode emoji、自定义 emoji ID、name:id 或 Discord emoji mention 格式。",
-        "fullDoc": "```typescript\nsendReaction(channelId: string, messageId: string, emoji: string): Promise<void>\n```\n\n\n对指定消息添加表情反应。支持 Unicode emoji、自定义 emoji ID、name:id 或 Discord emoji mention 格式。\n\n**参数：**\n- `channelId`: 目标频道 ID（由 sandbox 上下文自动填入当前频道）\n- `messageId`: 目标消息 ID\n- `emoji`: 表情字符串，例如 \"😄\"、\"123456789012345678\" 或 \"<:blobreach:123456789012345678>\"\n\n**示例：**\n```typescript\n// sendReaction(channelId, \"1234567890123456789\", \"😄\")\n```\n\n```typescript\n// sendReaction(channelId, \"1234567890123456789\", \"<:blobreach:123456789012345678>\")\n```"
+        "fullDoc": "```typescript\nsendReaction(channelId: string, messageId: string, emoji: string): Promise<void>\n```\n\n\n对指定消息添加表情反应。支持 Unicode emoji、自定义 emoji ID、name:id 或 Discord emoji mention 格式。\n\n**参数：**\n- `channelId`: 目标频道 ID（由 sandbox 上下文自动填入当前频道）\n- `messageId`: 目标消息 ID\n- `emoji`: 表情字符串\n\n**示例：**\n```typescript\n// sendReaction(channelId, \"1234567890123456789\", \"😄\")\n```"
       },
       {
         "name": "sendTyping",
@@ -48,12 +48,12 @@
   },
   {
     "name": "dispatch",
-    "description": "dispatch.d.ts — Subagent 任务派发 API 当前 Subagent 可以把任务派发给另一个群/私聊绑定的 Subagent。 派发后目标 Subagent 会收到同一套 quote 解析后的任务上下文。",
+    "description": "dispatch.d.ts — Subagent 跨聊天会话派发 API 任何需要在其他聊天执行操作的场景都必须通过 dispatch 派发，由目标聊天的 Subagent 执行。 绝对禁止用平台 API（sendText / sendMedia 等）直接向非当前聊天发送消息。 派发后目标 Subagent 会收到同一套 quote 解析后的任务上下文。",
     "methods": [
       {
         "name": "taskToGroup",
-        "brief": "向指定群组派发一个任务，由目标群的 Subagent 执行回复、reaction 或其他群内行动。 chatId 必须使用 composite chatId，例如 \"telegram:-1001234567890\"。 当前 Subagent 不能用 dispatch 给自己派任务；当前群内行动直接调用平台 API。 不要使用已废弃的 context 字段；需要搬运材料时写 quotes 或 inline quote。 目标任务完成后，结果会作为内部通知发回发起方 Subagent；全局 session digest 也会记录 source -> target -> result。",
-        "fullDoc": "```typescript\ntaskToGroup(chatId: string, taskSpec: DispatchTaskSpec): Promise<DispatchTaskResult>\n```\n\n\n向指定群组派发一个任务，由目标群的 Subagent 执行回复、reaction 或其他群内行动。\n\nchatId 必须使用 composite chatId，例如 \"telegram:-1001234567890\"。\n当前 Subagent 不能用 dispatch 给自己派任务；当前群内行动直接调用平台 API。\n不要使用已废弃的 context 字段；需要搬运材料时写 quotes 或 inline quote。\n目标任务完成后，结果会作为内部通知发回发起方 Subagent；全局 session digest 也会记录 source -> target -> result。\n\n**参数：**\n- `chatId`: 目标 composite chatId。\n- `taskSpec`: 任务方向、语气、quote、技能和跟踪信息。\n- **返回值**: 派发任务 ID，以及可选的 trackingKey / reminderId。\n\n**示例：**\n```typescript\nconst task = await dispatch.taskToGroup(\"telegram:-1001111111111\", {\n  contentDirection: \"把当前群的问题带到目标群请他们确认，保留来源边界\",\n  toneGuidance: \"简短、礼貌，不要泄露不必要的上下文\",\n  quotes: [\"@telegram:-1002222222222[100-106]\", \"@output[0]\"],\n  tracking: {\n    content: \"等待目标群确认后回到当前群同步\",\n    remindAfterMinutes: 15,\n    callback: \"检查目标群是否已回复；如有结论，再派回来源群。\"\n  }\n});\nconsole.log(task.taskId);\n```"
+        "brief": "向指定聊天派发一个任务，由目标聊天的 Subagent 在其绑定的聊天中执行。 这是跨聊天操作的唯一正确方式。绝对禁止用平台 API 直接向其他聊天发送消息。 chatId 必须使用 composite chatId，例如 \"telegram:-1001234567890\"。 当前 Subagent 不能用 dispatch 给自己派任务；当前聊天内行动直接调用平台 API。 目标任务完成后，结果会作为内部通知发回发起方 Subagent；全局 session digest 也会记录 source -> target -> result。",
+        "fullDoc": "```typescript\ntaskToGroup(chatId: string, taskSpec: DispatchTaskSpec): Promise<DispatchTaskResult>\n```\n\n\n向指定聊天派发一个任务，由目标聊天的 Subagent 在其绑定的聊天中执行。\n\n这是跨聊天操作的唯一正确方式。绝对禁止用平台 API 直接向其他聊天发送消息。\nchatId 必须使用 composite chatId，例如 \"telegram:-1001234567890\"。\n当前 Subagent 不能用 dispatch 给自己派任务；当前聊天内行动直接调用平台 API。\n目标任务完成后，结果会作为内部通知发回发起方 Subagent；全局 session digest 也会记录 source -> target -> result。\n\n**参数：**\n- `chatId`: 目标 composite chatId。\n- `taskSpec`: 任务方向、语气、quote、技能和跟踪信息。\n- **返回值**: 派发任务 ID，以及可选的 trackingKey / reminderId。\n\n**示例：**\n```typescript\nconst task = await dispatch.taskToGroup(\"telegram:-1001111111111\", {\n  contentDirection: \"把当前群的问题带到目标群请他们确认，保留来源边界\",\n  toneGuidance: \"简短、礼貌，不要泄露不必要的上下文\",\n  quotes: [\"@telegram:-1002222222222[100-106]\", \"@output[0]\"],\n  tracking: {\n    content: \"等待目标群确认后回到当前群同步\",\n    remindAfterMinutes: 15,\n    callback: \"检查目标群是否已回复；如有结论，再派回来源群。\"\n  }\n});\nconsole.log(task.taskId);\n```"
       },
       {
         "name": "getTask",
@@ -81,6 +81,11 @@
         "name": "writeFile",
         "brief": "写入文件。如果目标目录不存在会自动创建。",
         "fullDoc": "```typescript\nwriteFile(path: string, content: string): void\n```\n\n\n写入文件。如果目标目录不存在会自动创建。\n\n**参数：**\n- `path`: 文件路径\n- `content`: 文件内容\n\n**示例：**\n```typescript\nfs.writeFile(\"notes/todo.md\", \"# TODO\\n- 完成作业\");\n```\n\n```typescript\n// 创建新的 TS Skill\nfs.writeFile(\"skills/weather/index.ts\", `\n  import { fetch } from \"node-fetch\";\n  export const weather = {\n    current: async (city: string) => { ... }\n  };\n`);\n```"
+      },
+      {
+        "name": "writeFileBinary",
+        "brief": "以二进制模式写入文件（base64 字符串 → 二进制字节）。 **保存 Telegram 下载媒体时必须用这个方法**，不能用 writeFile()。 `telegram.downloadMedia()` / `telegram.downloadAsBuffer()` 返回的 `data.buffer` 是 base64 字符串； 若用 `fs.writeFile(path, data.buffer)` 写入，会把 base64 文本当 UTF-8 存储，导致图片/文件损坏。",
+        "fullDoc": "```typescript\nwriteFileBinary(path: string, base64: string): void\n```\n\n\n以二进制模式写入文件（base64 字符串 → 二进制字节）。\n\n**保存 Telegram 下载媒体时必须用这个方法**，不能用 writeFile()。\n`telegram.downloadMedia()` / `telegram.downloadAsBuffer()` 返回的 `data.buffer` 是 base64 字符串；\n若用 `fs.writeFile(path, data.buffer)` 写入，会把 base64 文本当 UTF-8 存储，导致图片/文件损坏。\n\n**参数：**\n- `path`: 文件路径（自动创建父目录）\n- `base64`: base64 编码的文件内容（即 `data.buffer`）\n\n**示例：**\n```typescript\n// ✅ 正确：保存 Telegram 下载的图片\nconst data = await telegram.downloadMedia(msg.mediaInfo.fileId, chatId, msg.id, msg.mediaInfo.uniqueFileId);\nfs.writeFileBinary(\"workspace/Downloads/photo.jpg\", data.buffer);\n```\n\n```typescript\n// ❌ 错误：writeFile 写入 base64 字符串，文件会损坏\n// fs.writeFile(\"workspace/Downloads/photo.jpg\", data.buffer);\n```"
       },
       {
         "name": "appendFile",
@@ -412,6 +417,11 @@
         "fullDoc": "```typescript\nread(tabId?: string, lines?: number): Promise<string>\n```\n\n\n读取指定终端的输出历史。\n\n用于排查超时命令的残留输出，或查看后台服务日志。\n默认读取 default 终端，可指定 tabId 读取后台终端。\n\n**参数：**\n- `tabId`: 终端标签 ID（默认 \"default\"）\n- `lines`: 返回最近 N 行（默认 50）\n\n**示例：**\n```typescript\n// 查看 dev-server 的运行日志\nconst logs = await shell.read(\"dev-server\", 20);\nconsole.log(logs);\n```"
       },
       {
+        "name": "run",
+        "brief": "在独立后台终端**非阻塞地**启动一条长命令，**立即返回**，不卡住当前轮次。 这是处理耗时命令（编译 / 转码 / 长下载 / dev server）的首选方式： 启动后你可以马上去回复别的消息、做别的事。Host 侧会监视这个命令， 并在下列任一情况发生时，**自动给你派发一个新任务**让你回来查看（都**不会 kill 进程**）： - **完成**：命令结束（带退出码）。 - **空闲超时**：距上次输出超过 `idleTimeout` 仍未结束（可能卡住 / 在等输入）。 - **硬上限**：运行时长达到 `maxDuration` 仍未结束。 期间你也可以随时主动用 `shell.read(tabId)` 查看进度；想停就 `shell.kill(tabId)`， 要喂输入就 `shell.sendInput(input, tabId)`。 注意两种超时的区别： - `idleTimeout` 针对\"卡死/无响应\"——一直有输出的长编译**不会**因它触发。 - `maxDuration` 是总时长兜底——即使一直在刷输出，到点也会叫你回来看一眼。",
+        "fullDoc": "```typescript\nrun(\n        command: string,\n        opts?: { tabId?: string; idleTimeout?: number; maxDuration?: number },\n    ): Promise<{ tabId: string }>\n```\n\n\n在独立后台终端**非阻塞地**启动一条长命令，**立即返回**，不卡住当前轮次。\n\n这是处理耗时命令（编译 / 转码 / 长下载 / dev server）的首选方式：\n启动后你可以马上去回复别的消息、做别的事。Host 侧会监视这个命令，\n并在下列任一情况发生时，**自动给你派发一个新任务**让你回来查看（都**不会 kill 进程**）：\n- **完成**：命令结束（带退出码）。\n- **空闲超时**：距上次输出超过 `idleTimeout` 仍未结束（可能卡住 / 在等输入）。\n- **硬上限**：运行时长达到 `maxDuration` 仍未结束。\n\n期间你也可以随时主动用 `shell.read(tabId)` 查看进度；想停就 `shell.kill(tabId)`，\n要喂输入就 `shell.sendInput(input, tabId)`。\n\n注意两种超时的区别：\n- `idleTimeout` 针对\"卡死/无响应\"——一直有输出的长编译**不会**因它触发。\n- `maxDuration` 是总时长兜底——即使一直在刷输出，到点也会叫你回来看一眼。\n\n**参数：**\n- `command`: 要在后台运行的命令\n- `opts.tabId`: 后台终端名（省略则自动命名 bg-N；不可为 \"default\"）\n- `opts.idleTimeout`: 多久无输出判定空闲并唤醒，毫秒（默认 120000；传 0 关闭）\n- `opts.maxDuration`: 运行硬上限并唤醒，毫秒（默认 1800000=30 分钟；传 0 关闭）\n- **返回值**: 立即返回 { tabId }，命令已在后台启动\n\n**示例：**\n```typescript\n// 启动一个长编译，立刻返回去做别的事；跑完/卡住会自动叫你回来\nconst { tabId } = await shell.run(\"npm run build\", { idleTimeout: 60000, maxDuration: 1800000 });\n// …本轮可以继续回复消息、结束 session…\n// 之后收到新任务时：const log = await shell.read(tabId); 决定下一步\n```"
+      },
+      {
         "name": "sendInput",
         "brief": "向指定终端注入按键输入。 用于应对交互式 CLI 的确认提示（如 \"Is this ok? (y/N)\"）。 也可发送 Ctrl+C（\"\\x03\"）来优雅地中断进程。",
         "fullDoc": "```typescript\nsendInput(input: string, tabId?: string): Promise<void>\n```\n\n\n向指定终端注入按键输入。\n\n用于应对交互式 CLI 的确认提示（如 \"Is this ok? (y/N)\"）。\n也可发送 Ctrl+C（\"\\x03\"）来优雅地中断进程。\n\n**参数：**\n- `input`: 要发送的文本（如 \"y\\n\"、\"\\x03\"）\n- `tabId`: 目标终端（默认 \"default\"）\n\n**示例：**\n```typescript\n// 对交互提示输入 y\nawait shell.sendInput(\"y\\n\");\n```\n\n```typescript\n// 向后台服务发送 Ctrl+C 停止它\nawait shell.sendInput(\"\\x03\", \"dev-server\");\n```"
@@ -508,6 +518,11 @@
         "name": "useForumTopics",
         "brief": "加载论坛话题指南。用于确认群是否开启 Forum、列出话题或定位 topic id；调用本方法只披露相关 API。",
         "fullDoc": "```typescript\nuseForumTopics(): Promise<string>\n```\n\n\n加载论坛话题指南。用于确认群是否开启 Forum、列出话题或定位 topic id；调用本方法只披露相关 API。"
+      },
+      {
+        "name": "useMediaDownload",
+        "brief": "加载媒体下载指南。包含：1) 用 fs.writeFileBinary() 正确保存 base64 buffer 的方法；2) GIF/短视频抽帧分析时避免 60s 超时的策略（默认 4-6 帧、复用已有文件、先发进度）。遇到 downloadMedia 或 GIF 分析相关问题时调用。",
+        "fullDoc": "```typescript\nuseMediaDownload(): Promise<string>\n```\n\n\n加载媒体下载指南。包含：1) 用 fs.writeFileBinary() 正确保存 base64 buffer 的方法；2) GIF/短视频抽帧分析时避免 60s 超时的策略（默认 4-6 帧、复用已有文件、先发进度）。遇到 downloadMedia 或 GIF 分析相关问题时调用。"
       },
       {
         "name": "sendText",
@@ -607,12 +622,12 @@
       {
         "name": "downloadMedia",
         "brief": "下载媒体文件的二进制数据。返回 base64 编码的 buffer 和文件大小。 优先传入 msg.mediaInfo.fileId，不要把整个 msg.mediaInfo 当作 location 传入；也可以直接传 mtcute 返回的 Photo/FileLocation 等带 __mtcuteRef 的对象。",
-        "fullDoc": "```typescript\ndownloadMedia(location: string | TelegramMtcuteRef | Record<string, unknown>, chatId?: number | string, messageId?: number, uniqueFileId?: string): Promise<{ buffer: string; size: number; }>\n```\n\n\n下载媒体文件的二进制数据。返回 base64 编码的 buffer 和文件大小。\n优先传入 msg.mediaInfo.fileId，不要把整个 msg.mediaInfo 当作 location 传入；也可以直接传 mtcute 返回的 Photo/FileLocation 等带 __mtcuteRef 的对象。\n\n**参数：**\n- `location`: TDLib/Bot API 兼容 file_id、mtcute FileDownloadLocation、或带 __mtcuteRef 的 mtcute 对象。通常使用 msg.mediaInfo.fileId。\n- `chatId`: 可选，用于 file reference 过期时自动 refetch\n- `messageId`: 可选，同上\n- `uniqueFileId`: 可选，用于缓存命中\n\n**示例：**\n```typescript\nconst msg = messages[0];\nif (msg.mediaInfo?.fileId) {\n  const data = await telegram.downloadMedia(msg.mediaInfo.fileId, chatId, msg.id, msg.mediaInfo.uniqueFileId);\n  // data.buffer 是 base64 编码的文件内容, data.size 是字节数\n}\n```\n\n```typescript\n// 错误：await telegram.downloadMedia(msg.mediaInfo)\n// 正确：await telegram.downloadMedia(msg.mediaInfo.fileId, msg.chat.id, msg.id, msg.mediaInfo.uniqueFileId)\n```"
+        "fullDoc": "```typescript\ndownloadMedia(location: string | TelegramMtcuteRef | Record<string, unknown>, chatId?: number | string, messageId?: number, uniqueFileId?: string): Promise<{ buffer: string; size: number; }>\n```\n\n\n下载媒体文件的二进制数据。返回 base64 编码的 buffer 和文件大小。\n优先传入 msg.mediaInfo.fileId，不要把整个 msg.mediaInfo 当作 location 传入；也可以直接传 mtcute 返回的 Photo/FileLocation 等带 __mtcuteRef 的对象。\n\n⚠️ **保存到磁盘必须用 `fs.writeFileBinary()`，不能用 `fs.writeFile()`。**\n`data.buffer` 是 base64 字符串；`fs.writeFile` 会把它当 UTF-8 文本写入导致文件损坏。\n\n**参数：**\n- `location`: TDLib/Bot API 兼容 file_id、mtcute FileDownloadLocation、或带 __mtcuteRef 的 mtcute 对象。通常使用 msg.mediaInfo.fileId。\n- `chatId`: 可选，用于 file reference 过期时自动 refetch\n- `messageId`: 可选，同上\n- `uniqueFileId`: 可选，用于缓存命中\n\n**示例：**\n```typescript\n// ✅ 正确：下载并保存为可用的图片文件\nconst msg = messages[0];\nif (msg.mediaInfo?.fileId) {\n  const data = await telegram.downloadMedia(msg.mediaInfo.fileId, chatId, msg.id, msg.mediaInfo.uniqueFileId);\n  fs.writeFileBinary(\"workspace/Downloads/photo.jpg\", data.buffer);\n  // 之后可以 vision.see(\"workspace/Downloads/photo.jpg\") 或 sendMedia(chatId, { type: 'photo', file: 'workspace/Downloads/photo.jpg' })\n}\n```\n\n```typescript\n// ❌ 错误：writeFile 写入 base64 字符串，文件损坏\n// fs.writeFile(\"photo.jpg\", data.buffer);\n```\n\n```typescript\n// 错误：await telegram.downloadMedia(msg.mediaInfo)\n// 正确：await telegram.downloadMedia(msg.mediaInfo.fileId, msg.chat.id, msg.id, msg.mediaInfo.uniqueFileId)\n```"
       },
       {
         "name": "downloadAsBuffer",
-        "brief": "mtcute 原生 downloadAsBuffer 透传。返回值在 sandbox 中表示为 base64 buffer。",
-        "fullDoc": "```typescript\ndownloadAsBuffer(location: string | TelegramMtcuteRef | Record<string, unknown>, params?: { fileSize?: number; partSize?: number; dcId?: number; offset?: number; limit?: number }): Promise<{ buffer: string; size: number; }>\n```\n\n\nmtcute 原生 downloadAsBuffer 透传。返回值在 sandbox 中表示为 base64 buffer。\n\n**示例：**\n```typescript\nconst [photo] = await telegram.getProfilePhotos(userId, { limit: 1 });\nconst data = await telegram.downloadAsBuffer(photo);\n```"
+        "brief": "mtcute 原生 downloadAsBuffer 透传。返回值在 sandbox 中表示为 base64 buffer。 ⚠️ **重要**：此方法对 `location` 类型容错较低。 - ✅ 接受：fileId 字符串、带 `__mtcuteRef` 的 mtcute 原生对象（如 `getProfilePhotos` 返回的 photo 对象） - ❌ 不接受：`msg.mediaInfo`（普通 plain object，没有 `__mtcuteRef`）——会报 \"Unknown object undefined\" 大多数场景建议优先用 `downloadMedia`（容错更好），仅在需要 mtcute 原生对象时用此方法。",
+        "fullDoc": "```typescript\ndownloadAsBuffer(location: string | TelegramMtcuteRef, params?: { fileSize?: number; partSize?: number; dcId?: number; offset?: number; limit?: number }): Promise<{ buffer: string; size: number; }>\n```\n\n\nmtcute 原生 downloadAsBuffer 透传。返回值在 sandbox 中表示为 base64 buffer。\n\n⚠️ **重要**：此方法对 `location` 类型容错较低。\n- ✅ 接受：fileId 字符串、带 `__mtcuteRef` 的 mtcute 原生对象（如 `getProfilePhotos` 返回的 photo 对象）\n- ❌ 不接受：`msg.mediaInfo`（普通 plain object，没有 `__mtcuteRef`）——会报 \"Unknown object undefined\"\n\n大多数场景建议优先用 `downloadMedia`（容错更好），仅在需要 mtcute 原生对象时用此方法。\n\n**示例：**\n```typescript\n// ✅ 下载用户头像（getProfilePhotos 返回 mtcute 原生对象，可直接传入）\nconst [photo] = await telegram.getProfilePhotos(userId, { limit: 1 });\nconst data = await telegram.downloadAsBuffer(photo);\n```\n\n```typescript\n// ❌ 不要传 mediaInfo（会报错）\n// const data = await telegram.downloadAsBuffer(msg.mediaInfo); // Error!\n// ✅ 改用 downloadMedia，或先取 fileId 字符串\nconst data = await telegram.downloadMedia(msg.mediaInfo.fileId, chatId, msg.id, msg.mediaInfo.uniqueFileId);\n```"
       },
       {
         "name": "joinChat",

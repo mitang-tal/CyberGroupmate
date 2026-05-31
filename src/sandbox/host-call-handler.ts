@@ -190,6 +190,11 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
                     args[0] != null ? String(args[0]) : undefined,
                     args[1] != null ? Number(args[1]) : undefined,
                 );
+            case "shell.run":
+                return sandbox.runShellBackground(
+                    String(args[0]),
+                    (args[1] as { tabId?: string; idleTimeout?: number; maxDuration?: number }) ?? undefined,
+                );
             case "shell.sendInput":
                 sandbox.sendShellInput(String(args[0]), args[1] != null ? String(args[1]) : undefined);
                 return;

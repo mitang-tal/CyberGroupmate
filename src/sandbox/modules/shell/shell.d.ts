@@ -64,6 +64,40 @@ declare const shell: {
     read(tabId?: string, lines?: number): Promise<string>;
 
     /**
+     * 在独立后台终端**非阻塞地**启动一条长命令，**立即返回**，不卡住当前轮次。
+     *
+     * 这是处理耗时命令（编译 / 转码 / 长下载 / dev server）的首选方式：
+     * 启动后你可以马上去回复别的消息、做别的事。Host 侧会监视这个命令，
+     * 并在下列任一情况发生时，**自动给你派发一个新任务**让你回来查看（都**不会 kill 进程**）：
+     * - **完成**：命令结束（带退出码）。
+     * - **空闲超时**：距上次输出超过 `idleTimeout` 仍未结束（可能卡住 / 在等输入）。
+     * - **硬上限**：运行时长达到 `maxDuration` 仍未结束。
+     *
+     * 期间你也可以随时主动用 `shell.read(tabId)` 查看进度；想停就 `shell.kill(tabId)`，
+     * 要喂输入就 `shell.sendInput(input, tabId)`。
+     *
+     * 注意两种超时的区别：
+     * - `idleTimeout` 针对"卡死/无响应"——一直有输出的长编译**不会**因它触发。
+     * - `maxDuration` 是总时长兜底——即使一直在刷输出，到点也会叫你回来看一眼。
+     *
+     * @param command 要在后台运行的命令
+     * @param opts.tabId 后台终端名（省略则自动命名 bg-N；不可为 "default"）
+     * @param opts.idleTimeout 多久无输出判定空闲并唤醒，毫秒（默认 120000；传 0 关闭）
+     * @param opts.maxDuration 运行硬上限并唤醒，毫秒（默认 1800000=30 分钟；传 0 关闭）
+     * @returns 立即返回 { tabId }，命令已在后台启动
+     *
+     * @example
+     * // 启动一个长编译，立刻返回去做别的事；跑完/卡住会自动叫你回来
+     * const { tabId } = await shell.run("npm run build", { idleTimeout: 60000, maxDuration: 1800000 });
+     * // …本轮可以继续回复消息、结束 session…
+     * // 之后收到新任务时：const log = await shell.read(tabId); 决定下一步
+     */
+    run(
+        command: string,
+        opts?: { tabId?: string; idleTimeout?: number; maxDuration?: number },
+    ): Promise<{ tabId: string }>;
+
+    /**
      * 向指定终端注入按键输入。
      *
      * 用于应对交互式 CLI 的确认提示（如 "Is this ok? (y/N)"）。
