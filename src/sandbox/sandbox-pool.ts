@@ -91,7 +91,10 @@ export class SandboxPool {
         // 复用已有实例
         const existing = this.pool.get(chatId);
         if (existing) {
-            if (existing.skillGeneration < this._skillGeneration) {
+            const staleSkills = existing.skillGeneration < this._skillGeneration;
+            // skill 过期需要重建——但绝不能 stop 正在跑后台 shell.run 的实例（会违背 wake-not-kill）。
+            // 此时继续复用旧实例（沿用旧 skill 环境），等后台命令结束后的下次 acquire 再替换。
+            if (staleSkills && !existing.sandbox.hasActiveBackgroundTasks()) {
                 log.info("acquire: skill 已更新，回收旧实例", { chatId });
                 existing.sandbox.stop().catch(() => {});
                 this.pool.delete(chatId);
@@ -101,7 +104,11 @@ export class SandboxPool {
 
                 // 检查是否还活着
                 if (existing.sandbox.isAlive()) {
-                    log.debug("acquire: 复用", { chatId });
+                    if (staleSkills) {
+                        log.debug("acquire: 复用（skill 过期但有后台命令在跑，延后替换）", { chatId });
+                    } else {
+                        log.debug("acquire: 复用", { chatId });
+                    }
                     return existing.sandbox;
                 }
 
@@ -254,63 +261,77 @@ export class SandboxPool {
     // ─── 内部方法 ───
 
     /**
-     * 淘汰最久未使用的非活跃实例
+     * 淘汰一个实例为新实例腾位。
+     *
+     * 铁律：**绝不淘汰正在跑后台 shell.run 命令的实例**（否则会静默 kill 进程、
+     * 违背 wake-not-kill 承诺）。在可淘汰候选里优先选"空闲"，其次才退而淘汰
+     * "使用中"的最老者。若所有实例都有后台命令在跑，则抛错做 backpressure，
+     * 让调用方等待 / 重试，而不是破坏后台任务。
      */
     private evictLRU(): void {
-        // 优先淘汰：非使用中 且 没有后台命令在跑的实例
-        let oldest: PoolEntry | null = null;
-        for (const entry of this.pool.values()) {
-            if (!entry.inUse && !entry.sandbox.hasActiveBackgroundTasks()) {
-                if (!oldest || entry.lastUsedAt < oldest.lastUsedAt) {
-                    oldest = entry;
-                }
-            }
+        const evictable = [...this.pool.values()].filter(
+            (e) => !e.sandbox.hasActiveBackgroundTasks(),
+        );
+        if (evictable.length === 0) {
+            throw new Error(
+                `SandboxPool 已满 (${this.pool.size}/${this.config.maxInstances})，` +
+                `且所有实例都有后台 shell.run 命令在运行，无法淘汰。` +
+                `请等待后台命令结束或先 shell.kill 释放后重试。`,
+            );
         }
 
-        if (oldest) {
-            log.info("evictLRU: 淘汰", { chatId: oldest.chatId });
-            oldest.sandbox.stop().catch(() => {});
-            this.pool.delete(oldest.chatId);
-        } else {
-            // 所有实例都在使用中，淘汰全局最老的
-            let globalOldest: PoolEntry | null = null;
-            for (const entry of this.pool.values()) {
-                if (!globalOldest || entry.lastUsedAt < globalOldest.lastUsedAt) {
-                    globalOldest = entry;
-                }
-            }
-            if (globalOldest) {
-                log.warn("evictLRU: 强制淘汰使用中实例", { chatId: globalOldest.chatId });
-                globalOldest.sandbox.stop().catch(() => {});
-                this.pool.delete(globalOldest.chatId);
-            }
+        // 优先空闲；没有空闲再从可淘汰里选最老（含使用中，保持原有兜底语义）
+        const idle = evictable.filter((e) => !e.inUse);
+        const pool = idle.length > 0 ? idle : evictable;
+        let oldest = pool[0];
+        for (const e of pool) {
+            if (e.lastUsedAt < oldest.lastUsedAt) oldest = e;
         }
+
+        if (idle.length > 0) {
+            log.info("evictLRU: 淘汰空闲实例", { chatId: oldest.chatId });
+        } else {
+            log.warn("evictLRU: 无空闲实例，强制淘汰使用中实例", { chatId: oldest.chatId });
+        }
+        oldest.sandbox.stop().catch(() => {});
+        this.pool.delete(oldest.chatId);
     }
 
     /**
-     * 清理超时空闲实例
+     * 回收闲置实例。**跳过正在跑后台 shell.run 命令的实例**（否则会静默 kill）；
+     * 这些实例会保持存活，待后台命令结束后由后续 cleanupIdle / acquire 处理。
      */
     evictIdle(): number {
         let count = 0;
+        let skippedBg = 0;
         for (const [chatId, entry] of this.pool.entries()) {
             if (!entry.inUse) {
+                if (entry.sandbox.hasActiveBackgroundTasks()) {
+                    skippedBg++;
+                    continue;
+                }
                 entry.sandbox.stop().catch(() => {});
                 this.pool.delete(chatId);
                 count++;
             }
         }
         if (count > 0) log.info("evictIdle: 强制回收闲置 sandbox", { count });
+        if (skippedBg > 0) log.info("evictIdle: 跳过有后台命令的实例", { skippedBg });
         return count;
     }
 
     /**
-     * Skill 重载后调用：立即回收空闲实例，标记 in-use 实例为过期（下次 acquire 时替换）。
+     * Skill 重载后调用：回收空闲实例，并把其余（in-use 或有后台命令在跑的）实例标记为过期，
+     * 由下次 acquire 在安全时机（无后台命令）替换。绝不在此 kill 后台命令实例。
      */
     invalidateSkills(): number {
         this._skillGeneration++;
         const evicted = this.evictIdle();
-        const staleInUse = Array.from(this.pool.values()).filter(e => e.skillGeneration < this._skillGeneration).length;
-        if (staleInUse > 0) log.info("invalidateSkills: 标记 in-use 实例过期", { staleInUse });
+        const stale = Array.from(this.pool.values()).filter(e => e.skillGeneration < this._skillGeneration);
+        const staleBg = stale.filter(e => e.sandbox.hasActiveBackgroundTasks()).length;
+        if (stale.length > 0) {
+            log.info("invalidateSkills: 标记实例过期（延后替换）", { stale: stale.length, withBackgroundTasks: staleBg });
+        }
         return evicted;
     }
 
