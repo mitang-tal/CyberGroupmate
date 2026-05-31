@@ -1864,5 +1864,75 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         }
     });
 
+    // ─── Background Agent ───
+
+    router.get("/background-agent", (_req, res) => {
+        if (!deps.harnessManager) {
+            return res.json({ enabled: false });
+        }
+        res.json({
+            enabled: true,
+            ...deps.harnessManager.getStatus(),
+            currentRun: deps.harnessManager.getCurrentRun(),
+            runs: deps.harnessManager.getRecentRuns(20),
+        });
+    });
+
+    router.post("/background-agent/trigger", (req, res) => {
+        if (!deps.harnessManager) {
+            return res.status(404).json({ error: "HarnessManager not configured" });
+        }
+        // 可选的收集起点：
+        //   省略         → 默认（上次做梦起始时间起）
+        //   "all"        → 收集全部留存任务（不限起点）
+        //   ISO / epoch  → 从该时刻起
+        const sinceRaw = req.body?.since ?? qs(req.query.since);
+        let sinceTs: number | null | undefined = undefined;
+        if (sinceRaw !== undefined && sinceRaw !== null && String(sinceRaw).trim() !== "") {
+            const value = String(sinceRaw).trim();
+            if (value === "all") {
+                sinceTs = null;
+            } else {
+                const ms = /^\d+$/.test(value) ? Number(value) : Date.parse(value);
+                if (!Number.isFinite(ms)) {
+                    return res.status(400).json({ error: `invalid 'since': ${value}` });
+                }
+                sinceTs = ms;
+            }
+        }
+        deps.harnessManager.triggerManual(
+            { content: "manual-trigger-from-dashboard", source: "dashboard" },
+            sinceTs,
+        );
+        res.json({ ok: true, queueLength: deps.harnessManager.queueLength, sinceTs: sinceTs ?? null });
+    });
+
+    router.get("/background-agent/runs/:runId/events", (req, res) => {
+        if (!deps.harnessManager) {
+            return res.status(404).json({ error: "HarnessManager not configured" });
+        }
+        const run = deps.harnessManager.getRun(req.params.runId);
+        if (!run) {
+            return res.status(404).json({ error: "run not found" });
+        }
+        const after = Number(qs(req.query.after));
+        if (!run.logPath || !fs.existsSync(run.logPath)) {
+            const events = Number.isFinite(after)
+                ? run.events.filter((event) => event.id > after)
+                : run.events;
+            return res.json({ runId: run.id, events, source: "memory" });
+        }
+        try {
+            const events = fs.readFileSync(run.logPath, "utf-8")
+                .split(/\r?\n/)
+                .filter(Boolean)
+                .map((line) => JSON.parse(line))
+                .filter((event) => !Number.isFinite(after) || Number(event.id) > after);
+            res.json({ runId: run.id, events, source: "log", logPath: run.logPath });
+        } catch (err) {
+            res.status(500).json({ error: String(err) });
+        }
+    });
+
     return router;
 }

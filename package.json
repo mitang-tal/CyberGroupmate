@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@google/genai": "^1.46.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@mtcute/node": "latest",
     "@tavily/core": "^0.7.2",
     "better-sqlite3": "^11.0.0",
@@ -29,13 +30,14 @@
     "mime-to-extensions": "^1.0.2",
     "node-pty": "^1.1.0",
     "open-graph-scraper": "^6.11.0",
+    "openai": "^4.104.0",
     "sqlite-vec": "^0.1.7-alpha.2",
     "stream-json": "^1.9.1",
     "typescript": "^5.9.3",
     "ulid": "^2.3.0",
     "ws": "^8.19.0",
     "yaml": "^2.8.2",
-    "openai": "^4.104.0"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.0.0",

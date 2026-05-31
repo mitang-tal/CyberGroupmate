@@ -155,6 +155,7 @@ function ensureDataDirs(): void {
     const dirs = [
         DATA_DIR,
         join(DATA_DIR, "tg-session"),
+        join(DATA_DIR, "dream-journal"),
     ];
     for (const dir of dirs) {
         if (!existsSync(dir)) {
@@ -961,6 +962,7 @@ async function main(): Promise<void> {
 
     let activeUserProfilesForDispatch = new Map<string, ActiveUserProfile[]>();
     let metaSandbox: MetaSandbox | null = null;
+    let harnessManager: import("./harness/manager.js").HarnessManager | null = null;
     const metaApiContext = buildMetaApiContext({
         memory,
         subagentManager,
@@ -969,6 +971,7 @@ async function main(): Promise<void> {
         groundingConfig: appConfig.grounding,
         getActiveUserProfilesForChat: (chatId) => activeUserProfilesForDispatch.get(chatId),
         getQuoteOutput: (index) => metaSandbox?.getOutput(index),
+        getHarnessManager: () => harnessManager,
         workspaceRoot: process.cwd(),
         onTaskDispatched: (task) => {
             metricsInstance?.groupCollector.onAttend(task.chatId, "REPLY");
@@ -1079,6 +1082,7 @@ async function main(): Promise<void> {
     // ─── Dashboard 监控仪表盘 ───
     const dashboardEnabled = appConfig.dashboard?.enabled !== false;
     let dashboardServer: { stop: () => void } | null = null;
+    let dashboardDeps: import("./dashboard/types.js").DashboardDeps | null = null;
     if (dashboardEnabled) {
         const { DashboardServer } = await import("./dashboard/dashboard-server.js");
         const { TokenStatsCollector } = await import("./dashboard/token-stats.js");
@@ -1097,8 +1101,7 @@ async function main(): Promise<void> {
         // 进程退出时保存统计
         process.on("exit", () => tokenStats.shutdown());
 
-        const dashboard = new DashboardServer(
-            {
+        dashboardDeps = {
                 nc,
                 subagentManager,
                 accumulator,
@@ -1128,13 +1131,73 @@ async function main(): Promise<void> {
                         managed: currentEnvPlan.managedKeys.length,
                     });
                 },
-            },
+            };
+        const dashboard = new DashboardServer(
+            dashboardDeps,
             { host: dashboardHost, port: dashboardPort, token: dashboardToken, enabled: true },
         );
         dashboardServer = dashboard;
         await dashboard.start();
         const displayHost = dashboardHost === "0.0.0.0" || dashboardHost === "::" ? "localhost" : dashboardHost;
         log.info("Dashboard 已启动", { listen: `${dashboardHost}:${dashboardPort}`, url: `http://${displayHost}:${dashboardPort}?token=${dashboardToken}` });
+    }
+
+    // ─── Background Agent MCP Server ───
+    const mcpServerEnabled = appConfig.backgroundAgent?.enabled !== false;
+    let mcpServerInstance: { httpServer: import("node:http").Server; config: { port: number; authToken: string } } | null = null;
+    {
+        const { writeFileSync, unlinkSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        const mcpInfoPath = join(process.cwd(), "workspace", "mcp-server-info.json");
+        try { unlinkSync(mcpInfoPath); } catch {}
+        if (mcpServerEnabled) {
+            const { startMcpServer, generateAuthToken } = await import("./mcp-server/index.js");
+            const mcpPort = appConfig.backgroundAgent?.mcpPort ?? 3100;
+            const mcpToken = appConfig.backgroundAgent?.mcpToken ?? generateAuthToken();
+            try {
+                mcpServerInstance = await startMcpServer(
+                    { metaApi: metaApiContext, globalState, accumulator, sandboxPool, workspaceRoot: process.cwd() },
+                    { port: mcpPort, authToken: mcpToken },
+                );
+                if (mcpServerInstance) {
+                    const connInfo = { url: `http://127.0.0.1:${mcpPort}/mcp`, token: mcpToken };
+                    writeFileSync(mcpInfoPath, JSON.stringify(connInfo, null, 2));
+                }
+            } catch (err) {
+                log.error("MCP Server 启动失败", { error: String(err) });
+            }
+        }
+    }
+
+    // ─── Background Agent HarnessManager ───
+    const bgHarness = appConfig.backgroundAgent?.harness;
+    if (mcpServerInstance && (bgHarness === "claude-code" || bgHarness === "copilot")) {
+        const { HarnessManager, ClaudeCodeLauncher, CopilotCliLauncher } = await import("./harness/index.js");
+        const { buildDreamingDigest } = await import("./harness/dreaming-context.js");
+        const launcher = bgHarness === "copilot"
+            ? new CopilotCliLauncher(appConfig.backgroundAgent!.copilotPath)
+            : new ClaudeCodeLauncher(appConfig.backgroundAgent!.claudeCodePath);
+        const model = appConfig.backgroundAgent!.harnessModel ?? appConfig.backgroundAgent!.claudeModel;
+        harnessManager = new HarnessManager({
+            launcher,
+            workDir: process.cwd(),
+            mcpUrl: `http://127.0.0.1:${mcpServerInstance.config.port}/mcp`,
+            mcpToken: mcpServerInstance.config.authToken,
+            persona: appConfig.persona,
+            model,
+            maxBudgetUsd: appConfig.backgroundAgent!.maxBudgetUsd,
+            extraArgs: appConfig.backgroundAgent!.extraArgs,
+            buildDreamingDigest: (sinceTs) => buildDreamingDigest({
+                listTasks: () => globalState.listDispatchedSubagentTasks({ limit: 200 }).tasks,
+                memory,
+                sinceTs,
+            }),
+        });
+        harnessManager.onSpawnFailure = (error, pendingCount) => {
+            globalState.addSessionDigest(`[Background Agent spawn failed] ${error} (${pendingCount} pending tasks)`);
+        };
+        if (dashboardDeps) dashboardDeps.harnessManager = harnessManager;
+        log.info("HarnessManager 已创建", { harness: bgHarness });
     }
 
     // ─── Prometheus Metrics Exporter ───
@@ -1309,6 +1372,24 @@ async function main(): Promise<void> {
     }, 30_000);
     if (schedulerWatchdogInterval.unref) schedulerWatchdogInterval.unref();
 
+    // ─── Background Agent 定时做梦 ───
+    let backgroundDreamingInterval: ReturnType<typeof setInterval> | null = null;
+    if (harnessManager) {
+        const dreamSchedule = appConfig.backgroundAgent?.schedule ?? "0 3 * * *";
+        let lastDreamingMinute = -1;
+        backgroundDreamingInterval = setInterval(() => {
+            const now = new Date();
+            const minuteKey = now.getFullYear() * 1000000 + now.getMonth() * 10000 + now.getDate() * 100 + now.getHours() * 60 + now.getMinutes();
+            if (minuteKey === lastDreamingMinute) return;
+            if (!matchesCron(dreamSchedule, now)) return;
+            lastDreamingMinute = minuteKey;
+            log.info("Background Agent 定时做梦触发", { schedule: dreamSchedule });
+            harnessManager!.triggerScheduled();
+        }, 30_000);
+        if (backgroundDreamingInterval.unref) backgroundDreamingInterval.unref();
+        log.info("Background Agent 定时做梦已注册", { schedule: dreamSchedule });
+    }
+
     // ─── 启动（并行 + 超时容错） ───
     const ADAPTER_START_TIMEOUT_MS = 30_000;
     const adapterStatuses: Array<{ platform: string; status: "ok" | "failed" | "timeout"; error?: string }> = [];
@@ -1366,6 +1447,17 @@ async function main(): Promise<void> {
         clearInterval(topicCleanupInterval);
         clearInterval(reflectionInterval);
         clearInterval(schedulerWatchdogInterval);
+        if (backgroundDreamingInterval) clearInterval(backgroundDreamingInterval);
+
+        // 停止 Background Agent harness
+        if (harnessManager) {
+            await harnessManager.shutdown();
+        }
+
+        // 停止 MCP server
+        if (mcpServerInstance) {
+            mcpServerInstance.httpServer.close();
+        }
 
         // 先停止平台输入，避免新消息继续进入系统
         await Promise.allSettled(adapters.map((adapter) =>

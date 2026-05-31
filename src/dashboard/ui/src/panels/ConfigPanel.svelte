@@ -20,6 +20,7 @@
   import SystemPromptsTab from "./config/SystemPromptsTab.svelte";
   import GroundingTab from "./config/GroundingTab.svelte";
   import RateLimitingTab from "./config/RateLimitingTab.svelte";
+  import BackgroundAgentTab from "./config/BackgroundAgentTab.svelte";
 
   let config = null;
   let originalConfig = null;
@@ -62,10 +63,11 @@
     { id: "systemPrompts", label: "System Prompts", icon: "fa-file-lines" },
     { id: "grounding", label: "Grounding", icon: "fa-globe" },
     { id: "rateLimiting", label: "请求限速", icon: "fa-gauge-high" },
+    { id: "backgroundAgent", label: "做梦系统", icon: "fa-moon" },
     { id: "envVars", label: "环境变量", icon: "fa-key" },
   ];
 
-  const RESTART_SECTIONS = new Set(["embedding", "dashboard"]);
+  const RESTART_SECTIONS = new Set(["embedding", "dashboard", "backgroundAgent"]);
   const RESTART_FIELDS = {
     telegram: ["mode", "botToken", "apiId", "apiHash", "phone"],
     discord: ["botToken"],
@@ -612,6 +614,8 @@
             <EnvVarsTab bind:config {pwFocus} {pwBlur} {addEnvVar} {removeEnvVar} />
           {:else if currentSection === "rateLimiting"}
             <RateLimitingTab bind:config profileNames={Object.keys(config.llmProfiles ?? {})} />
+          {:else if currentSection === "backgroundAgent"}
+            <BackgroundAgentTab bind:config {pwFocus} {pwBlur} />
           {:else if currentSection === "grounding"}
             <GroundingTab bind:config {pwFocus} {pwBlur} />
           {:else if currentSection === "systemPrompts"}

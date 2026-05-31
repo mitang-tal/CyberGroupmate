@@ -467,6 +467,21 @@ export interface AppConfig {
     grounding?: GroundingConfig;
     /** LLM 请求限速配置 */
     rateLimiting?: import("./llm-rate-limiter.js").RateLimitConfig;
+    /** Background Agent 配置 */
+    backgroundAgent?: {
+        enabled?: boolean;
+        mcpPort?: number;
+        mcpToken?: string;
+        harness?: "claude-code" | "copilot";
+        claudeCodePath?: string;
+        copilotPath?: string;
+        harnessModel?: string;
+        schedule?: string;
+        maxBudgetUsd?: number;
+        extraArgs?: string[];
+        /** @deprecated use harnessModel */
+        claudeModel?: string;
+    };
 }
 
 // ─── 默认值 ───
@@ -640,6 +655,7 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
         mcpServers: parseMcpServersConfig(fileConfig),
         grounding: parseGroundingConfig(fileConfig),
         rateLimiting: parseRateLimitingConfig(fileConfig),
+        backgroundAgent: parseBackgroundAgentConfig(fileConfig),
     };
 
     _cached = config;
@@ -947,6 +963,28 @@ function parseRateLimitingConfig(fileConfig: Record<string, unknown>): import(".
         maxConcurrency: num(raw.max_concurrency, 0),
         requestsPerMinute: num(raw.requests_per_minute, 0),
         perProfile: Object.keys(perProfile).length > 0 ? perProfile : undefined,
+    };
+}
+
+function parseBackgroundAgentConfig(fileConfig: Record<string, unknown>): AppConfig["backgroundAgent"] {
+    const raw = fileConfig.background_agent as Record<string, unknown> | undefined;
+    if (!raw || typeof raw !== "object") return undefined;
+    const harnessStr = str(raw.harness);
+    const harness = harnessStr === "claude-code" ? "claude-code" as const
+        : harnessStr === "copilot" ? "copilot" as const
+        : undefined;
+    return {
+        enabled: raw.enabled !== false,
+        mcpPort: raw.mcp_port != null ? num(raw.mcp_port, 3100) : undefined,
+        mcpToken: str(raw.mcp_token) ?? undefined,
+        harness,
+        claudeCodePath: str(raw.claude_code_path) ?? undefined,
+        copilotPath: str(raw.copilot_path) ?? undefined,
+        harnessModel: str(raw.harness_model) ?? str(raw.claude_model) ?? undefined,
+        claudeModel: str(raw.claude_model) ?? undefined,
+        schedule: str(raw.schedule) ?? undefined,
+        maxBudgetUsd: raw.max_budget_usd != null ? num(raw.max_budget_usd, 5) : undefined,
+        extraArgs: Array.isArray(raw.extra_args) ? (raw.extra_args as unknown[]).map(String) : undefined,
     };
 }
 
@@ -1468,6 +1506,23 @@ export function serializeConfigToObject(config: AppConfig): Record<string, unkno
             rl.per_profile = pp;
         }
         obj.rate_limiting = rl;
+    }
+
+    // background_agent
+    if (config.backgroundAgent) {
+        const ba: Record<string, unknown> = {};
+        if (config.backgroundAgent.enabled != null) ba.enabled = config.backgroundAgent.enabled;
+        if (config.backgroundAgent.mcpPort != null) ba.mcp_port = config.backgroundAgent.mcpPort;
+        if (config.backgroundAgent.mcpToken != null) ba.mcp_token = config.backgroundAgent.mcpToken;
+        if (config.backgroundAgent.harness != null) ba.harness = config.backgroundAgent.harness;
+        if (config.backgroundAgent.claudeCodePath != null) ba.claude_code_path = config.backgroundAgent.claudeCodePath;
+        if (config.backgroundAgent.copilotPath != null) ba.copilot_path = config.backgroundAgent.copilotPath;
+        if (config.backgroundAgent.harnessModel != null) ba.harness_model = config.backgroundAgent.harnessModel;
+        if (config.backgroundAgent.claudeModel != null) ba.claude_model = config.backgroundAgent.claudeModel;
+        if (config.backgroundAgent.schedule != null) ba.schedule = config.backgroundAgent.schedule;
+        if (config.backgroundAgent.maxBudgetUsd != null) ba.max_budget_usd = config.backgroundAgent.maxBudgetUsd;
+        if (config.backgroundAgent.extraArgs && config.backgroundAgent.extraArgs.length > 0) ba.extra_args = config.backgroundAgent.extraArgs;
+        if (Object.keys(ba).length > 0) obj.background_agent = ba;
     }
 
     return obj;

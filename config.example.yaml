@@ -439,3 +439,17 @@ metrics:
 #   - key: DATABASE_URL
 #     value: "postgres://..."
 #     scope: host
+
+# ─── Background Agent (做梦系统) ───
+# background_agent:
+#   enabled: true               # 是否启用 MCP Server（默认 true）
+#   mcp_port: 3100              # MCP Server 监听端口（默认 3100，仅本机 127.0.0.1）
+#   mcp_token: "your-token"     # 认证 token（不设则每次启动随机生成）
+#   harness: "claude-code"      # harness 类型："claude-code" 或 "copilot"
+#   claude_code_path: "claude"  # Claude CLI 路径（harness=claude-code 时，默认 PATH 中的 claude）
+#   copilot_path: "copilot"     # Copilot CLI 路径（harness=copilot 时，默认 PATH 中的 copilot）
+#   harness_model: "sonnet"     # harness 使用的模型名称
+#   max_budget_usd: 5           # 单次做梦的最大花费（美元，仅 Claude Code 支持）
+#   schedule: "0 3 * * *"       # 定时做梦的 cron 表达式（默认凌晨 3 点）
+#   extra_args:                 # 自定义启动参数（传给 harness CLI）
+#     - "--verbose"
