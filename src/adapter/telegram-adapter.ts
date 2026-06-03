@@ -1762,12 +1762,12 @@ export class TelegramAdapter implements PlatformAdapter {
                 this.invisibleUsers.delete(userId);
                 saveInvisibleUsers(this.invisibleUsers);
                 log.info("/invisible OFF", { userId, chatId: normalized.chatId });
-                await this.replySafe(normalized.chatId, `👁 你已取消隐身。Bot 将正常处理你的消息。`);
+                await this.replySafe(normalized.chatId, `👁 你已取消隐身。Bot 将正常处理你的消息。`, 8000);
             } else {
                 this.invisibleUsers.add(userId);
                 saveInvisibleUsers(this.invisibleUsers);
                 log.info("/invisible ON", { userId, chatId: normalized.chatId });
-                await this.replySafe(normalized.chatId, `🫥 你已开启隐身。你的所有消息将对 Bot 完全不可见（不处理、不记录）。再次发送 /invisible 可取消。`);
+                await this.replySafe(normalized.chatId, `🫥 你已开启隐身。你的所有消息将对 Bot 完全不可见（不处理、不记录）。再次发送 /invisible 可取消。`, 8000);
             }
             return true;
         }
@@ -1808,12 +1808,25 @@ export class TelegramAdapter implements PlatformAdapter {
 
     /**
      * 安全回复：尝试用 client.sendText 发送确认消息，失败时只记日志不抛异常。
+     * @param autoDeleteMs 若指定，则在该毫秒数后自动删除所发送的消息（适用于临时提示）。
      */
-    private async replySafe(chatId: string, text: string): Promise<void> {
+    private async replySafe(chatId: string, text: string, autoDeleteMs?: number): Promise<void> {
         try {
             if (this.client?.sendText) {
                 const peer = await this.ensurePeerCached(chatId);
-                await this.client.sendText(peer, text);
+                const sent = await this.client.sendText(peer, text);
+                if (autoDeleteMs && autoDeleteMs > 0 && typeof this.client.deleteMessagesById === "function") {
+                    const msgId = Number((sent as any)?.id);
+                    if (Number.isFinite(msgId) && msgId > 0) {
+                        setTimeout(async () => {
+                            try {
+                                await this.client!.deleteMessagesById!(peer, [msgId], { revoke: true });
+                            } catch (delErr) {
+                                log.debug("replySafe 自动删除失败", { chatId, msgId, error: String(delErr) });
+                            }
+                        }, autoDeleteMs);
+                    }
+                }
             }
         } catch (err) {
             log.warn("replySafe 发送失败", { chatId, error: String(err) });
