@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "../../core/logger.js";
-import { buildHarnessEnv, getHarnessHome, writeHarnessInstructions } from "../home.js";
+import { buildHarnessEnv, getHarnessHome, writeHarnessInstructionsWithRestore } from "../home.js";
 import { serializeCopilotMcpConfig } from "../mcp-config.js";
 import type { HarnessLaunchOptions, HarnessLauncher } from "../types.js";
 
@@ -21,7 +21,8 @@ export class CopilotCliLauncher implements HarnessLauncher {
         const homeDir = getHarnessHome();
         mkdirSync(join(options.workDir, "workspace"), { recursive: true });
         writeFileSync(mcpConfigPath, serializeCopilotMcpConfig(options.mcpConfig), "utf-8");
-        const instructionPath = writeHarnessInstructions(homeDir, this.name, options.systemPrompt);
+        // 做梦前写入共享 copilot-instructions.md，做完梦后由 restore 还原，避免污染其它实例
+        const { instructionPath, restore } = writeHarnessInstructionsWithRestore(homeDir, this.name, options.systemPrompt);
 
         const args = [
             "-p", options.prompt,
@@ -51,7 +52,7 @@ export class CopilotCliLauncher implements HarnessLauncher {
             env: buildHarnessEnv(process.env),
         });
 
-        const cleanup = () => { try { unlinkSync(mcpConfigPath); } catch {} };
+        const cleanup = () => { try { unlinkSync(mcpConfigPath); } catch {} restore(); };
         child.once("exit", cleanup);
         child.once("error", cleanup);
 

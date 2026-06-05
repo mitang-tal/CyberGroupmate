@@ -623,24 +623,39 @@ async function describeSticker(
     const response = await callLLMWithFallback(messages, visionConfigs, { caller: "vision" });
     const raw = response.content.trim();
 
-    // 尝试解析 JSON
-    try {
-        const jsonStr = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-        const parsed = JSON.parse(jsonStr);
+    // 尝试解析 JSON（先直接解析，失败再从文本中抽取 {...} 片段救一把）
+    const parsed = parseStickerJson(raw);
+    const description = typeof parsed?.description === "string" ? parsed.description.trim() : "";
+    if (parsed && description) {
         const emojis = normalizeEmojiCandidates(parsed.emojis ?? parsed.emoji, emoji);
         return {
-            description: normalizeVisionDescription(String(parsed.description ?? raw)),
+            description: normalizeVisionDescription(description),
             emoji: emojis[0] ?? (typeof parsed.emoji === "string" ? parsed.emoji : undefined),
             emojis,
         };
-    } catch {
-        log.debug("describeSticker: JSON 解析失败，使用原始文本", { raw: raw.slice(0, 100) });
-        return {
-            description: normalizeVisionDescription(raw),
-            emoji,
-            emojis: normalizeEmojiCandidates(undefined, emoji),
-        };
     }
+
+    // 解析不出结构化描述：绝不能把整段回复当成贴纸描述（否则模型的解释/拒答/报错
+    // 都会被写进贴纸库）。抛错让上层降级为 emoji-only，并且本次不写缓存。
+    log.warn("describeSticker: 无法解析贴纸描述 JSON，降级为 emoji-only", { raw: raw.slice(0, 120) });
+    throw new Error("describeSticker: 贴纸描述 JSON 无法解析");
+}
+
+/** 解析贴纸描述 LLM 回复：先整体解析，失败再抽取首个 {...} 片段重试。失败返回 null。 */
+function parseStickerJson(raw: string): { description?: unknown; emoji?: unknown; emojis?: unknown } | null {
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+    const candidates = [cleaned];
+    const objMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (objMatch && objMatch[0] !== cleaned) candidates.push(objMatch[0]);
+    for (const candidate of candidates) {
+        try {
+            const parsed = JSON.parse(candidate);
+            if (parsed && typeof parsed === "object") {
+                return parsed as { description?: unknown; emoji?: unknown; emojis?: unknown };
+            }
+        } catch { /* 尝试下一个候选 */ }
+    }
+    return null;
 }
 
 function normalizeEmojiCandidates(value: unknown, fallback?: string): string[] {
