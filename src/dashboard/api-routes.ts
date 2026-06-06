@@ -1599,7 +1599,7 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
                 await callLLM(
                     [{ role: "user", content: "ping" }],
                     profile,
-                    { maxTokens: 10, timeoutMs: 15000, caller: "dashboard-test" }
+                    { timeoutMs: 15000, caller: "dashboard-test" }
                 );
                 const latency = Date.now() - start;
                 res.json({ ok: true, latency, model: profile.model, status: 200 });

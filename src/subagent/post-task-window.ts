@@ -770,8 +770,6 @@ async function judgePostTaskFollowUpWithLLM(input: PostTaskFollowUpJudgeInput): 
     ];
     const response = await callLLMWithFallback(llmMessages, profiles, {
         caller: "post-task-followup",
-        temperature: 0,
-        maxTokens: 256,
         timeoutMs,
     });
     return parseFollowUpJudgeResult(response.content);
