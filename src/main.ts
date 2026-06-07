@@ -587,6 +587,8 @@ async function main(): Promise<void> {
             mediaInfo: message.mediaInfo ?? undefined,
         })),
         stickerDescriptionLookup: memory,
+        downloadFnProvider: (chatId) => buildDownloadFn(chatId),
+        mediaDownloader: sharedMediaDownloader,
     });
 
     log.info("Subagent 组件初始化完成", {

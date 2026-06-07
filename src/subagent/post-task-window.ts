@@ -19,7 +19,7 @@ import type {
 } from "./types.js";
 import { createLogger } from "../core/logger.js";
 import { prefixedShortUuid } from "../core/ids.js";
-import { callLLMWithFallback, type ChatMessage } from "../core/llm.js";
+import { callLLMWithFallback, type ChatMessage, type ImagePart } from "../core/llm.js";
 import { loadConfig, resolveComponentProfiles, resolveComponentTimeout, type AppConfig, type LLMConfig, type VisionConfig } from "../core/config.js";
 import { loadPromptFile } from "../core/prompt-loader.js";
 import { renderTemplate } from "../context-engine/template-engine.js";
@@ -29,6 +29,8 @@ import {
     type RawMessage,
     type StickerDescriptionLookup,
 } from "../core/message-enricher.js";
+import type { DownloadFn } from "../core/vision-processor.js";
+import type { MediaDownloader } from "../core/media-downloader.js";
 
 const log = createLogger("post-task-window");
 
@@ -82,6 +84,10 @@ export interface PostTaskFollowUpJudgeInput {
     callbacks: SubagentCallback[];
     messages: PostTaskReactionMessage[];
     stickerDescriptionLookup?: StickerDescriptionLookup;
+    /** 图片下载函数（委托给 adapter）；存在时新批次消息中的图片会被识别/内联 */
+    downloadFn?: DownloadFn;
+    /** 媒体下载管理器（存在时将识别到的图片保存到磁盘） */
+    mediaDownloader?: MediaDownloader;
 }
 
 export interface PostTaskFollowUpJudgeResult {
@@ -94,6 +100,10 @@ export interface PostTaskFollowUpEnrichConfig {
     llmConfig: LLMConfig;
     visionConfig?: VisionConfig;
     visionLlmConfig?: LLMConfig[];
+    /** 图片下载函数；存在时启用图片识别管线 */
+    downloadFn?: DownloadFn;
+    /** 媒体下载管理器；存在时将图片保存到磁盘 */
+    mediaDownloader?: MediaDownloader;
 }
 
 export type PostTaskFollowUpJudge = (input: PostTaskFollowUpJudgeInput) => Promise<PostTaskFollowUpJudgeResult>;
@@ -131,6 +141,10 @@ export interface PostTaskWindowManagerOptions {
     followUpJudge?: PostTaskFollowUpJudge | null;
     recentMessagesProvider?: PostTaskRecentMessagesProvider;
     stickerDescriptionLookup?: StickerDescriptionLookup;
+    /** 按 chatId 解析图片下载函数；存在时 follow-up 判定会识别/内联新消息里的图片 */
+    downloadFnProvider?: (chatId: string) => DownloadFn | undefined;
+    /** 共享媒体下载管理器（将识别到的图片保存到磁盘） */
+    mediaDownloader?: MediaDownloader;
 }
 
 export class PostTaskWindowManager {
@@ -144,6 +158,8 @@ export class PostTaskWindowManager {
     private readonly followUpJudge: PostTaskFollowUpJudge | null;
     private readonly recentMessagesProvider?: PostTaskRecentMessagesProvider;
     private readonly stickerDescriptionLookup?: StickerDescriptionLookup;
+    private readonly downloadFnProvider?: (chatId: string) => DownloadFn | undefined;
+    private readonly mediaDownloader?: MediaDownloader;
     private readonly windows = new Map<string, ActivePostTaskWindow>();
 
     constructor(options: PostTaskWindowManagerOptions) {
@@ -157,6 +173,8 @@ export class PostTaskWindowManager {
         this.followUpJudge = options.followUpJudge === undefined ? judgePostTaskFollowUpWithLLM : options.followUpJudge;
         this.recentMessagesProvider = options.recentMessagesProvider;
         this.stickerDescriptionLookup = options.stickerDescriptionLookup;
+        this.downloadFnProvider = options.downloadFnProvider;
+        this.mediaDownloader = options.mediaDownloader;
     }
 
     handleSentMessage(chatId: string, event: NotificationEvent): void {
@@ -475,6 +493,8 @@ export class PostTaskWindowManager {
                 callbacks: window.callbacks.slice(-3),
                 messages: candidates,
                 stickerDescriptionLookup: this.stickerDescriptionLookup,
+                downloadFn: this.downloadFnProvider?.(chatId),
+                mediaDownloader: this.mediaDownloader,
             });
             if (this.windows.get(chatId) !== window) return;
 
@@ -762,11 +782,23 @@ async function judgePostTaskFollowUpWithLLM(input: PostTaskFollowUpJudgeInput): 
         ? (resolveComponentTimeout("post_task_followup", config) ?? 15_000)
         : (resolveComponentTimeout("recording_triage", config) ?? 15_000);
     const personaName = config.persona?.name ?? "agent";
-    const enrichConfig = resolvePostTaskFollowUpEnrichConfig(config, profiles);
+    // 开关：是否在 follow-up 判定中识别图片（默认开启）。关闭时不传 downloadFn，
+    // enrichMessages 走纯占位文本路径，跳过下载/识别/内联。
+    const recognizeImages = config.subagent?.postTaskFollowUpImageRecognition !== false;
+    const enrichConfig = resolvePostTaskFollowUpEnrichConfig(config, profiles, {
+        downloadFn: recognizeImages ? input.downloadFn : undefined,
+        mediaDownloader: recognizeImages ? input.mediaDownloader : undefined,
+    });
 
+    const { content, imageParts } = await buildFollowUpJudgePrompt(input, enrichConfig);
+    const userMessage: ChatMessage = { role: "user", content };
+    // 路径 A（判定 profile 自身支持 vision）时 enrichMessages 会内联 base64 图片，附加给 LLM
+    if (imageParts.length > 0) {
+        userMessage.imageParts = imageParts;
+    }
     const llmMessages: ChatMessage[] = [
         { role: "system", content: getPostTaskFollowUpPrompt(personaName) },
-        { role: "user", content: await formatFollowUpJudgeInput(input, enrichConfig) },
+        userMessage,
     ];
     const response = await callLLMWithFallback(llmMessages, profiles, {
         caller: "post-task-followup",
@@ -780,10 +812,18 @@ function getPostTaskFollowUpPrompt(personaName: string): string {
     return renderTemplate(template, { personaName }).trim();
 }
 
-export async function formatFollowUpJudgeInput(
+/**
+ * 构建 follow-up 判定的 user prompt + 附带图片。
+ *
+ * - 最近 20 条上下文消息：仅做轻量缓存格式化（不下载/识别），避免无谓开销。
+ * - 本批次新消息：当配置了 downloadFn 时识别图片；若判定 profile 支持 vision（路径 A），
+ *   则收集内联 base64 图片随 prompt 一起送给 LLM。
+ */
+export async function buildFollowUpJudgePrompt(
     input: PostTaskFollowUpJudgeInput,
     enrichConfig: PostTaskFollowUpEnrichConfig = resolvePostTaskFollowUpEnrichConfig(),
-): Promise<string> {
+): Promise<{ content: string; imageParts: ImagePart[] }> {
+    const imageParts: ImagePart[] = [];
     const recentLines = input.recentMessages?.length
         ? await enrichFollowUpJudgeMessages(
             input.recentMessages.slice(-FOLLOW_UP_CONTEXT_MESSAGE_LIMIT),
@@ -799,9 +839,9 @@ export async function formatFollowUpJudgeInput(
         ].filter(Boolean).join("\n")).join("\n")
         : "(暂无 callback)";
     const messageLines = input.messages.length
-        ? await enrichFollowUpJudgeMessages(input.messages, input, enrichConfig)
+        ? await enrichFollowUpJudgeMessages(input.messages, input, enrichConfig, { processMedia: true, imageParts })
         : "(无新消息)";
-    return [
+    const content = [
         `chatId: ${input.chatId}`,
         input.chatTitle ? `chatTitle: ${input.chatTitle}` : "",
         `isDirectMessage: ${input.isDirectMessage ? "true" : "false"}`,
@@ -817,11 +857,20 @@ export async function formatFollowUpJudgeInput(
         "",
         "请判断这批新消息中是否出现 follow-up。triggerMessageId 必须来自上方 [msgId:...]。",
     ].filter(Boolean).join("\n");
+    return { content, imageParts };
+}
+
+export async function formatFollowUpJudgeInput(
+    input: PostTaskFollowUpJudgeInput,
+    enrichConfig: PostTaskFollowUpEnrichConfig = resolvePostTaskFollowUpEnrichConfig(),
+): Promise<string> {
+    return (await buildFollowUpJudgePrompt(input, enrichConfig)).content;
 }
 
 function resolvePostTaskFollowUpEnrichConfig(
     config: AppConfig = loadConfig(),
     judgeProfiles?: LLMConfig[],
+    extra?: { downloadFn?: DownloadFn; mediaDownloader?: MediaDownloader },
 ): PostTaskFollowUpEnrichConfig {
     const llmConfig = judgeProfiles?.[0]
         ?? (config.llmRouting.post_task_followup != null
@@ -836,6 +885,8 @@ function resolvePostTaskFollowUpEnrichConfig(
         visionLlmConfig: config.llmRouting.vision
             ? resolveComponentProfiles("vision", config)
             : undefined,
+        downloadFn: extra?.downloadFn,
+        mediaDownloader: extra?.mediaDownloader,
     };
 }
 
@@ -843,6 +894,7 @@ async function enrichFollowUpJudgeMessages(
     messages: PostTaskReactionMessage[],
     input: PostTaskFollowUpJudgeInput,
     enrichConfig: PostTaskFollowUpEnrichConfig,
+    options?: { processMedia?: boolean; imageParts?: ImagePart[] },
 ): Promise<string> {
     const rawMessages = messages.map((message): RawMessage => ({
         id: message.messageId,
@@ -855,16 +907,24 @@ async function enrichFollowUpJudgeMessages(
         mediaInfo: message.mediaInfo,
         chatId: input.chatId,
     }));
+    // 只有在配置了 downloadFn 且针对新批次消息时，才启用图片识别管线（识别 + 路径 A 内联）。
+    // 上下文消息与无下载能力时保持轻量缓存格式化，避免下载所有历史图片。
+    const enableMedia = Boolean(options?.processMedia && enrichConfig.downloadFn);
     const enriched = await enrichMessages(rawMessages, {
         llmConfig: enrichConfig.llmConfig,
         visionConfig: enrichConfig.visionConfig,
         visionLlmConfig: enrichConfig.visionLlmConfig,
+        downloadFn: enableMedia ? enrichConfig.downloadFn : undefined,
+        mediaDownloader: enableMedia ? enrichConfig.mediaDownloader : undefined,
         chatId: input.chatId,
         stickerDescriptionLookup: input.stickerDescriptionLookup,
-        enableMediaProcessing: false,
-        enableMediaDownload: false,
+        enableMediaProcessing: enableMedia,
+        enableMediaDownload: enableMedia,
         enableOgPreview: false,
     });
+    if (options?.imageParts && enriched.imageParts.length > 0) {
+        options.imageParts.push(...enriched.imageParts);
+    }
     return enriched.formattedText;
 }
 

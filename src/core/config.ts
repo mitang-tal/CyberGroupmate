@@ -263,6 +263,12 @@ export interface SubagentExternalConfig {
     alertEngagementThreshold?: number;
     /** Subagent 发言后等待群聊自然发酵并接管 L0 追问的窗口时长 (ms)。默认 120000 */
     postTaskWindowMs?: number;
+    /**
+     * post-task follow-up 判定器是否识别新消息中的图片。
+     * 开启时会下载并识别新批次图片（判定 profile 支持 vision 时内联图片）；
+     * 关闭时仅用占位文本，跳过识别以节省开销。默认 true。
+     */
+    postTaskFollowUpImageRecognition?: boolean;
     /** 是否限制 sandbox 只能对其绑定的 chatId 执行 adapter 写操作。默认 false */
     restrictAdapterWritesToBoundChat?: boolean;
     /** 是否启用 session 内重复发送拦截。默认 true */
@@ -845,6 +851,7 @@ function parseSubagentConfig(fileConfig: Record<string, unknown>): SubagentExter
         pollInterval: raw.poll_interval != null ? num(raw.poll_interval, 5000) : undefined,
         alertEngagementThreshold: raw.alert_engagement_threshold != null ? num(raw.alert_engagement_threshold, 60) : undefined,
         postTaskWindowMs: raw.post_task_window_ms != null ? num(raw.post_task_window_ms, 120000) : undefined,
+        postTaskFollowUpImageRecognition: raw.post_task_followup_image_recognition != null ? Boolean(raw.post_task_followup_image_recognition) : undefined,
         restrictAdapterWritesToBoundChat: raw.restrict_adapter_writes_to_bound_chat != null ? Boolean(raw.restrict_adapter_writes_to_bound_chat) : undefined,
         deduplicateSentMessages: raw.deduplicate_sent_messages != null ? Boolean(raw.deduplicate_sent_messages) : undefined,
         bannedWords: Array.isArray(raw.banned_words) ? (raw.banned_words as unknown[]).map(String) : undefined,
@@ -1396,6 +1403,9 @@ export function serializeConfigToObject(config: AppConfig): Record<string, unkno
         if (sa.pollInterval != null) s.poll_interval = sa.pollInterval;
         if (sa.alertEngagementThreshold != null) s.alert_engagement_threshold = sa.alertEngagementThreshold;
         if (sa.postTaskWindowMs != null) s.post_task_window_ms = sa.postTaskWindowMs;
+        if (sa.postTaskFollowUpImageRecognition != null) {
+            s.post_task_followup_image_recognition = sa.postTaskFollowUpImageRecognition;
+        }
         if (sa.restrictAdapterWritesToBoundChat != null) {
             s.restrict_adapter_writes_to_bound_chat = sa.restrictAdapterWritesToBoundChat;
         }
