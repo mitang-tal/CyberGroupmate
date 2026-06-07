@@ -157,6 +157,8 @@ export interface TelegramConfig {
     phone: string;
     /** 入站白名单（可选） */
     whitelist?: TelegramWhitelistConfig;
+    /** bot 模式 mtcute pts 预热群列表（独立于白名单，用于无白名单时也能预热指定群） */
+    prewarm?: { groups: string[] };
     /** 拟人化发送延迟配置 */
     humanizedDelay?: {
         /** 是否启用 */
@@ -624,6 +626,7 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
             apiHash: str(fileTG.api_hash) ?? "",
             phone: str(fileTG.phone) ?? "",
             whitelist: parseTelegramWhitelist(fileTG),
+            prewarm: parseTelegramPrewarm(fileTG),
             humanizedDelay: parseHumanizedDelay(fileTG),
         } : undefined,
         discord: Object.keys(fileDC).length > 0 ? {
@@ -1143,6 +1146,15 @@ function parseTelegramWhitelist(fileTG: Record<string, unknown>): TelegramWhitel
     };
 }
 
+function parseTelegramPrewarm(fileTG: Record<string, unknown>): TelegramConfig["prewarm"] | undefined {
+    const raw = fileTG.prewarm as Record<string, unknown> | undefined;
+    if (!raw || typeof raw !== "object") return undefined;
+    const groups = Array.isArray(raw.groups)
+        ? (raw.groups as unknown[]).map(x => String(x).trim()).filter(Boolean)
+        : [];
+    return groups.length > 0 ? { groups } : undefined;
+}
+
 function parseOneBotWhitelist(fileOB: Record<string, unknown>): OneBotConfig["whitelist"] | undefined {
     const raw = fileOB.whitelist as Record<string, unknown> | undefined;
     if (!raw || typeof raw !== "object") return undefined;
@@ -1261,6 +1273,9 @@ export function serializeConfigToObject(config: AppConfig): Record<string, unkno
                 groups: config.telegram.whitelist.groups,
                 users: config.telegram.whitelist.users,
             };
+        }
+        if (config.telegram.prewarm) {
+            tg.prewarm = { groups: config.telegram.prewarm.groups };
         }
         obj.telegram = tg;
     }

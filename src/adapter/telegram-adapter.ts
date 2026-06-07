@@ -303,6 +303,25 @@ export class TelegramAdapter implements PlatformAdapter {
         this.selfUser = this.normalizeUser(self);
         this.rememberPeerObject(self);
 
+        // Bot mode: mtcute lazily registers channel pts/cpts. Pre-warm known groups
+        // via getChat so the update loop sees their pts before any messages arrive.
+        // Use prewarm.groups if configured (independent of whitelist), else fall back to whitelist.groups.
+        if (this.config.mode === "bot" && typeof client.getChat === "function") {
+            const prewarmIds = this.config.prewarm?.groups?.length
+                ? new Set(this.config.prewarm.groups.map(normalizeWhitelistId))
+                : this.whitelistGroupIds;
+            for (const rawId of prewarmIds) {
+                const numericId = Number(rawId);
+                if (!Number.isSafeInteger(numericId)) continue;
+                try {
+                    await client.getChat(numericId);
+                    log.debug("bot 模式预热群组 pts", { rawId });
+                } catch (err) {
+                    log.warn("bot 模式预热群组 pts 失败（非关键）", { rawId, error: String(err).slice(0, 100) });
+                }
+            }
+        }
+
         this.messageHandler = async (msg: any) => {
             const normalized = await this.normalizeIncomingMessage(msg);
             if (!normalized || !normalized.messageId || !normalized.text) return;
