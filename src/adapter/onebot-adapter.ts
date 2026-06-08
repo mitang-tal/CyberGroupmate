@@ -999,8 +999,11 @@ export class OneBotAdapter implements PlatformAdapter {
             }
         }
         if (this.config.sendFileAsDataUrl === true && typeof file === "string") {
-            const dataUrl = this.toDataUrlIfLocalFile(file);
-            if (dataUrl) file = dataUrl;
+            // OneBot v11 / NapCat 使用 base64:// 前缀，不支持 HTML data: URL 格式
+            const localPath = this.resolveFileReferenceToPath(file);
+            if (localPath) {
+                file = `base64://${readFileSync(localPath).toString("base64")}`;
+            }
         }
         if (typeof file === "string") {
             if (!(file.startsWith("http://") || file.startsWith("https://") || file.startsWith("base64://") || file.startsWith("file://") || file.startsWith("data:"))) {
