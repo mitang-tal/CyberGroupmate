@@ -223,6 +223,12 @@ export class DiscordAdapter implements PlatformAdapter {
         const normalized = this.normalizeIncomingMessage(message);
         if (!normalized) return;
 
+        // per-chat 采集屏蔽
+        if (this.config.ignoreCollection?.includes(normalized.chatId)) {
+            log.debug("ignoreCollection 丢弃", { chatId: normalized.chatId });
+            return;
+        }
+
         log.debug("接收 Discord 消息", {
             messageId: normalized.messageId,
             chatId: normalized.chatId,

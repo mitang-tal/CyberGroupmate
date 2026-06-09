@@ -157,6 +157,12 @@ export interface TelegramConfig {
     phone: string;
     /** 入站白名单（可选） */
     whitelist?: TelegramWhitelistConfig;
+    /**
+     * 需要停止采集的聊天列表（可选）。列出的聊天消息在入站最早阶段被丢弃，
+     * 不进入上下文、记忆或 reflection，但仍允许出站发送。
+     * 使用完整 chatId 格式，如 "telegram:-1001234567890" 或 "telegram:123456789"。
+     */
+    ignoreCollection?: string[];
     /** bot 模式 mtcute pts 预热群列表（独立于白名单，用于无白名单时也能预热指定群） */
     prewarm?: { groups: string[] };
     /** 拟人化发送延迟配置 */
@@ -175,6 +181,11 @@ export interface TelegramConfig {
 export interface DiscordConfig {
     botToken: string;
     applicationId?: string;
+    /**
+     * 需要停止采集的聊天列表（可选）。
+     * 使用完整 chatId 格式，如 "discord:guildId:channelId" 或 "discord:channelId"（DM）。
+     */
+    ignoreCollection?: string[];
 }
 
 export interface OneBotConfig {
@@ -192,6 +203,11 @@ export interface OneBotConfig {
         /** 私聊用户 QQ 号列表 */
         users: string[];
     };
+    /**
+     * 需要停止采集的聊天列表（可选）。
+     * 使用完整 chatId 格式，如 "onebot:group:123456789" 或 "onebot:private:987654321"。
+     */
+    ignoreCollection?: string[];
     /** 拟人化发送延迟配置 */
     humanizedDelay?: {
         enabled: boolean;

@@ -1246,6 +1246,12 @@ export class OneBotAdapter implements PlatformAdapter {
             return null;
         }
 
+        // per-chat 采集屏蔽
+        if (this.config.ignoreCollection?.includes(chatId)) {
+            log.debug("ignoreCollection 丢弃", { chatId });
+            return null;
+        }
+
         const normalizedMessage = this.normalizeMessageSegments(event.message ?? event.raw_message ?? "");
         const displayName = event.sender?.card || event.sender?.nickname || userId;
         const messageId = String(event.message_id ?? "");

@@ -332,6 +332,12 @@ export class TelegramAdapter implements PlatformAdapter {
                 return;
             }
 
+            // ─── per-chat 采集屏蔽（ignoreCollection 列出的聊天直接丢弃入站消息） ───
+            if (this.config.ignoreCollection?.includes(normalized.chatId)) {
+                log.debug("ignoreCollection 丢弃", { chatId: normalized.chatId });
+                return;
+            }
+
             // ─── /invisible & /mute 命令拦截 ───
             const cmdHandled = await this.handleBotCommand(normalized, msg);
             if (cmdHandled) return;  // 命令消息不进入 NC
