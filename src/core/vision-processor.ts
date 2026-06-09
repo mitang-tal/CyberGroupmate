@@ -76,34 +76,65 @@ const DEFAULT_MAX_IMAGE_SIZE = 1024;
 const SUPPORTED_MIME = new Set(["image/jpeg", "image/png"]);
 
 /**
+ * 从文件头 magic bytes 推断图片 MIME 类型。
+ * 主要用于 Telegram 把 HEIC/iPhone 照片上报为 application/octet-stream 的场景。
+ */
+function detectImageMimeFromBytes(buffer: Buffer): string | null {
+    if (buffer.length < 12) return null;
+    // JPEG: FF D8 FF
+    if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return "image/jpeg";
+    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return "image/png";
+    // GIF: GIF8
+    if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) return "image/gif";
+    // WebP: RIFF????WEBP
+    if (buffer.length >= 12 &&
+        buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+        buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50) return "image/webp";
+    // HEIC/HEIF: ????ftyp(heic|heis|hevc|hevx|mif1|msf1)
+    if (buffer.length >= 12) {
+        const ftyp = buffer.slice(4, 8).toString("ascii");
+        if (ftyp === "ftyp") {
+            const brand = buffer.slice(8, 12).toString("ascii").toLowerCase();
+            if (["heic", "heis", "hevc", "hevx", "mif1", "msf1"].includes(brand)) return "image/heic";
+        }
+    }
+    return null;
+}
+
+/**
  * 确保图片为 API 支持的格式（JPEG/PNG）
- * 不支持的格式（如 TIFF、WebP、AVIF 等）通过 ffmpeg 转码为 PNG
+ * 不支持的格式（如 TIFF、WebP、AVIF、HEIC 等）通过 ffmpeg 转码为 PNG
+ * 对 application/octet-stream 先用 magic bytes 推断真实格式再处理
  * 如果 ffmpeg 不可用，返回原始 buffer（多数 Vision API 支持 WebP）
  */
 export async function ensureSupportedFormat(
     buffer: Buffer,
     mimeType: string,
 ): Promise<{ buffer: Buffer; mimeType: string }> {
-    if (SUPPORTED_MIME.has(mimeType)) return { buffer, mimeType };
-    log.debug("转码不支持的图片格式", { from: mimeType, to: "image/png" });
+    // 对 octet-stream 先尝试 magic bytes 识别
+    const effectiveMime = mimeType === "application/octet-stream"
+        ? (detectImageMimeFromBytes(buffer) ?? mimeType)
+        : mimeType;
+
+    if (SUPPORTED_MIME.has(effectiveMime)) return { buffer, mimeType: effectiveMime };
+    log.debug("转码不支持的图片格式", { from: effectiveMime, to: "image/png" });
     try {
         const { execFileSync } = await import("node:child_process");
-        // ffmpeg: 从 stdin 读取, 输出 png 到 stdout
-        const converted = execFileSync("ffmpeg", [
-            "-hide_banner", "-loglevel", "error",
-            "-f", "image2pipe", "-i", "pipe:0",
-            "-f", "image2", "-c:v", "png",
-            "pipe:1",
-        ], {
+        // HEIC 跳过 -f image2pipe（该 demuxer 不识别 HEIC），直接让 ffmpeg 自动探测
+        const inputArgs = effectiveMime === "image/heic"
+            ? ["-hide_banner", "-loglevel", "error", "-i", "pipe:0", "-f", "image2", "-c:v", "png", "pipe:1"]
+            : ["-hide_banner", "-loglevel", "error", "-f", "image2pipe", "-i", "pipe:0", "-f", "image2", "-c:v", "png", "pipe:1"];
+        const converted = execFileSync("ffmpeg", inputArgs, {
             input: buffer,
             maxBuffer: 20 * 1024 * 1024, // 20MB
             timeout: 10000,
         });
         return { buffer: Buffer.from(converted), mimeType: "image/png" };
     } catch (err) {
-        log.warn("ffmpeg 转码失败，使用原始格式", { from: mimeType, error: String(err).slice(0, 200) });
+        log.warn("ffmpeg 转码失败，使用原始格式", { from: effectiveMime, error: String(err).slice(0, 200) });
         // 降级：直接使用原始 buffer（多数 Vision API 支持 WebP）
-        return { buffer, mimeType };
+        return { buffer, mimeType: effectiveMime };
     }
 }
 
@@ -231,11 +262,25 @@ export async function processMediaBatch(
             // 路径 A: 内联 base64（不缓存，每次需要完整数据）
             return downloadFn!(photo.fileId, photo.chatId, photo.messageId, photo.uniqueFileId)
                 .then(rawBuffer => ensureSupportedFormat(rawBuffer, photo.mimeType ?? "image/jpeg"))
-                .then(({ buffer, mimeType }) => ({
-                    index: photo.messageIndex,
-                    base64Data: buffer.toString("base64"),
-                    mimeType,
-                } as ProcessedMedia))
+                .then(({ buffer, mimeType }) => {
+                    // 转码后仍非图片 MIME（如 octet-stream 且无法识别）→ 降级为文字描述，避免触发 LLM 400
+                    if (!mimeType.startsWith("image/")) {
+                        log.warn("路径 A 转码后仍为非图片格式，降级为描述", { fileId: photo.fileId, mimeType });
+                        if (canDescribe) {
+                            const visionCfgs = isPathA ? [llmConfig] : visionLlmConfigs!;
+                            return describeWithCache(visionCfgs).catch(err2 => {
+                                log.warn("降级描述也失败", { fileId: photo.fileId, error: String(err2) });
+                                return { index: photo.messageIndex, description: `[📷 图片（格式无法识别: ${mimeType}）]` } as ProcessedMedia;
+                            });
+                        }
+                        return { index: photo.messageIndex, description: `[📷 图片（格式无法识别: ${mimeType}）]` } as ProcessedMedia;
+                    }
+                    return {
+                        index: photo.messageIndex,
+                        base64Data: buffer.toString("base64"),
+                        mimeType,
+                    } as ProcessedMedia;
+                })
                 .catch(err => {
                     log.warn("路径 A 下载/转码失败，降级为描述", { fileId: photo.fileId, error: String(err) });
                     if (canDescribe) {

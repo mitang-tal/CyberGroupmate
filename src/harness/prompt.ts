@@ -22,7 +22,10 @@ export function selectPendingNotifications(pending: HarnessNotify[]): HarnessNot
 /** 渲染 pending 通知文件内容（写入 PENDING_FILE） */
 export function renderPendingFile(pending: HarnessNotify[]): string {
     const items = pending
-        .map((n, i) => `${i + 1}. ${n.source ? `[来自 ${n.source}] ` : ""}${n.content}`)
+        .map((n, i) => {
+            const content = typeof n.content === "string" ? n.content : JSON.stringify(n.content);
+            return `${i + 1}. ${n.source ? `[来自 ${n.source}] ` : ""}${content}`;
+        })
         .join("\n");
     return `# 有人找你\n\n这些是启动前积攒的通知：\n\n${items}\n`;
 }
