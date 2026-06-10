@@ -191,6 +191,7 @@ function formatContinuationPromptFromEnrichedMessages(
         formattedMessages,
         "",
         `[post-task direct attention: ${directReason}]${classifierReason ? ` 判定原因: ${classifierReason}` : ""} 请基于上下文决定如何行动。`,
+        "[⚠️ 发言前自查] 如果你要引用对方说过的具体话语，必须能在以上消息或上方近期消息列表中找到原文；找不到则不要当成事实陈述。若被指出引用了不存在的内容，承认一次后停止，不要继续解释或辩解。",
     ].join("\n");
 }
 

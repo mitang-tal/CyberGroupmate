@@ -128,6 +128,8 @@ interface ActivePostTaskWindow {
     followUpCheckInFlight: boolean;
     timer: ReturnType<typeof setTimeout> | null;
     followUpTimer: ReturnType<typeof setTimeout> | null;
+    /** 连续派发的 follow-up / direct 任务数量（用于检测连续纠错刷屏）*/
+    consecutiveDirectCount: number;
 }
 
 export interface PostTaskWindowManagerOptions {
@@ -206,6 +208,7 @@ export class PostTaskWindowManager {
             followUpCheckInFlight: false,
             timer: null,
             followUpTimer: null,
+            consecutiveDirectCount: 0,
         };
         rememberSentEventMessage(window, event);
         this.accumulator.block(chatId);
@@ -263,6 +266,7 @@ export class PostTaskWindowManager {
             followUpCheckInFlight: false,
             timer: null,
             followUpTimer: null,
+            consecutiveDirectCount: 0,
         };
         this.rememberSentMessages(window, callback);
         this.windows.set(callback.chatId, window);
@@ -375,6 +379,22 @@ export class PostTaskWindowManager {
         const undeliveredMessages = collectUndeliveredMessages(window, triggerMessage);
         if (undeliveredMessages.length === 0) return false;
 
+        // 检测连续纠错场景，防止连续道歉/解释刷屏
+        const correctionSignals = ["我没说过", "你脑补", "串台", "把别人", "你在说什么", "发错了吧", "说的不是", "没有说", "没说"];
+        const triggerText = triggerMessage.text ?? "";
+        const looksLikeCorrection = correctionSignals.some((s) => triggerText.includes(s))
+            || (triggerText.trim() === "？" && window.consecutiveDirectCount >= 1);
+        if (looksLikeCorrection) {
+            window.consecutiveDirectCount = (window.consecutiveDirectCount ?? 0) + 1;
+        } else {
+            window.consecutiveDirectCount = 0;
+        }
+        // 连续2次以上纠错：注入制动指令，防止继续辩解刷屏
+        const brakeDirection = window.consecutiveDirectCount >= 2
+            ? "对方在纠正你之前说错的话。用一句简短的话承认错误并收住，不要继续解释、辩解或道歉多次。"
+            : undefined;
+        const effectiveDirection = brakeDirection ?? options.contentDirection;
+
         const targetMessageIds = undeliveredMessages.map((item) => item.messageId);
         const contextSnapshot: GroupContextPackage = {
             depth: 2,
@@ -386,7 +406,7 @@ export class PostTaskWindowManager {
             isDirectMessage: Boolean(window.isDirectMessage ?? window.callbacks[0]?.isDirectMessage),
             lastCallbacks: window.callbacks.slice(-3),
             toneGuidance: "自然、简短，优先像刚被人叫住时那样接一句。",
-            contentDirection: options.contentDirection,
+            contentDirection: effectiveDirection,
         };
         const task: CodeActReplyTask = {
             type: "CODEACT_REPLY",
@@ -396,7 +416,7 @@ export class PostTaskWindowManager {
                 action: "REPLY",
                 reason: options.decisionReason,
                 confidence: 1,
-                contentDirection: options.contentDirection,
+                contentDirection: effectiveDirection,
                 targetMessageIds,
                 toneGuidance: contextSnapshot.toneGuidance,
             }],
