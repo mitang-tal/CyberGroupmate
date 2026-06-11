@@ -385,7 +385,7 @@ export class PostTaskWindowManager {
             chatTitle: String(window.chatTitle ?? window.callbacks[0]?.chatTitle ?? ""),
             isDirectMessage: Boolean(window.isDirectMessage ?? window.callbacks[0]?.isDirectMessage),
             lastCallbacks: window.callbacks.slice(-3),
-            toneGuidance: "自然、简短，优先像刚被人叫住时那样接一句。",
+            toneGuidance: "自然、简短，优先像刚被人叫住时那样接一句。严格回避 SOUL.md 中列明的禁用词（「确实」「接住」「抓住」「说得对」「不绕」等）。",
             contentDirection: options.contentDirection,
         };
         const task: CodeActReplyTask = {
