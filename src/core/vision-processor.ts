@@ -107,6 +107,82 @@ export async function ensureSupportedFormat(
     }
 }
 
+/**
+ * 动态贴纸首帧提取
+ * - video/webm: @napi-rs/webcodecs WebMDemuxer + VideoDecoder
+ * - application/x-tgsticker: @napi-rs/canvas LottieAnimation (gunzip → render)
+ * Returns null on failure; callers should fall back to emoji-only.
+ */
+async function extractAnimatedStickerFirstFrame(
+    buffer: Buffer,
+    mimeType: string,
+): Promise<{ buffer: Buffer; mimeType: "image/png" } | null> {
+    if (mimeType === "video/webm") {
+        try {
+            const { createCanvas } = await import("@napi-rs/canvas");
+            const { WebMDemuxer, VideoDecoder } = await import("@napi-rs/webcodecs") as any;
+            const firstFrame = await new Promise<any>((resolve, reject) => {
+                let frameReceived = false;
+                let configured = false;
+                const decoder = new VideoDecoder({
+                    output: (frame: any) => {
+                        if (!frameReceived) { frameReceived = true; resolve(frame); }
+                        else frame.close();
+                    },
+                    error: (e: any) => { if (!frameReceived) reject(e); },
+                });
+                const demuxer = new WebMDemuxer({
+                    videoOutput: (chunk: any) => { if (configured) decoder.decode(chunk); },
+                    error: (e: any) => { if (!frameReceived) reject(e); },
+                });
+                demuxer.loadBuffer(new Uint8Array(buffer)).then(async () => {
+                    const vCfg = demuxer.videoDecoderConfig;
+                    if (!vCfg) { reject(new Error("no video track")); return; }
+                    decoder.configure(vCfg);
+                    configured = true;
+                    await demuxer.demuxAsync(30);
+                    await decoder.flush();
+                    if (!frameReceived) reject(new Error("no frame decoded"));
+                }).catch(reject);
+                setTimeout(() => { if (!frameReceived) reject(new Error("webm extract timeout")); }, 8000);
+            });
+            const W: number = firstFrame.displayWidth;
+            const H: number = firstFrame.displayHeight;
+            const rgbaBuf = new Uint8Array(W * H * 4);
+            await firstFrame.copyTo(rgbaBuf, { format: "RGBA" });
+            firstFrame.close();
+            const canvas = createCanvas(W, H);
+            const ctx = canvas.getContext("2d");
+            const imgData = ctx.createImageData(W, H);
+            imgData.data.set(new Uint8ClampedArray(rgbaBuf.buffer));
+            ctx.putImageData(imgData, 0, 0);
+            return { buffer: Buffer.from(canvas.toBuffer("image/png")), mimeType: "image/png" };
+        } catch (err) {
+            log.warn("WebM首帧提取失败", { error: String(err).slice(0, 200) });
+            return null;
+        }
+    }
+
+    if (mimeType === "application/x-tgsticker") {
+        try {
+            const { createCanvas, LottieAnimation } = await import("@napi-rs/canvas");
+            const { gunzipSync } = await import("node:zlib");
+            const lottieJson = gunzipSync(buffer).toString("utf-8");
+            const anim = LottieAnimation.loadFromData(lottieJson);
+            const canvas = createCanvas(anim.width, anim.height);
+            const ctx = canvas.getContext("2d");
+            anim.seekFrame(0);
+            anim.render(ctx as any);
+            return { buffer: Buffer.from(canvas.toBuffer("image/png")), mimeType: "image/png" };
+        } catch (err) {
+            log.warn("TGS首帧提取失败", { error: String(err).slice(0, 200) });
+            return null;
+        }
+    }
+
+    return null;
+}
+
 /** 图片描述内存缓存（Path B）: uniqueFileId → description */
 const photoDescriptionCache = new Map<string, string>();
 
@@ -152,11 +228,6 @@ export async function processMediaBatch(
         if (att.type === "photo" || (att.type === "document" && att.mimeType?.startsWith("image/"))) {
             photos.push(att);
         } else if (att.type === "sticker") {
-            // 跳过动态贴纸（WebM 视频贴纸和 TGS 动画贴纸大模型无法直接识别）
-            if (att.mimeType === "video/webm" || att.mimeType === "application/x-tgsticker") {
-                log.debug("跳过动态贴纸", { uniqueFileId: att.uniqueFileId, mimeType: att.mimeType });
-                continue;
-            }
             stickers.push(att);
         } else if (att.type === "video" || att.type === "document" || att.type === "animation" || att.type === "audio" || att.type === "other") {
             downloadOnly.push(att);
@@ -544,7 +615,23 @@ async function processSingleSticker(
             });
         }
 
-        const { buffer: stickerBuf, mimeType: mime } = await ensureSupportedFormat(rawBuffer, sticker.mimeType ?? "image/webp");
+        // 动态贴纸（WebM/TGS）：抽取首帧作为静态预览
+        let visBuffer = rawBuffer;
+        let visMimeType = sticker.mimeType ?? "image/webp";
+        if (sticker.mimeType === "video/webm" || sticker.mimeType === "application/x-tgsticker") {
+            const firstFrame = await extractAnimatedStickerFirstFrame(rawBuffer, sticker.mimeType);
+            if (firstFrame) {
+                visBuffer = firstFrame.buffer;
+                visMimeType = firstFrame.mimeType;
+            } else {
+                return {
+                    index: sticker.messageIndex,
+                    description: sticker.emoji ? `[🎭 贴纸: ${sticker.emoji}]` : "[🎭 贴纸]",
+                };
+            }
+        }
+
+        const { buffer: stickerBuf, mimeType: mime } = await ensureSupportedFormat(visBuffer, visMimeType);
         const result = await describeSticker(stickerBuf, mime, visionLlmConfigs, sticker.emoji);
 
         // 写入缓存 (vision_cache mode)
