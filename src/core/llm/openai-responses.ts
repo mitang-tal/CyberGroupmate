@@ -69,13 +69,17 @@ export async function callOpenAIResponses(
         });
     }
 
+    // o-series models (o1, o3, o4-mini, etc.) only accept temperature=1
+    const modelBaseName = model.split("/").pop() ?? model;
+    const effectiveTemperature = /^o\d/.test(modelBaseName) ? 1 : temperature;
+
     const reasoningEffort = toReasoningEffort(thinkingLevel);
     const requestBody = {
         model,
         store: false,
         ...(systemMessages.length > 0 ? { instructions: systemMessages.join("\n\n") } : {}),
         input,
-        temperature,
+        temperature: effectiveTemperature,
         max_output_tokens: maxTokens,
         ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
         ...(stop && stop.length > 0 ? { stop } : {}),

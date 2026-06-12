@@ -55,13 +55,17 @@ export async function callOpenAI(
         apiMessages.push({ role: "assistant", content: prefill });
     }
 
+    // o-series models (o1, o3, o4-mini, etc.) only accept temperature=1
+    const modelBaseName = model.split("/").pop() ?? model;
+    const effectiveTemperature = /^o\d/.test(modelBaseName) ? 1 : temperature;
+
     const response = await fetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify({
             model,
             messages: apiMessages,
-            temperature,
+            temperature: effectiveTemperature,
             max_tokens: maxTokens,
             // Gemini thinking 参数（OpenAI 兼容格式：reasoning_effort）
             ...(thinkingLevel && thinkingLevel !== "none" ? {
