@@ -19,6 +19,9 @@ const log = createLogger("harness-manager");
 const MAX_JOURNAL_FILES = 10;
 const JOURNAL_CLEANUP_INTERVAL_MS = 30 * 60_000;
 
+// 定时做梦的强制最小间隔：两次「定时触发」的做梦至少相隔这么久，避免重启/cron 边界/重试叠加导致频繁做梦。
+const DEFAULT_MIN_DREAM_INTERVAL_MS = 6 * 60 * 60_000;
+
 export interface HarnessManagerConfig {
     launcher: HarnessLauncher;
     workDir: string;
@@ -33,6 +36,12 @@ export interface HarnessManagerConfig {
      * 参数 sinceTs 是上次做梦的起始时间（ms），用于界定「本周期」。返回 null 表示无可用内容。
      */
     buildDreamingDigest?: (sinceTs: number | null) => string | null;
+    /**
+     * 定时做梦的强制最小间隔（ms）。距离上一次做梦不足此间隔时，定时触发会被忽略。
+     * 仅作用于 triggerScheduled（cron 路径），不影响手动触发与失败重试/relaunch。
+     * 缺省取 DEFAULT_MIN_DREAM_INTERVAL_MS；显式传 0 关闭。
+     */
+    minDreamIntervalMs?: number;
 }
 
 export class HarnessManager {
@@ -92,7 +101,32 @@ export class HarnessManager {
 
     triggerScheduled(): void {
         if (this.shuttingDown) return;
+        const minInterval = this.config.minDreamIntervalMs ?? DEFAULT_MIN_DREAM_INTERVAL_MS;
+        if (minInterval > 0) {
+            const last = this.lastDreamStartedAt();
+            if (last != null) {
+                const elapsed = Date.now() - last;
+                if (elapsed < minInterval) {
+                    log.info("定时做梦被强制间隔拦截，跳过本次", {
+                        minIntervalMin: Math.round(minInterval / 60_000),
+                        sinceLastMin: Math.round(elapsed / 60_000),
+                        remainMin: Math.ceil((minInterval - elapsed) / 60_000),
+                        running: this.running,
+                    });
+                    return;
+                }
+            }
+        }
         this.enqueue({ content: "scheduled-dreaming", source: "scheduler" });
+    }
+
+    /** 最近一次做梦的起始时间（ms）：当前运行优先，否则取历史中最新一次。无任何记录返回 null。 */
+    private lastDreamStartedAt(): number | null {
+        let last: number | null = this.currentRun?.startedAt ?? null;
+        for (const run of this.history) {
+            if (last == null || run.startedAt > last) last = run.startedAt;
+        }
+        return last;
     }
 
     getStatus(): {

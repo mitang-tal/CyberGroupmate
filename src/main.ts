@@ -1247,6 +1247,9 @@ async function main(): Promise<void> {
             model,
             maxBudgetUsd: appConfig.backgroundAgent!.maxBudgetUsd,
             extraArgs: appConfig.backgroundAgent!.extraArgs,
+            minDreamIntervalMs: appConfig.backgroundAgent!.minIntervalHours != null
+                ? appConfig.backgroundAgent!.minIntervalHours * 60 * 60_000
+                : undefined,
             buildDreamingDigest: (sinceTs) => buildDreamingDigest({
                 listTasks: () => globalState.listDispatchedSubagentTasks({ limit: 200 }).tasks,
                 memory,

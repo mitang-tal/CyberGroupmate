@@ -453,6 +453,12 @@ export interface GroundingConfig {
     model?: string;
 }
 
+/**
+ * 维护约定：这里能配置的，dashboard 也必须能配置。
+ * 每新增一个字段，请同步三处：① 上面对应的解析函数（parseXxxConfig）；
+ * ② serializeConfigToObject 的序列化（写回 yaml）；③ dashboard UI（src/dashboard/ui/src/panels/config/ 下对应的 *Tab.svelte）。
+ * 漏掉 ③ 会导致用户在 dashboard 存一次配置就把该字段清空。
+ */
 export interface AppConfig {
     llmProfiles: Record<string, LLMConfig>;
     llmRouting: LLMRoutingConfig;
@@ -491,6 +497,8 @@ export interface AppConfig {
         copilotPath?: string;
         harnessModel?: string;
         schedule?: string;
+        /** 定时做梦的强制最小间隔（小时）。距上次做梦不足此值时，定时触发被忽略。默认 6，设 0 关闭。 */
+        minIntervalHours?: number;
         maxBudgetUsd?: number;
         extraArgs?: string[];
         /** @deprecated use harnessModel */
@@ -1000,6 +1008,7 @@ function parseBackgroundAgentConfig(fileConfig: Record<string, unknown>): AppCon
         harnessModel: str(raw.harness_model) ?? str(raw.claude_model) ?? undefined,
         claudeModel: str(raw.claude_model) ?? undefined,
         schedule: str(raw.schedule) ?? undefined,
+        minIntervalHours: raw.min_interval_hours != null ? num(raw.min_interval_hours, 6) : undefined,
         maxBudgetUsd: raw.max_budget_usd != null ? num(raw.max_budget_usd, 5) : undefined,
         extraArgs: Array.isArray(raw.extra_args) ? (raw.extra_args as unknown[]).map(String) : undefined,
     };
@@ -1555,6 +1564,7 @@ export function serializeConfigToObject(config: AppConfig): Record<string, unkno
         if (config.backgroundAgent.harnessModel != null) ba.harness_model = config.backgroundAgent.harnessModel;
         if (config.backgroundAgent.claudeModel != null) ba.claude_model = config.backgroundAgent.claudeModel;
         if (config.backgroundAgent.schedule != null) ba.schedule = config.backgroundAgent.schedule;
+        if (config.backgroundAgent.minIntervalHours != null) ba.min_interval_hours = config.backgroundAgent.minIntervalHours;
         if (config.backgroundAgent.maxBudgetUsd != null) ba.max_budget_usd = config.backgroundAgent.maxBudgetUsd;
         if (config.backgroundAgent.extraArgs && config.backgroundAgent.extraArgs.length > 0) ba.extra_args = config.backgroundAgent.extraArgs;
         if (Object.keys(ba).length > 0) obj.background_agent = ba;

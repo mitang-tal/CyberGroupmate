@@ -80,8 +80,16 @@
       bind:value={config.backgroundAgent.schedule} placeholder="0 3 * * *" />
   </label>
   <label class="cfg-field">
+    <span class="cfg-label">强制最小间隔 (小时)</span>
+    <input type="number" class="input input-xs input-bordered w-full" min="0" step="1"
+      bind:value={config.backgroundAgent.minIntervalHours} placeholder="6" />
+  </label>
+  <label class="cfg-field">
     <span class="cfg-label">自定义启动参数</span>
     <input type="text" class="input input-xs input-bordered w-full"
       bind:value={extraArgsText} placeholder="--verbose --flag=value" />
   </label>
 </div>
+<p class="text-xs opacity-50 mt-1">
+  强制最小间隔：距上次做梦不足该小时数时，定时触发会被跳过；防重启/cron 边界/重试叠加导致频繁做梦。设 0 关闭。
+</p>
