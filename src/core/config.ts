@@ -353,6 +353,8 @@ export interface VisionConfig {
     stickerSendingMode?: "allow_all" | "allow_listed" | "disallow_all";
     /** 新收集的贴纸默认状态。默认 "enabled" */
     newStickerDefault?: "enabled" | "disabled";
+    /** 动态贴纸（WebM/TGS）抽帧数量上限。默认 3，设为 0 禁用动态贴纸识别 */
+    animatedStickerFrames?: number;
     /** 是否启用偷表情包（ImageCatalog + StickerDetector 管线）。默认 true */
     stickerStealingEnabled?: boolean;
     /** 图片出现次数达到此阈值后才进行表情包分类。默认 3 */
@@ -923,6 +925,7 @@ function parseVisionConfig(fileConfig: Record<string, unknown>): VisionConfig | 
         mediaRetentionDays: raw.media_retention_days != null ? num(raw.media_retention_days, 3) : undefined,
         stickerSendingMode: (str(raw.sticker_sending_mode) as VisionConfig["stickerSendingMode"]) ?? undefined,
         newStickerDefault: (str(raw.new_sticker_default) as VisionConfig["newStickerDefault"]) ?? undefined,
+        animatedStickerFrames: raw.animated_sticker_frames != null ? num(raw.animated_sticker_frames, 3) : undefined,
         stickerStealingEnabled: raw.sticker_stealing_enabled != null ? !!raw.sticker_stealing_enabled : undefined,
         stickerStealingMinFrequency: raw.sticker_stealing_min_frequency != null ? num(raw.sticker_stealing_min_frequency, 3) : undefined,
         stickerStealingIntervalMin: raw.sticker_stealing_interval_min != null ? num(raw.sticker_stealing_interval_min, 10) : undefined,
