@@ -429,6 +429,8 @@ export interface MessageSearchResult {
     displayName: string;
     content: string;
     timestamp: string;
+    mediaType?: string;
+    mediaInfo?: string;
 }
 
 export interface MessageQueryOptions {

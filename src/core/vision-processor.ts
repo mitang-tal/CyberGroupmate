@@ -110,7 +110,7 @@ export async function ensureSupportedFormat(
 // ─── 动态贴纸抽帧 ───
 
 /** 动态贴纸抽帧识别的默认帧数上限 */
-const DEFAULT_ANIMATED_STICKER_FRAMES = 2;
+const DEFAULT_ANIMATED_STICKER_FRAMES = 3;
 const TGS_RENDER_SIZE = 512;
 
 /** 判断附件是否为动态贴纸（WebM 视频贴纸 / TGS 动画贴纸） */
@@ -708,6 +708,7 @@ async function processSingleSticker(
                 uniqueFileId: sticker.uniqueFileId,
                 mediaType: "sticker",
                 mimeType: sticker.mimeType ?? "image/webp",
+                fileName: sticker.fileName,
             });
         }
 
@@ -788,11 +789,9 @@ async function describeSticker(
 
     const emojiHint = emoji ? `（这个贴纸的原始 emoji 是 ${emoji}）` : "";
     const intro = animated
-        ? `这是一个 Telegram 动态贴纸${emojiHint}，下面 ${imageParts.length} 张图片是从动画整条时间轴上按时间顺序均匀采样的关键帧；帧之间有时间间隔，动作可能跳变，不代表连续逐帧画面。`
+        ? `这是一个 Telegram 动态贴纸${emojiHint}，下面 ${imageParts.length} 张图片是从动画中采样的关键帧；先判断整体表情/动作/含义，不要默认写成前后状态变化。只有变化本身清晰可见且是贴纸核心含义时，才简短描述变化。`
         : `这是一个 Telegram 贴纸图片${emojiHint}。`;
-    const describeHint = animated
-        ? "给整体印象，不要逐帧罗列；用几个词或一个短句描述贴纸表情/动作/含义，结合采样帧理解动画表达的动作或情绪变化。如果贴纸中有文字，结合画面内容理解并描述文字的完整内容。"
-        : "用几个词简短描述贴纸表情/动作/含义。如果贴纸中有文字，结合图片内容理解并描述文字的完整内容。";
+    const describeHint = "用几个词简短描述贴纸表情/动作/含义。如果贴纸中有文字，结合图片内容理解并描述文字的完整内容。";
     const messages: ChatMessage[] = [
         {
             role: "user",

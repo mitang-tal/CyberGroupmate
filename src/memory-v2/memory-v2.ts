@@ -2297,7 +2297,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         params.push(limit);
         const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
         const rows = this.db.prepare(`
-            SELECT message_id, chat_id, user_id, display_name, text, timestamp
+            SELECT message_id, chat_id, user_id, display_name, text, timestamp, media_type, media_info
             FROM message_log
             ${where}
             ORDER BY timestamp DESC
@@ -2311,6 +2311,8 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             displayName: (row.display_name as string) ?? "",
             content: (row.text as string) ?? "",
             timestamp: row.timestamp as string,
+            mediaType: (row.media_type as string) ?? undefined,
+            mediaInfo: (row.media_info as string) ?? undefined,
         }));
     }
 
