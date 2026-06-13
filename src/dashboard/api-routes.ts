@@ -1349,6 +1349,7 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
                             description ?? "",
                             emoji,
                             newStickerEnabledByDefault,
+                            saved.contentHash ?? entry.contentHash,
                         );
                         deps.imageCatalog.markPromoted(
                             entry.contentHash,

@@ -60,8 +60,9 @@ export interface ProcessedMedia {
 
 /** Sticker 描述缓存接口 */
 export interface StickerCache {
-    getStickerDescription(uniqueFileId: string): { description: string; emoji?: string; emojis?: string[] } | null;
-    setStickerDescription(uniqueFileId: string, description: string, emoji?: string | string[], enabled?: boolean): void;
+    getStickerDescription(uniqueFileId: string, contentHash?: string): { description: string; emoji?: string; emojis?: string[] } | null;
+    linkStickerContent?(uniqueFileId: string, contentHash: string): void;
+    setStickerDescription(uniqueFileId: string, description: string, emoji?: string | string[], enabled?: boolean, contentHash?: string): void;
 }
 
 /** 下载函数类型 */
@@ -701,8 +702,9 @@ async function processSingleSticker(
         const rawBuffer = await downloadFn(sticker.fileId, sticker.chatId, sticker.messageId, sticker.uniqueFileId);
 
         // 保存贴纸原始文件到磁盘（用于后续发送）
+        let savedSticker: ReturnType<MediaDownloader["saveMedia"]> | null = null;
         if (mediaDownloader) {
-            mediaDownloader.saveMedia(Buffer.from(rawBuffer), {
+            savedSticker = mediaDownloader.saveMedia(Buffer.from(rawBuffer), {
                 chatId: sticker.chatId,
                 messageId: sticker.messageId,
                 uniqueFileId: sticker.uniqueFileId,
@@ -710,6 +712,20 @@ async function processSingleSticker(
                 mimeType: sticker.mimeType ?? "image/webp",
                 fileName: sticker.fileName,
             });
+        }
+        const contentHash = savedSticker?.contentHash;
+
+        if (mode === "vision_cache" && stickerCache && contentHash) {
+            stickerCache.linkStickerContent?.(sticker.uniqueFileId, contentHash);
+            const cached = stickerCache.getStickerDescription(sticker.uniqueFileId, contentHash);
+            if (cached) {
+                log.debug("Sticker 内容缓存命中", { uniqueFileId: sticker.uniqueFileId, contentHash });
+                const emojiTag = formatEmojiTag(cached.emojis ?? cached.emoji ?? sticker.emoji);
+                return {
+                    index: sticker.messageIndex,
+                    description: `[🎭 ${label}${emojiTag}: ${cached.description}]`,
+                };
+            }
         }
 
         // 动态贴纸：抽帧后多帧识别；静态贴纸：单图识别
@@ -730,7 +746,7 @@ async function processSingleSticker(
         // 写入缓存 (vision_cache mode)
         if (mode === "vision_cache" && stickerCache) {
             const newDefault = config?.newStickerDefault !== "disabled";
-            stickerCache.setStickerDescription(sticker.uniqueFileId, result.description, result.emojis, newDefault);
+            stickerCache.setStickerDescription(sticker.uniqueFileId, result.description, result.emojis, newDefault, contentHash);
         }
 
         const emojiTag = formatEmojiTag(result.emojis.length > 0 ? result.emojis : (result.emoji ?? sticker.emoji));
