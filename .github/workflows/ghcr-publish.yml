@@ -57,8 +57,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=base
+          cache-to: type=gha,mode=max,scope=base
 
       - name: Build and push Docker image with Claude Code
         if: github.ref == 'refs/heads/agentic'
@@ -73,8 +73,8 @@ jobs:
             BASE_IMAGE=${{ steps.image.outputs.name }}:agentic
           tags: ${{ steps.image.outputs.name }}:agentic-with-cc
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=cc
+          cache-to: type=gha,mode=max,scope=cc
 
       - name: Build and push Docker image with GitHub Copilot CLI
         if: github.ref == 'refs/heads/agentic'
@@ -89,5 +89,5 @@ jobs:
             BASE_IMAGE=${{ steps.image.outputs.name }}:agentic
           tags: ${{ steps.image.outputs.name }}:agentic-with-copilot
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=copilot
+          cache-to: type=gha,mode=max,scope=copilot

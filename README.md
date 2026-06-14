@@ -220,7 +220,7 @@ docker pull ghcr.io/archeb/cybergroupmate:agentic-with-cc       # 预装 Claude 
 docker pull ghcr.io/archeb/cybergroupmate:agentic-with-copilot  # 预装 Copilot CLI
 ```
 
-其中 `agentic-with-cc` 通过 Anthropic 官方原生安装脚本安装 Claude Code；`agentic-with-copilot` 通过 GitHub CLI 官方 apt 仓库安装 `gh`，再用官方 `gh extension install github/gh-copilot` 安装 Copilot CLI。运行时仍需按各工具要求完成认证。
+其中 `agentic-with-cc` 通过 Anthropic 官方原生安装脚本安装 Claude Code；`agentic-with-copilot` 通过官方 `@github/copilot` npm 包安装 GitHub Copilot CLI（`copilot` 命令）。运行时仍需按各工具要求完成认证。
 
 发布版本（v* tag）也会同步推送，可使用语义化版本号拉取：
 
