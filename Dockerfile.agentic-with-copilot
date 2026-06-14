@@ -1,0 +1,23 @@
+ARG BASE_IMAGE=ghcr.io/archeb/cybergroupmate:agentic
+FROM ${BASE_IMAGE}
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+USER root
+
+ENV GH_CONFIG_DIR=/usr/local/share/gh
+
+# Install GitHub CLI from GitHub's official apt repository, then install
+# GitHub Copilot in the CLI through the official gh extension.
+RUN install -d -m 0755 /etc/apt/keyrings \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/* \
+    && install -d -m 0755 "${GH_CONFIG_DIR}" \
+    && gh extension install github/gh-copilot \
+    && chmod -R a+rX "${GH_CONFIG_DIR}" \
+    && gh --version \
+    && gh copilot --help >/dev/null
