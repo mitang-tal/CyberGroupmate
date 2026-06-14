@@ -116,14 +116,14 @@ cp config.example.yaml config.yaml
 # 编辑 config.yaml，填写平台凭据、LLM API Key、Dashboard 等配置
 
 # 2. 安装后端依赖
-npm ci
+pnpm install --frozen-lockfile
 
 # 3. 构建 Dashboard 静态资源
-npm --prefix src/dashboard/ui ci
-npm run dashboard:build
+pnpm -C src/dashboard/ui install --frozen-lockfile
+pnpm dashboard:build
 
 # 4. 启动
-LOG_LEVEL=info npm start
+LOG_LEVEL=info pnpm start
 ```
 
 启动后 Dashboard 默认监听 `config.yaml` 中配置的地址与端口；常见部署为 `http://<host>:6767`。
