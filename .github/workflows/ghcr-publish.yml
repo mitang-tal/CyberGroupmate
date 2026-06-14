@@ -34,11 +34,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Prepare image name
+        id: image
+        run: echo "name=${REGISTRY}/${IMAGE_NAME,,}" >> "$GITHUB_OUTPUT"
+
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ steps.image.outputs.name }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -52,6 +56,38 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Docker image with Claude Code
+        if: github.ref == 'refs/heads/agentic'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.agentic-with-cc
+          platforms: linux/amd64,linux/arm64
+          push: true
+          pull: true
+          build-args: |
+            BASE_IMAGE=${{ steps.image.outputs.name }}:agentic
+          tags: ${{ steps.image.outputs.name }}:agentic-with-cc
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Docker image with GitHub Copilot CLI
+        if: github.ref == 'refs/heads/agentic'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.agentic-with-copilot
+          platforms: linux/amd64,linux/arm64
+          push: true
+          pull: true
+          build-args: |
+            BASE_IMAGE=${{ steps.image.outputs.name }}:agentic
+          tags: ${{ steps.image.outputs.name }}:agentic-with-copilot
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
