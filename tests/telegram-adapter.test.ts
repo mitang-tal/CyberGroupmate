@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import { execFileSync } from "node:child_process";
+import { gzipSync } from "node:zlib";
 import { NotificationCenter } from "../src/event/notification-center.js";
 import type { NotificationEvent } from "../src/event/notification-center.js";
 import { TelegramAdapter } from "../src/adapter/telegram-adapter.js";
@@ -60,6 +61,34 @@ function cleanupConvertedTelegramStickers(baseName: string): void {
     } catch {
         // ignore absent conversion cache
     }
+}
+
+function writeMinimalTgs(filePath: string): void {
+    const lottie = JSON.stringify({
+        v: "5.5.2",
+        fr: 30,
+        ip: 0,
+        op: 30,
+        w: 64,
+        h: 64,
+        layers: [{
+            ty: 1,
+            sw: 64,
+            sh: 64,
+            sc: "#00ff00",
+            ip: 0,
+            op: 30,
+            st: 0,
+            ks: {
+                o: { a: 0, k: 100 },
+                r: { a: 0, k: 0 },
+                p: { a: 0, k: [32, 32, 0] },
+                a: { a: 0, k: [32, 32, 0] },
+                s: { a: 0, k: [100, 100, 100] },
+            },
+        }],
+    });
+    fs.writeFileSync(filePath, gzipSync(Buffer.from(lottie)));
 }
 
 describe("TelegramAdapter", () => {
@@ -611,7 +640,7 @@ describe("TelegramAdapter", () => {
             await adapter.handleCall("telegram.sendSticker", ["-100123", "qq-sticker-gif", { replyTo: "8" }]);
 
             assert.equal(normalizedFiles.length, 1);
-            assert.match(String(normalizedFiles[0][0]), /\.webm$/);
+            assert.match(String(normalizedFiles[0][0]), /^file:.*\.webm$/);
             assert.equal(normalizedFiles[0][1].fileMime, "video/webm");
             assert.match(String(normalizedFiles[0][1].fileName), /\.webm$/);
 
@@ -625,6 +654,153 @@ describe("TelegramAdapter", () => {
             assert.ok(attributes.some(attr => attr._ === "documentAttributeSticker"));
             assert.ok(attributes.some(attr => attr._ === "documentAttributeVideo"));
             assert.deepEqual(opts, { replyTo: 8 });
+        } finally {
+            await adapter.stop();
+            nc.dispose();
+            cleanupConvertedTelegramStickers(fixtureName);
+            fs.rmSync(testDir, { recursive: true, force: true });
+        }
+    });
+
+    it("should send cached TGS stickers as animated document stickers", async () => {
+        const nc = makeNC();
+        const testDir = join(tmpdir(), `tg-sticker-${randomUUID()}`);
+        fs.mkdirSync(testDir, { recursive: true });
+        const fixtureName = `animated-tgs-${randomUUID()}`;
+        const tgsPath = join(testDir, `${fixtureName}.tgs`);
+        writeMinimalTgs(tgsPath);
+
+        const sendMediaCalls: Array<[unknown, Record<string, unknown>, unknown]> = [];
+        const normalizedFiles: Array<[unknown, Record<string, unknown>]> = [];
+        const fakeClient = {
+            async start() {
+                return { id: 99, displayName: "Bot", isBot: true };
+            },
+            onNewMessage: {
+                add() {},
+                remove() {},
+            },
+            async _normalizeInputFile(input: unknown, params: Record<string, unknown>) {
+                normalizedFiles.push([input, params]);
+                return { _: "inputFile", id: "fake", parts: 1, name: params.fileName };
+            },
+            async sendMedia(chatId: unknown, media: Record<string, unknown>, opts?: unknown) {
+                sendMediaCalls.push([chatId, media, opts]);
+                return {
+                    id: 4,
+                    text: "",
+                    date: new Date("2026-03-08T12:00:00.000Z"),
+                    chat: { id: chatId, title: "Test", type: "supergroup" },
+                    sender: { id: 99, displayName: "Bot", isBot: true },
+                    media,
+                };
+            },
+            async destroy() {},
+        };
+        const mediaDownloader = {
+            getExistingPath(uniqueFileId: string) {
+                return uniqueFileId === "tg-sticker-tgs" ? tgsPath : null;
+            },
+        };
+
+        const adapter = new TelegramAdapter(
+            makeConfig(),
+            nc,
+            async () => "",
+            () => {},
+            async () => fakeClient,
+            mediaDownloader as any,
+        );
+
+        try {
+            await adapter.start();
+            await adapter.handleCall("telegram.sendSticker", ["-100123", "tg-sticker-tgs", { replyTo: "9" }]);
+
+            assert.equal(normalizedFiles.length, 1);
+            assert.equal(normalizedFiles[0][0], `file:${tgsPath}`);
+            assert.equal(normalizedFiles[0][1].fileMime, "application/x-tgsticker");
+            assert.match(String(normalizedFiles[0][1].fileName), /\.tgs$/);
+
+            assert.equal(sendMediaCalls.length, 1);
+            const [chatId, media, opts] = sendMediaCalls[0];
+            assert.equal(chatId, -100123);
+            assert.equal(media._, "inputMediaUploadedDocument");
+            assert.equal(media.mimeType, "application/x-tgsticker");
+            assert.equal(media.nosoundVideo, undefined);
+            const attributes = media.attributes as Array<Record<string, unknown>>;
+            assert.ok(attributes.some(attr => attr._ === "documentAttributeSticker"));
+            assert.ok(!attributes.some(attr => attr._ === "documentAttributeVideo"));
+            assert.deepEqual(opts, { replyTo: 9 });
+        } finally {
+            await adapter.stop();
+            nc.dispose();
+            fs.rmSync(testDir, { recursive: true, force: true });
+        }
+    });
+
+    it("should fall back to static webp when dynamic sticker upload is unavailable", { skip: !hasCommand("ffmpeg") }, async () => {
+        const nc = makeNC();
+        const testDir = join(tmpdir(), `tg-sticker-${randomUUID()}`);
+        fs.mkdirSync(testDir, { recursive: true });
+        const fixtureName = `fallback-animated-${randomUUID()}`;
+        const gifPath = join(testDir, `${fixtureName}.gif`);
+        execFileSync("ffmpeg", [
+            "-hide_banner", "-loglevel", "error",
+            "-f", "lavfi",
+            "-i", "testsrc=size=16x16:rate=2:duration=1",
+            "-plays", "0",
+            gifPath,
+        ]);
+
+        const sendMediaCalls: Array<[unknown, Record<string, unknown>, unknown]> = [];
+        const fakeClient = {
+            async start() {
+                return { id: 99, displayName: "Bot", isBot: true };
+            },
+            onNewMessage: {
+                add() {},
+                remove() {},
+            },
+            async sendMedia(chatId: unknown, media: Record<string, unknown>, opts?: unknown) {
+                sendMediaCalls.push([chatId, media, opts]);
+                return {
+                    id: 5,
+                    text: "",
+                    date: new Date("2026-03-08T12:00:00.000Z"),
+                    chat: { id: chatId, title: "Test", type: "supergroup" },
+                    sender: { id: 99, displayName: "Bot", isBot: true },
+                    media: { type: "sticker", mimeType: media.fileMime, fileName: media.fileName },
+                };
+            },
+            async destroy() {},
+        };
+        const mediaDownloader = {
+            getExistingPath(uniqueFileId: string) {
+                return uniqueFileId === "fallback-gif" ? gifPath : null;
+            },
+        };
+
+        const adapter = new TelegramAdapter(
+            makeConfig(),
+            nc,
+            async () => "",
+            () => {},
+            async () => fakeClient,
+            mediaDownloader as any,
+        );
+
+        try {
+            await adapter.start();
+            await adapter.handleCall("telegram.sendSticker", ["-100123", "fallback-gif", { replyTo: "10" }]);
+
+            assert.equal(sendMediaCalls.length, 1);
+            const [chatId, media, opts] = sendMediaCalls[0];
+            assert.equal(chatId, -100123);
+            assert.equal(media.type, "sticker");
+            assert.equal(media.fileMime, "image/webp");
+            assert.match(String(media.fileName), /\.webp$/);
+            assert.ok(Buffer.isBuffer(media.file));
+            assert.deepEqual(opts, { replyTo: 10 });
         } finally {
             await adapter.stop();
             nc.dispose();

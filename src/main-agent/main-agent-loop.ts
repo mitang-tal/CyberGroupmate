@@ -29,6 +29,7 @@ import type { PlatformAdapter } from "../adapter/platform-adapter.js";
 import { markChatAsRead } from "../adapter/read-receipts.js";
 import type { MetaSessionHandler } from "./meta-session-handler.js";
 import { shortUuid } from "../core/ids.js";
+import { truncateForPrompt } from "../core/text-safety.js";
 
 const log = createLogger("main-agent-loop");
 const DISPATCH_SOURCE_NOTIFICATION_TASK_PREFIX = "dispatch-notify:";
@@ -746,14 +747,15 @@ function formatDispatchCompletionDigest(
         ? `Subagent ${task.sourceChatId}${task.sourceTaskId ? ` task=${task.sourceTaskId}` : ""}`
         : "Meta";
     const sent = callback.sentMessages?.length
-        ? `sent=${callback.sentMessages.map((msg) => `"${msg.text.slice(0, 80)}"`).join(" / ")}`
+        ? `sent=${callback.sentMessages.map((msg) => `"${truncateForPrompt(msg.text, 80)}"`).join(" / ")}`
         : "sent=none";
     return [
         `[DISPATCH_DONE] ${source} -> ${task.chatId}: task=${task.taskId}, status=${callback.status}`,
-        `direction=${task.contentDirection.slice(0, 160)}`,
-        `summary=${callback.summary.slice(0, 240)}`,
+        `direction=${truncateForPrompt(task.contentDirection, 160)}`,
+        `summary=${truncateForPrompt(callback.summary, 240)}`,
+        callback.error ? `error=${truncateForPrompt(callback.error, 160)}` : "",
         sent,
-    ].join("；");
+    ].filter(Boolean).join("；");
 }
 
 function formatDispatchSourceNotificationPrompt(

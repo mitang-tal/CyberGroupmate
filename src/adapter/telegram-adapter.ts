@@ -231,7 +231,8 @@ type NormalizedIncomingMessage = {
 
 type PreparedTelegramSticker =
     | { kind: "static"; path: string; buffer: Buffer; fileName: string; mimeType: "image/webp" }
-    | { kind: "video"; path: string; fileName: string; mimeType: "video/webm" };
+    | { kind: "video"; path: string; fileName: string; mimeType: "video/webm" }
+    | { kind: "animated"; path: string; fileName: string; mimeType: "application/x-tgsticker" };
 
 interface MtcuteObjectRefRecord {
     value: object;
@@ -726,13 +727,32 @@ export class TelegramAdapter implements PlatformAdapter {
                 if (!fs.existsSync(stickerPath)) throw new Error(`sendSticker: 文件不存在 ${stickerPath}`);
                 const preparedSticker = this.prepareOutgoingStickerForTelegram(stickerPath);
                 const stickerOpts = args[2] ?? undefined;
-                if (preparedSticker.kind === "video") {
-                    const videoStickerMedia = await this.buildTelegramVideoStickerMedia(preparedSticker);
-                    return this.handleCall("telegram.sendMedia", [
-                        stickerTarget,
-                        videoStickerMedia,
-                        stickerOpts,
-                    ]);
+                if (preparedSticker.kind === "video" || preparedSticker.kind === "animated") {
+                    try {
+                        const dynamicStickerMedia = await this.buildTelegramDynamicStickerMedia(preparedSticker);
+                        return this.handleCall("telegram.sendMedia", [
+                            stickerTarget,
+                            dynamicStickerMedia,
+                            stickerOpts,
+                        ]);
+                    } catch (err) {
+                        log.warn("sendSticker: 动态贴纸发送失败，降级为静态 webp", {
+                            stickerPath,
+                            kind: preparedSticker.kind,
+                            error: String(err).slice(0, 200),
+                        });
+                        const fallbackSticker = await this.prepareOutgoingStaticStickerFallbackForTelegram(stickerPath);
+                        return this.handleCall("telegram.sendMedia", [
+                            stickerTarget,
+                            {
+                                type: "sticker",
+                                file: fallbackSticker.buffer,
+                                fileName: fallbackSticker.fileName,
+                                fileMime: fallbackSticker.mimeType,
+                            },
+                            stickerOpts,
+                        ]);
+                    }
                 }
                 return this.handleCall("telegram.sendMedia", [
                     stickerTarget,
@@ -1424,7 +1444,12 @@ export class TelegramAdapter implements PlatformAdapter {
     private prepareOutgoingStickerForTelegram(sourcePath: string): PreparedTelegramSticker {
         const lowerPath = sourcePath.toLowerCase();
         if (lowerPath.endsWith(".tgs")) {
-            throw new Error(`sendSticker: 暂不支持发送 TGS 动态贴纸 (${path.basename(sourcePath)})`);
+            return {
+                kind: "animated",
+                path: sourcePath,
+                fileName: this.ensureFileNameExtension(path.basename(sourcePath), ".tgs"),
+                mimeType: "application/x-tgsticker",
+            };
         }
         if (lowerPath.endsWith(".webm")) {
             return {
@@ -1462,6 +1487,20 @@ export class TelegramAdapter implements PlatformAdapter {
         }
 
         const webpPath = this.convertStickerImageToTelegramWebp(sourcePath);
+        return {
+            kind: "static",
+            path: webpPath,
+            buffer: fs.readFileSync(webpPath),
+            fileName: path.basename(webpPath),
+            mimeType: "image/webp",
+        };
+    }
+
+    private async prepareOutgoingStaticStickerFallbackForTelegram(sourcePath: string): Promise<Extract<PreparedTelegramSticker, { kind: "static" }>> {
+        const fallbackSourcePath = sourcePath.toLowerCase().endsWith(".tgs")
+            ? await this.renderTgsStickerFirstFrameToPng(sourcePath)
+            : sourcePath;
+        const webpPath = this.convertStickerImageToTelegramWebp(fallbackSourcePath);
         return {
             kind: "static",
             path: webpPath,
@@ -1559,43 +1598,50 @@ export class TelegramAdapter implements PlatformAdapter {
         throw new Error(`sendSticker: GIF 贴纸转 WebM 失败: ${String(lastError ?? "unknown error").slice(0, 200)}`);
     }
 
-    private async buildTelegramVideoStickerMedia(sticker: Extract<PreparedTelegramSticker, { kind: "video" }>): Promise<Record<string, unknown>> {
+    private async buildTelegramDynamicStickerMedia(sticker: Extract<PreparedTelegramSticker, { kind: "video" | "animated" }>): Promise<Record<string, unknown>> {
         const normalizeInputFile = this.client?._normalizeInputFile?.bind(this.client);
         if (typeof normalizeInputFile !== "function") {
-            throw new Error("sendSticker: 当前 Telegram client 不支持上传 video sticker");
+            throw new Error("sendSticker: 当前 Telegram client 不支持上传动态贴纸");
         }
 
         const stat = fs.statSync(sticker.path);
-        const inputFile = await normalizeInputFile(sticker.path, {
+        const inputFile = await normalizeInputFile(`file:${sticker.path}`, {
             fileName: sticker.fileName,
             fileMime: sticker.mimeType,
             fileSize: stat.size,
         });
-        const metadata = this.probeVideoMetadata(sticker.path);
-        return {
+        const attributes: Array<Record<string, unknown>> = [
+            { _: "documentAttributeFilename", fileName: sticker.fileName },
+            {
+                _: "documentAttributeSticker",
+                stickerset: { _: "inputStickerSetEmpty" },
+                alt: "",
+            },
+        ];
+        if (sticker.kind === "video") {
+            const metadata = this.probeVideoMetadata(sticker.path);
+            attributes.push({
+                _: "documentAttributeVideo",
+                duration: metadata.duration ?? 0,
+                w: metadata.width ?? 512,
+                h: metadata.height ?? 512,
+                supportsStreaming: true,
+            });
+        }
+
+        const media: Record<string, unknown> = {
             _: "inputMediaUploadedDocument",
             file: inputFile,
             mimeType: sticker.mimeType,
-            nosoundVideo: true,
-            attributes: [
-                { _: "documentAttributeFilename", fileName: sticker.fileName },
-                {
-                    _: "documentAttributeSticker",
-                    stickerset: { _: "inputStickerSetEmpty" },
-                    alt: "",
-                },
-                {
-                    _: "documentAttributeVideo",
-                    duration: metadata.duration ?? 0,
-                    w: metadata.width ?? 512,
-                    h: metadata.height ?? 512,
-                    supportsStreaming: true,
-                },
-            ],
+            attributes,
         };
+        if (sticker.kind === "video") {
+            media.nosoundVideo = true;
+        }
+        return media;
     }
 
-    private outgoingTelegramStickerPath(sourcePath: string, variant: string, ext: ".webp" | ".webm"): string {
+    private outgoingTelegramStickerPath(sourcePath: string, variant: string, ext: ".webp" | ".webm" | ".png"): string {
         const stat = fs.statSync(sourcePath);
         const hash = createHash("sha1")
             .update(`${sourcePath}:${stat.size}:${stat.mtimeMs}:${variant}`)
@@ -1606,6 +1652,22 @@ export class TelegramAdapter implements PlatformAdapter {
         const rawBase = path.basename(sourcePath, path.extname(sourcePath));
         const safeBase = rawBase.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 80) || "sticker";
         return path.join(outDir, `${safeBase}_${hash}${ext}`);
+    }
+
+    private async renderTgsStickerFirstFrameToPng(sourcePath: string): Promise<string> {
+        const outPath = this.outgoingTelegramStickerPath(sourcePath, "tgs-first-frame-v1", ".png");
+        if (this.hasUsableFile(outPath)) return outPath;
+
+        const { createCanvas, LottieAnimation } = await import("@napi-rs/canvas");
+        const { gunzipSync } = await import("node:zlib");
+        const lottieJson = gunzipSync(fs.readFileSync(sourcePath)).toString("utf-8");
+        const anim = LottieAnimation.loadFromData(lottieJson);
+        const canvas = createCanvas(anim.width || 512, anim.height || 512);
+        const ctx = canvas.getContext("2d");
+        anim.seekFrame(0);
+        anim.render(ctx as any);
+        fs.writeFileSync(outPath, Buffer.from(canvas.toBuffer("image/png")));
+        return outPath;
     }
 
     private isAnimatedStickerSource(sourcePath: string): boolean {
@@ -1654,7 +1716,7 @@ export class TelegramAdapter implements PlatformAdapter {
         }
     }
 
-    private ensureFileNameExtension(fileName: string, ext: ".webp" | ".webm"): string {
+    private ensureFileNameExtension(fileName: string, ext: ".webp" | ".webm" | ".tgs"): string {
         return fileName.toLowerCase().endsWith(ext) ? fileName : `${fileName}${ext}`;
     }
 

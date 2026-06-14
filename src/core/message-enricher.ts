@@ -358,6 +358,14 @@ export function formatMessageLine(
     options?: { includeMediaTags?: boolean; stickerDescriptionLookup?: StickerDescriptionLookup },
 ): string {
     const replyTag = buildReplyTag(m);
+    const textPart = formatMessageBody(m, options);
+    return `[${formatTsForPrompt(m.timestamp)}] [msgId:${m.id ?? "?"}] ${m.sender ?? "?"}${replyTag}: ${textPart}`;
+}
+
+export function formatMessageBody(
+    m: RawMessage,
+    options?: { includeMediaTags?: boolean; stickerDescriptionLookup?: StickerDescriptionLookup },
+): string {
     let textPart = m.text ?? "";
 
     // 如果没有 processedMedia（未经 vision 处理）但有 mediaType，追加媒体标签
@@ -378,7 +386,7 @@ export function formatMessageLine(
         }
     }
 
-    return `[${formatTsForPrompt(m.timestamp)}] [msgId:${m.id ?? "?"}] ${m.sender ?? "?"}${replyTag}: ${textPart}`;
+    return textPart;
 }
 
 /**

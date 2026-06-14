@@ -33,11 +33,13 @@ import {
 } from "../meta-sandbox/meta-session-runner.js";
 import { getMetaHistoryWindowStatus } from "../main-agent/meta-history-retention.js";
 import { getPlatform } from "../core/chat-id.js";
+import { extractAnimatedStickerFrames } from "../core/vision-processor.js";
 import type { MainAgentGlobalState } from "../subagent/types.js";
 
 const log = createLogger("dashboard-api");
 const SKILLS_ROOT = join(process.cwd(), "workspace", "skills");
 const DEBUG_EXECUTION_LOCKS = new Set<string>();
+const dynamicStickerPreviewCache = new Map<string, { mtimeMs: number; buffer: Buffer }>();
 
 const DEFAULT_CODEACT_DEBUG_TIMEOUT_MS = 30_000;
 const MAX_CODEACT_DEBUG_TIMEOUT_MS = 120_000;
@@ -84,6 +86,53 @@ function parseStickerSearchTerms(raw: string): string[] {
     }
 
     return candidates;
+}
+
+function stickerFileKind(filePath?: string): "static" | "animated" | null {
+    if (!filePath) return null;
+    const lower = filePath.toLowerCase();
+    if (lower.endsWith(".webm") || isTgsStickerFile(filePath)) return "animated";
+    return "static";
+}
+
+function stickerContentType(filePath: string): string {
+    const lower = filePath.toLowerCase();
+    if (lower.endsWith(".png")) return "image/png";
+    if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+    if (lower.endsWith(".gif")) return "image/gif";
+    if (lower.endsWith(".webm")) return "video/webm";
+    if (isTgsStickerFile(filePath)) return "application/x-tgsticker";
+    return "image/webp";
+}
+
+function isTgsStickerFile(filePath: string): boolean {
+    const lower = filePath.toLowerCase();
+    if (lower.endsWith(".tgs")) return true;
+    if (!lower.endsWith(".bin")) return false;
+    try {
+        const fd = fs.openSync(filePath, "r");
+        try {
+            const header = Buffer.allocUnsafe(2);
+            return fs.readSync(fd, header, 0, 2, 0) === 2 && header[0] === 0x1f && header[1] === 0x8b;
+        } finally {
+            fs.closeSync(fd);
+        }
+    } catch {
+        return false;
+    }
+}
+
+async function renderDynamicStickerPreview(filePath: string): Promise<Buffer> {
+    const stat = fs.statSync(filePath);
+    const cached = dynamicStickerPreviewCache.get(filePath);
+    if (cached?.mtimeMs === stat.mtimeMs) return cached.buffer;
+
+    const raw = fs.readFileSync(filePath);
+    const frames = await extractAnimatedStickerFrames(raw, isTgsStickerFile(filePath), 1);
+    const buffer = frames[0];
+    if (!buffer) throw new Error("dynamic sticker preview produced no frames");
+    dynamicStickerPreviewCache.set(filePath, { mtimeMs: stat.mtimeMs, buffer });
+    return buffer;
 }
 
 function fromJSONSafe(val: string | null | undefined): unknown[] {
@@ -1154,31 +1203,32 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         const stickers = matchedIds
             ? allStickers.filter(sticker => matchedIds.has(sticker.uniqueFileId))
             : allStickers;
-        // 附加 hasImage 标记 + 过滤 webm
+        // Dynamic sticker previews are rendered by /stickers/:id/image.
         const result = stickers.map(s => {
             const filePath = deps.mediaDownloader?.getExistingPath(s.uniqueFileId);
-            const isWebm = filePath?.toLowerCase().endsWith(".webm") ?? false;
+            const kind = stickerFileKind(filePath ?? undefined);
             return {
                 ...s,
-                hasImage: !!filePath && !isWebm,
-                isWebm,
+                hasImage: !!filePath,
+                stickerKind: kind,
             };
-        }).filter(s => !s.isWebm); // 不展示 webm 贴纸
+        });
         res.json(result);
     });
 
-    router.get("/stickers/:uniqueFileId/image", (req, res) => {
+    router.get("/stickers/:uniqueFileId/image", async (req, res) => {
         if (!deps.mediaDownloader) { res.status(404).json({ error: "mediaDownloader not available" }); return; }
         const filePath = deps.mediaDownloader.getExistingPath(req.params.uniqueFileId);
         if (!filePath || !fs.existsSync(filePath)) { res.status(404).json({ error: "sticker image not found" }); return; }
         try {
-            const ext = filePath.toLowerCase();
-            const contentType = ext.endsWith(".png") ? "image/png"
-                : ext.endsWith(".jpg") || ext.endsWith(".jpeg") ? "image/jpeg"
-                : ext.endsWith(".gif") ? "image/gif"
-                : "image/webp";
-            res.setHeader("Content-Type", contentType);
             res.setHeader("Cache-Control", "public, max-age=86400");
+            if (stickerFileKind(filePath) === "animated") {
+                const preview = await renderDynamicStickerPreview(filePath);
+                res.setHeader("Content-Type", "image/png");
+                res.end(preview);
+                return;
+            }
+            res.setHeader("Content-Type", stickerContentType(filePath));
             fs.createReadStream(filePath).pipe(res);
         } catch (err) {
             res.status(500).json({ error: String(err) });
@@ -1299,6 +1349,7 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
                             description ?? "",
                             emoji,
                             newStickerEnabledByDefault,
+                            saved.contentHash ?? entry.contentHash,
                         );
                         deps.imageCatalog.markPromoted(
                             entry.contentHash,
