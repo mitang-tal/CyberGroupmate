@@ -804,8 +804,9 @@ async function main(): Promise<void> {
             } catch { /* 非关键路径 */ }
         }
 
-        // 层 2 消息前送：如果该 chatId 的 CodeActExecutor 正在执行，推入 pending buffer
-        if (executorProcessing && executor) {
+        // 层 2 消息前送：执行中只前送 direct attention。
+        // 群聊普通消息留给 Observer / post-task follow-up，避免每句话都打断当前 task。
+        if (executorProcessing && executor && isDirectAttention) {
             executor.pushPendingMessage({
                 messageId: String(event.messageId ?? event.id ?? `msg_${Date.now()}`),
                 sender: String(event.displayName ?? event.senderName ?? event.userName ?? "?"),
