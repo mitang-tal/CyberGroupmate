@@ -1514,9 +1514,7 @@ export class OneBotAdapter implements PlatformAdapter {
     }
 
     private async applyHumanizedDelay(_chatId: string, textLen: number): Promise<void> {
-        const cfg = this.config.humanizedDelay;
-        if (!cfg?.enabled) return;
-        const delay = Math.max(cfg.minDelay, Math.min(cfg.maxDelay, textLen * cfg.msPerChar));
-        await new Promise(resolve => setTimeout(resolve, delay));
+        void textLen;
+        // Humanized delay is applied in sandbox host-call handling so it can be interrupted by new messages.
     }
 }

@@ -23,8 +23,11 @@ import { timestampInputToIso } from "../core/timezone.js";
 import { prefixedShortUuid } from "../core/ids.js";
 import { SandboxPool } from "./sandbox-pool.js";
 import { type Sandbox } from "./sandbox.js";
+import { getPendingMessageSignal, SendInterruptedError, type InterruptedSendPayload } from "./send-interrupt.js";
 
 const log = createLogger("sandbox-host-calls");
+
+const humanizedLastSendTimes = new Map<string, number>();
 
 export interface ManagedEnvPlan {
     hostVisible: Record<string, string>;
@@ -116,6 +119,85 @@ function enforceBackgroundWriteRestriction(method: string, args: unknown[], adap
     }
 }
 
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getCaptionLength(value: unknown): number {
+    return value && typeof value === "object" && "caption" in value && typeof (value as { caption?: unknown }).caption === "string"
+        ? ((value as { caption: string }).caption.length)
+        : 0;
+}
+
+function getSendIntent(platform: string, method: string, args: unknown[]): (InterruptedSendPayload & { textLength: number }) | null {
+    const chatId = String(args[0] ?? "");
+    if (!chatId) return null;
+
+    if (platform === "telegram") {
+        switch (method) {
+            case "telegram.sendText": {
+                const text = String(args[1] ?? "");
+                return { method, chatId, text, textLength: text.length };
+            }
+            case "telegram.sendMedia": {
+                const text = getCaptionLength(args[1]) > 0 ? String((args[1] as { caption: string }).caption) : "[media]";
+                return { method, chatId, text, textLength: getCaptionLength(args[1]) };
+            }
+            case "telegram.sendFile": {
+                const opts = args[2] as Record<string, unknown> | undefined;
+                const text = typeof opts?.caption === "string" ? opts.caption : `[file:${String(args[1] ?? "")}]`;
+                return { method, chatId, text, textLength: typeof opts?.caption === "string" ? opts.caption.length : 0 };
+            }
+            case "telegram.sendSticker":
+                return { method, chatId, text: `[sticker:${String(args[1] ?? "")}]`, textLength: 0 };
+            case "telegram.sendInlineBotResult":
+                return { method, chatId, text: `[inline-bot-result:${String(args[2] ?? "")}]`, textLength: 0 };
+            case "telegram.forwardMessage":
+                return { method, chatId, text: `[forward:${String(args[2] ?? "")}]`, textLength: 0 };
+            case "telegram.sendPoll": {
+                const text = String(args[1] ?? "");
+                return { method, chatId, text: `[poll:${text}]`, textLength: text.length };
+            }
+            default:
+                return null;
+        }
+    }
+
+    if (platform === "onebot") {
+        switch (method) {
+            case "onebot.sendText":
+            case "qq.sendText": {
+                const text = String(args[1] ?? "");
+                return { method, chatId, text, textLength: text.length };
+            }
+            case "onebot.sendMedia":
+            case "qq.sendMedia": {
+                const text = getCaptionLength(args[1]) > 0 ? String((args[1] as { caption: string }).caption) : "[media]";
+                return { method, chatId, text, textLength: getCaptionLength(args[1]) };
+            }
+            case "onebot.sendFile":
+            case "qq.sendFile": {
+                const opts = args[2] as Record<string, unknown> | undefined;
+                const text = typeof opts?.caption === "string" ? opts.caption : `[file:${String(args[1] ?? "")}]`;
+                return { method, chatId, text, textLength: typeof opts?.caption === "string" ? opts.caption.length : 0 };
+            }
+            case "onebot.sendSticker":
+            case "qq.sendSticker": {
+                const opts = args[2] as Record<string, unknown> | undefined;
+                const text = typeof opts?.caption === "string" ? opts.caption : `[sticker:${String(args[1] ?? "")}]`;
+                return { method, chatId, text, textLength: typeof opts?.caption === "string" ? opts.caption.length : 0 };
+            }
+            case "onebot.sendFace":
+            case "qq.sendFace":
+                return { method, chatId, text: `[face:${String(args[1] ?? "")}]`, textLength: 0 };
+            default:
+                return null;
+        }
+    }
+
+    return null;
+}
+
 export function createSandboxHostCallHandler(chatId: string, deps: CreateSandboxHostCallHandlerDeps) {
     const {
         appConfig,
@@ -157,6 +239,61 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
         return [...untriggered, ...latestTriggered];
     };
 
+    const applyInterruptibleHumanizedDelay = async (
+        adapter: PlatformAdapter,
+        method: string,
+        args: unknown[],
+    ): Promise<void> => {
+        const intent = getSendIntent(adapter.platform, method, args);
+        if (!intent) return;
+
+        const cfg = adapter.platform === "telegram"
+            ? appConfig.telegram?.humanizedDelay
+            : adapter.platform === "onebot"
+                ? appConfig.onebot?.humanizedDelay
+                : undefined;
+        if (!cfg?.enabled) return;
+        const targetPlatform = adapter.platform === "telegram" ? "telegram" : "onebot";
+        if (adapter.isChatMuted?.(ensureCompositeId(targetPlatform, intent.chatId))) return;
+
+        const targetDelay = Math.max(cfg.minDelay, Math.min(cfg.maxDelay, intent.textLength * cfg.msPerChar));
+        let waitMs = targetDelay;
+
+        if (adapter.platform === "telegram") {
+            const targetChatId = ensureCompositeId("telegram", intent.chatId);
+            const lastSend = humanizedLastSendTimes.get(targetChatId) ?? 0;
+            waitMs = Math.max(0, targetDelay - (Date.now() - lastSend));
+        }
+
+        const signal = getPendingMessageSignal(chatId);
+        if (signal?.getPendingCount()) {
+            throw new SendInterruptedError(intent);
+        }
+        if (waitMs <= 0) {
+            if (adapter.platform === "telegram") {
+                humanizedLastSendTimes.set(ensureCompositeId("telegram", intent.chatId), Date.now());
+            }
+            return;
+        }
+
+        const sinceVersion = signal?.getVersion() ?? 0;
+        log.debug("interruptible humanized delay: waiting", {
+            chatId,
+            method,
+            waitMs,
+            textLength: intent.textLength,
+        });
+        const interrupted = signal
+            ? await signal.waitForChange(sinceVersion, waitMs)
+            : (await sleep(waitMs), false);
+        if (interrupted) {
+            throw new SendInterruptedError(intent);
+        }
+        if (adapter.platform === "telegram") {
+            humanizedLastSendTimes.set(ensureCompositeId("telegram", intent.chatId), Date.now());
+        }
+    };
+
     return async (method: string, args: unknown[]) => {
         const adapter = adapters.find((item) => item.canHandle(method));
         if (adapter) {
@@ -177,6 +314,7 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
                     }
                 }
             }
+            await applyInterruptibleHumanizedDelay(adapter, method, args);
             return adapter.handleCall(method, args);
         }
 

@@ -45,11 +45,13 @@ import { createLogger } from "../core/logger.js";
 import { formatTsForPrompt, normalizeProgrammaticTimestamps, sanitizePromptTimestamps } from "../core/timezone.js";
 import { getRawId, ensureCompositeId, getPlatform, getGroupModelKey } from "../core/chat-id.js";
 import type { GlobalState } from "../main-agent/global-state.js";
+import { EventEmitter } from "node:events";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { shouldCompact, compact as contextManagerCompact } from "../memory-v2/context-manager.js";
 import { DEFAULT_BANNED_WORDS } from "../core/banned-words.js";
+import { registerPendingMessageSignal, type PendingMessageSignal } from "../sandbox/send-interrupt.js";
 
 const log = createLogger("code-act-executor");
 
@@ -436,6 +438,8 @@ export class CodeActExecutor {
 
     /** 层 2: 消息前送缓冲区 — NC hook 在 session 执行期间推入新消息 */
     private pendingMessages: PostTaskReactionMessage[] = [];
+    private pendingMessageVersion = 0;
+    private readonly pendingMessageEmitter = new EventEmitter();
 
     /** Memory 引用（层 1 用于刷新目标消息） */
     private memory: MemoryStoreV2 | null = null;
@@ -857,6 +861,7 @@ export class CodeActExecutor {
         });
 
         let sessionResult: SessionResult;
+        const unregisterPendingSignal = registerPendingMessageSignal(this.chatId, this.createPendingMessageSignal());
         try {
             sessionResult = await runCodeActSession(
                 messages,
@@ -884,6 +889,7 @@ export class CodeActExecutor {
                 renderResult?.manifest,
             );
         } finally {
+            unregisterPendingSignal();
             // 停止 typing 指示
             if (typingTimer) clearInterval(typingTimer);
             // 清理监听器，释放 sandbox
@@ -1107,6 +1113,8 @@ export class CodeActExecutor {
      */
     pushPendingMessage(msg: PostTaskReactionMessage): void {
         this.pendingMessages.push(msg);
+        this.pendingMessageVersion++;
+        this.pendingMessageEmitter.emit("pending-message", this.pendingMessageVersion);
         log.debug("pushPendingMessage", {
             chatId: this.chatId,
             msgId: msg.messageId,
@@ -1115,6 +1123,41 @@ export class CodeActExecutor {
             directReason: msg.directReason,
             hasMedia: !!msg.mediaInfo,
             bufferSize: this.pendingMessages.length,
+        });
+    }
+
+    private createPendingMessageSignal(): PendingMessageSignal {
+        return {
+            getVersion: () => this.pendingMessageVersion,
+            getPendingCount: () => this.pendingMessages.length,
+            onChange: (listener) => {
+                this.pendingMessageEmitter.on("pending-message", listener);
+                return () => this.pendingMessageEmitter.off("pending-message", listener);
+            },
+            waitForChange: (sinceVersion, timeoutMs) => this.waitForPendingMessageChange(sinceVersion, timeoutMs),
+        };
+    }
+
+    private waitForPendingMessageChange(sinceVersion: number, timeoutMs: number): Promise<boolean> {
+        if (this.pendingMessageVersion !== sinceVersion) return Promise.resolve(true);
+        if (timeoutMs <= 0) return Promise.resolve(false);
+
+        return new Promise((resolve) => {
+            let settled = false;
+            const cleanup = () => {
+                this.pendingMessageEmitter.off("pending-message", onPendingMessage);
+                clearTimeout(timer);
+            };
+            const finish = (changed: boolean) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                resolve(changed);
+            };
+            const onPendingMessage = () => finish(true);
+            const timer = setTimeout(() => finish(false), timeoutMs);
+            if (timer.unref) timer.unref();
+            this.pendingMessageEmitter.on("pending-message", onPendingMessage);
         });
     }
 

@@ -1921,22 +1921,9 @@ export class TelegramAdapter implements PlatformAdapter {
      * 仅当 humanizedDelay.enabled 且距上次发送时间不足时生效。
      */
     private async applyHumanizedDelay(chatId: string, textLength: number): Promise<void> {
-        const hd = this.config.humanizedDelay;
-        if (!hd?.enabled) return;
-
-        const { msPerChar, minDelay, maxDelay } = hd;
-        const targetDelay = Math.max(minDelay, Math.min(maxDelay, textLength * msPerChar));
-
-        const lastSend = this.lastSendTimes.get(chatId) ?? 0;
-        const elapsed = Date.now() - lastSend;
-
-        if (elapsed < targetDelay) {
-            const waitMs = targetDelay - elapsed;
-            log.debug("applyHumanizedDelay: 等待", { chatId, waitMs, textLength, targetDelay });
-            await new Promise(resolve => setTimeout(resolve, waitMs));
-        }
-
-        this.lastSendTimes.set(chatId, Date.now());
+        void chatId;
+        void textLength;
+        // Humanized delay is applied in sandbox host-call handling so it can be interrupted by new messages.
     }
 
     private readLimit(value: unknown, fallback: number): number {

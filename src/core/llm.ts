@@ -139,6 +139,14 @@ export interface LLMCallOptions {
     profileName?: string;
     /** 调用时对应的 ContextEngine manifest（供 Dashboard 可视化） */
     contextManifest?: ContextManifest;
+    /** 外部取消信号。用于上层在新消息到达时中断本次推理并重建 prompt。 */
+    abortSignal?: AbortSignal;
+}
+
+export const LLM_PENDING_MESSAGE_ABORT = "pending_message";
+
+export function isLLMInterruptedByPendingMessage(err: unknown): boolean {
+    return err instanceof Error && err.message.includes(LLM_PENDING_MESSAGE_ABORT);
 }
 
 let _callIdCounter = 0;
@@ -417,7 +425,9 @@ async function _callLLMSingleKeyInner(
 
             // 创建本次 fetch 的 AbortSignal：合并超时 + 用户取消
             const timeoutSignal = AbortSignal.timeout(timeoutMs);
-            const combinedSignal = AbortSignal.any([timeoutSignal, currentController.signal]);
+            const combinedSignals = [timeoutSignal, currentController.signal];
+            if (options?.abortSignal) combinedSignals.push(options.abortSignal);
+            const combinedSignal = AbortSignal.any(combinedSignals);
 
             // ── Provider dispatch ──
             let result: LLMResponse;
@@ -476,6 +486,15 @@ async function _callLLMSingleKeyInner(
                 // 重建 controller 以便下次 fetch 可用
                 currentController = new AbortController();
                 _activeControllers.set(callId, currentController);
+            }
+
+            const externalAbortReason = options?.abortSignal?.reason;
+            const isPendingMessageAbort = options?.abortSignal?.aborted && (
+                externalAbortReason === LLM_PENDING_MESSAGE_ABORT ||
+                (externalAbortReason instanceof DOMException && externalAbortReason.message === LLM_PENDING_MESSAGE_ABORT)
+            );
+            if (isPendingMessageAbort) {
+                throw new Error(LLM_PENDING_MESSAGE_ABORT);
             }
 
             const isRateLimit =
@@ -596,6 +615,9 @@ export async function callLLMWithFallback(
         try {
             return await callLLM(messages, configs[i], options);
         } catch (err) {
+            if (isLLMInterruptedByPendingMessage(err)) {
+                throw err;
+            }
             lastError = err instanceof Error ? err : new Error(String(err));
 
             // 最后一个 config 也失败 → 抛出
