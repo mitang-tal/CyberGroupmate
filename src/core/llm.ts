@@ -494,6 +494,18 @@ async function _callLLMSingleKeyInner(
                 (externalAbortReason instanceof DOMException && externalAbortReason.message === LLM_PENDING_MESSAGE_ABORT)
             );
             if (isPendingMessageAbort) {
+                if (llmEvents.listenerCount("llm:response") > 0) {
+                    const responseEvent: LLMResponseEvent = {
+                        callId,
+                        caller,
+                        contentPreview: "",
+                        contentLength: 0,
+                        durationMs: Date.now() - startTime,
+                        error: "interrupted_by_pending_message",
+                        timestamp: new Date().toISOString(),
+                    };
+                    llmEvents.emit("llm:response", responseEvent);
+                }
                 throw new Error(LLM_PENDING_MESSAGE_ABORT);
             }
 

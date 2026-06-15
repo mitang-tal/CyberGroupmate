@@ -193,6 +193,9 @@ const DEFAULT_MAX_TURNS = 30;
 /** 代码执行输出最大字符数 */
 const MAX_OUTPUT_CHARS = 32768;
 
+/** LLM 推理中收到新消息后稍等片刻，合并连续 direct attention */
+const LLM_PENDING_ABORT_DEBOUNCE_MS = 2000;
+
 /** 模型显式终止标记 */
 const END_TURN_MARKER = "<end_task>";
 
@@ -544,11 +547,21 @@ export async function runCodeActSession(
             ? new AbortController()
             : undefined;
         let unsubscribePendingAbort: (() => void) | undefined;
+        let pendingAbortTimer: ReturnType<typeof setTimeout> | undefined;
         if (pendingSignal && pendingAbortController) {
             const pendingVersion = pendingSignal.getVersion();
             unsubscribePendingAbort = pendingSignal.onChange(() => {
-                if (!pendingAbortController.signal.aborted && pendingSignal.getVersion() !== pendingVersion) {
-                    pendingAbortController.abort(new DOMException(LLM_PENDING_MESSAGE_ABORT, "AbortError"));
+                if (
+                    !pendingAbortController.signal.aborted &&
+                    !pendingAbortTimer &&
+                    pendingSignal.getVersion() !== pendingVersion
+                ) {
+                    pendingAbortTimer = setTimeout(() => {
+                        if (!pendingAbortController.signal.aborted) {
+                            pendingAbortController.abort(new DOMException(LLM_PENDING_MESSAGE_ABORT, "AbortError"));
+                        }
+                    }, LLM_PENDING_ABORT_DEBOUNCE_MS);
+                    if (pendingAbortTimer.unref) pendingAbortTimer.unref();
                 }
             });
         }
@@ -598,6 +611,7 @@ export async function runCodeActSession(
                 error: `LLM call failed: ${errorMsg}`,
             };
         } finally {
+            if (pendingAbortTimer) clearTimeout(pendingAbortTimer);
             unsubscribePendingAbort?.();
         }
 
