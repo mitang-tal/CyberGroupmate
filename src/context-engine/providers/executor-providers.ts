@@ -14,7 +14,7 @@
 
 import type { SectionProvider, ResolveContext, DiffResult } from "../types.js";
 import { deriveChatType } from "../prompt-renderer-utils.js";
-import { formatTsForPrompt } from "../../core/timezone.js";
+import { formatTsForPrompt, getWeekdayLabel } from "../../core/timezone.js";
 
 // ─── ResolveContext 扩展（executor 专用字段） ───
 
@@ -379,6 +379,7 @@ export const executorHeaderProvider: SectionProvider<{
     chatType: string;
     chatTitle: string;
     taskId: string;
+    weekday: string;
 }> = {
     schema: {
         name: "executor.header",
@@ -393,11 +394,13 @@ export const executorHeaderProvider: SectionProvider<{
             chatType: deriveChatType(ctx.isDirectMessage),
             chatTitle: ctx.chatTitle ?? ctx.chatId,
             taskId: ctx.taskId,
+            weekday: getWeekdayLabel(),
         };
     },
     render(data) {
         return [
             `═══ ${data.taskId} ═══`,
+            ...(data.weekday ? [`今天: ${data.weekday}`] : []),
             `聊天对象: ${data.chatTitle}(${data.chatId}) [${data.chatType}]`,
         ].join("\n");
     },
