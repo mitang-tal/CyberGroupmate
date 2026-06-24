@@ -34,6 +34,12 @@ function normalizeWhitelistId(raw: string): string {
 
 const DEFAULT_MEDIA_CACHE_DIR = "workspace/media-cache";
 const INVISIBLE_USERS_PATH = "workspace/invisible-users.json";
+const OUTGOING_MEDIA_FILE_EXTENSIONS = new Set([
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".avif", ".heic", ".heif",
+    ".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi",
+    ".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".wav", ".flac",
+    ".pdf", ".txt", ".zip", ".rar", ".7z",
+]);
 
 // ─── Invisible Users 持久化 ───
 
@@ -507,35 +513,35 @@ export class TelegramAdapter implements PlatformAdapter {
             case "telegram.sendMedia": {
                 const peer = await this.ensurePeerCached(args[0]);
                 const opts = this.normalizeReplyOpts(args[2]);
-                let mediaArg = args[1] as any;
+                const mediaArg = this.prepareOutgoingMediaForSend("telegram.sendMedia", args[1]);
 
-                // 支持本地文件路径：当 media.file 是本地路径时，从磁盘读取
-                if (mediaArg && typeof mediaArg === "object" && typeof mediaArg.file === "string") {
-                    const fileStr = mediaArg.file as string;
-                    const isLocalPath = fileStr.startsWith("/") || fileStr.startsWith("./") || fileStr.startsWith("../");
-                    if (isLocalPath) {
-                        const { readFileSync, existsSync } = await import("node:fs");
-                        const pathMod = await import("node:path");
-                        // 相对路径基于 workspace 目录解析（与 sandbox worker CWD 一致）
-                        const workspaceDir = pathMod.join(process.cwd(), "workspace");
-                        const resolvedPath = fileStr.startsWith("/") ? pathMod.resolve(fileStr) : pathMod.resolve(workspaceDir, fileStr);
-                        if (!existsSync(resolvedPath)) {
-                            throw new Error(`sendMedia: 文件不存在: ${resolvedPath}`);
-                        }
-                        const buffer = readFileSync(resolvedPath);
-                        mediaArg = {
-                            ...mediaArg,
-                            file: buffer,
-                            fileName: mediaArg.fileName ?? pathMod.basename(resolvedPath),
-                        };
-                    }
-                }
-
-                const captionLen = typeof mediaArg?.caption === "string" ? mediaArg.caption.length : 0;
+                const captionLen = mediaArg
+                    && typeof mediaArg === "object"
+                    && "caption" in mediaArg
+                    && typeof (mediaArg as { caption?: unknown }).caption === "string"
+                    ? (mediaArg as { caption: string }).caption.length
+                    : 0;
+                log.info("telegram.sendMedia:start", {
+                    target: String(args[0] ?? ""),
+                    captionLen,
+                    media: this.describeOutgoingMediaForLog(mediaArg),
+                });
                 await this.applyHumanizedDelay(String(args[0] ?? ""), captionLen);
-                return this.normalizeMessage(
-                    await this.client.sendMedia(peer, mediaArg, opts),
-                );
+                try {
+                    const sent = await this.client.sendMedia(peer, mediaArg, opts);
+                    log.info("telegram.sendMedia:success", {
+                        target: String(args[0] ?? ""),
+                        messageId: this.readMessageId(sent),
+                    });
+                    return this.normalizeMessage(sent);
+                } catch (err) {
+                    log.warn("telegram.sendMedia:failed", {
+                        target: String(args[0] ?? ""),
+                        error: err instanceof Error ? err.message : String(err),
+                        stack: err instanceof Error ? err.stack : undefined,
+                    });
+                    throw err;
+                }
             }
             case "telegram.sendFile": {
                 // args: [chatId, filePath, opts?]
@@ -861,30 +867,32 @@ export class TelegramAdapter implements PlatformAdapter {
                 let medias = args[1] as any[];
                 const sendOpts = this.normalizeReplyOpts(args[2]);
 
-                // 处理本地文件路径
-                const { readFileSync, existsSync } = await import("node:fs");
-                const pathMod = await import("node:path");
-                medias = medias.map((m: any) => {
-                    if (m && typeof m === "object" && typeof m.file === "string") {
-                        const fileStr = m.file as string;
-                        const isLocalPath = fileStr.startsWith("/") || fileStr.startsWith("./") || fileStr.startsWith("../");
-                        if (isLocalPath) {
-                            // 相对路径基于 workspace 目录解析（与 sandbox worker CWD 一致）
-                            const workspaceDir = pathMod.join(process.cwd(), "workspace");
-                            const resolvedPath = fileStr.startsWith("/") ? pathMod.resolve(fileStr) : pathMod.resolve(workspaceDir, fileStr);
-                            if (!existsSync(resolvedPath)) {
-                                throw new Error(`sendMediaGroup: 文件不存在: ${resolvedPath}`);
-                            }
-                            const buffer = readFileSync(resolvedPath);
-                            return { ...m, file: buffer, fileName: m.fileName ?? pathMod.basename(resolvedPath) };
-                        }
-                    }
-                    return m;
-                });
+                // 处理本地文件路径，避免底层上传流异步 open 失败后触发未处理 error 事件。
+                medias = medias.map((m: any, index) => this.prepareOutgoingMediaForSend("telegram.sendMediaGroup", m, index));
 
+                log.info("telegram.sendMediaGroup:start", {
+                    target: String(args[0] ?? ""),
+                    count: medias.length,
+                    medias: medias.map((media) => this.describeOutgoingMediaForLog(media)),
+                });
                 await this.applyHumanizedDelay(String(args[0] ?? ""), 0);
-                const sentMsgs = await this.client.sendMediaGroup(peer, medias, sendOpts);
-                return sentMsgs.map((m: any) => this.normalizeMessage(m));
+                try {
+                    const sentMsgs = await this.client.sendMediaGroup(peer, medias, sendOpts);
+                    log.info("telegram.sendMediaGroup:success", {
+                        target: String(args[0] ?? ""),
+                        count: sentMsgs.length,
+                        messageIds: sentMsgs.map((m: unknown) => this.readMessageId(m)),
+                    });
+                    return sentMsgs.map((m: any) => this.normalizeMessage(m));
+                } catch (err) {
+                    log.warn("telegram.sendMediaGroup:failed", {
+                        target: String(args[0] ?? ""),
+                        count: medias.length,
+                        error: err instanceof Error ? err.message : String(err),
+                        stack: err instanceof Error ? err.stack : undefined,
+                    });
+                    throw err;
+                }
             }
             case "telegram.forwardMessage": {
                 if (typeof this.client.forwardMessagesById !== "function") {
@@ -1033,6 +1041,15 @@ export class TelegramAdapter implements PlatformAdapter {
         }
 
         const rawArgs = args.slice(1);
+        if (rawArgs.some(arg => this.hasMtcuteLocalFileLikeArg(arg))) {
+            log.info("telegram.mtcute:prepareLocalFiles", { methodName });
+            const preparedArgs = await Promise.all(
+                rawArgs.map(arg => this.prepareMtcutePassthroughArg(arg, undefined, methodName)),
+            );
+            const result = await this.invokeMtcuteMethod(fn as (...callArgs: unknown[]) => unknown, preparedArgs);
+            return this.toSandboxMtcuteValue(result);
+        }
+
         const primaryArgs = rawArgs.map(arg => this.hydrateMtcuteArg(arg));
 
         try {
@@ -1040,7 +1057,7 @@ export class TelegramAdapter implements PlatformAdapter {
             return this.toSandboxMtcuteValue(result);
         } catch (primaryErr) {
             const fallbackArgs = await Promise.all(
-                rawArgs.map(arg => this.prepareMtcutePassthroughArg(arg)),
+                rawArgs.map(arg => this.prepareMtcutePassthroughArg(arg, undefined, methodName)),
             );
             try {
                 const result = await this.invokeMtcuteMethod(fn as (...callArgs: unknown[]) => unknown, fallbackArgs);
@@ -1132,7 +1149,7 @@ export class TelegramAdapter implements PlatformAdapter {
         return changed ? output : value;
     }
 
-    private async prepareMtcutePassthroughArg(value: unknown, key?: string): Promise<unknown> {
+    private async prepareMtcutePassthroughArg(value: unknown, key?: string, methodName = "mtcute"): Promise<unknown> {
         const hydrated = this.hydrateMtcuteArg(value, key);
         if (
             value
@@ -1146,10 +1163,10 @@ export class TelegramAdapter implements PlatformAdapter {
 
         if (typeof value === "string") {
             const normalized = this.normalizeMtcuteStringArg(value, key);
-            return this.isFileLikeKey(key) ? this.prepareMtcuteFileLike(normalized) : normalized;
+            return this.isFileLikeKey(key) ? this.prepareMtcuteFileLike(normalized, methodName, key) : normalized;
         }
         if (Array.isArray(value)) {
-            return Promise.all(value.map(item => this.prepareMtcutePassthroughArg(item, key)));
+            return Promise.all(value.map(item => this.prepareMtcutePassthroughArg(item, key, methodName)));
         }
         if (!value || typeof value !== "object") return value;
         if (value instanceof Date || Buffer.isBuffer(value) || value instanceof Uint8Array || Long.isLong(value)) {
@@ -1159,7 +1176,7 @@ export class TelegramAdapter implements PlatformAdapter {
 
         const output: Record<string, unknown> = {};
         for (const [childKey, childValue] of Object.entries(raw)) {
-            output[childKey] = await this.prepareMtcutePassthroughArg(childValue, childKey);
+            output[childKey] = await this.prepareMtcutePassthroughArg(childValue, childKey, methodName);
         }
         return output;
     }
@@ -1182,6 +1199,23 @@ export class TelegramAdapter implements PlatformAdapter {
     private isFileLikeKey(key?: string): boolean {
         if (!key) return false;
         return /^(file|media|thumb|thumbnail|videoCover|sticker|photo)$/i.test(key);
+    }
+
+    private hasMtcuteLocalFileLikeArg(value: unknown, key?: string): boolean {
+        if (typeof value === "string") {
+            if (!this.isFileLikeKey(key)) return false;
+            const normalized = this.normalizeMtcuteStringArg(value, key);
+            if (/^(https?:|data:)/i.test(String(normalized))) return false;
+            if (/^file:/i.test(String(normalized))) return true;
+            return this.isLikelyOutgoingLocalMediaPath(String(normalized));
+        }
+        if (!value || typeof value !== "object") return false;
+        if (value instanceof Date || Buffer.isBuffer(value) || value instanceof Uint8Array || Long.isLong(value)) return false;
+        if (Array.isArray(value)) return value.some(item => this.hasMtcuteLocalFileLikeArg(item, key));
+
+        const raw = value as Record<string, unknown>;
+        if (typeof raw[MTCUTE_OBJECT_REF_KEY] === "string") return false;
+        return Object.entries(raw).some(([childKey, childValue]) => this.hasMtcuteLocalFileLikeArg(childValue, childKey));
     }
 
     private normalizeInlineBotResults(raw: unknown): Record<string, unknown> {
@@ -1256,7 +1290,142 @@ export class TelegramAdapter implements PlatformAdapter {
         return "";
     }
 
-    private prepareMtcuteFileLike(file: unknown): unknown {
+    private prepareOutgoingMediaForSend(method: string, media: unknown, mediaIndex?: number): unknown {
+        if (typeof media === "string") {
+            const prepared = this.prepareOutgoingLocalMediaFile(method, media, mediaIndex);
+            return prepared
+                ? { type: "auto", file: prepared.buffer, fileName: prepared.fileName, fileSize: prepared.fileSize }
+                : media;
+        }
+        if (!media || typeof media !== "object" || Array.isArray(media)) return media;
+        if (media instanceof Date || Buffer.isBuffer(media) || media instanceof Uint8Array || Long.isLong(media)) return media;
+
+        const record = media as Record<string, unknown>;
+        const prepared = this.prepareOutgoingLocalMediaFile(method, record.file, mediaIndex);
+        if (!prepared) return media;
+        return {
+            ...record,
+            file: prepared.buffer,
+            fileName: typeof record.fileName === "string" && record.fileName.trim() ? record.fileName : prepared.fileName,
+            fileSize: typeof record.fileSize === "number" && Number.isFinite(record.fileSize) ? record.fileSize : prepared.fileSize,
+        };
+    }
+
+    private prepareOutgoingLocalMediaFile(
+        method: string,
+        source: unknown,
+        mediaIndex?: number,
+    ): { buffer: Buffer; fileName: string; fileSize: number } | null {
+        if (typeof source !== "string") return null;
+        const raw = source.trim();
+        if (!raw || /^(https?:|data:)/i.test(raw)) return null;
+
+        const hasFileScheme = /^file:/i.test(raw);
+        const localPath = hasFileScheme ? this.localPathFromFileUri(raw) : raw;
+        if (!localPath.trim()) {
+            log.warn(`${method}:localFileResolveFailed`, {
+                source: this.truncateForLog(raw),
+                mediaIndex,
+                error: "empty file path",
+            });
+            throw new Error(`${method}: 本地媒体路径为空: ${this.truncateForLog(raw)}`);
+        }
+        if (!hasFileScheme && !this.isLikelyOutgoingLocalMediaPath(localPath)) return null;
+
+        const candidates = this.localUploadPathCandidates(localPath);
+        log.info(`${method}:localFileResolveStart`, {
+            source: this.truncateForLog(raw),
+            mediaIndex,
+            candidates,
+        });
+
+        let resolvedPath: string;
+        try {
+            resolvedPath = this.resolveExistingMtcuteUploadPath(localPath, true);
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            log.warn(`${method}:localFileResolveFailed`, {
+                source: this.truncateForLog(raw),
+                mediaIndex,
+                candidates,
+                error: message,
+            });
+            throw new Error(`${method}: 本地媒体文件不可用: ${this.truncateForLog(raw)}: ${message}`);
+        }
+
+        try {
+            const buffer = fs.readFileSync(resolvedPath);
+            const fileName = path.basename(resolvedPath);
+            log.info(`${method}:localFileBuffered`, {
+                source: this.truncateForLog(raw),
+                mediaIndex,
+                resolvedPath,
+                fileName,
+                fileSize: buffer.length,
+            });
+            return { buffer, fileName, fileSize: buffer.length };
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            log.warn(`${method}:localFileReadFailed`, {
+                source: this.truncateForLog(raw),
+                mediaIndex,
+                resolvedPath,
+                error: message,
+            });
+            throw new Error(`${method}: 读取本地媒体失败: ${resolvedPath}: ${message}`);
+        }
+    }
+
+    private isLikelyOutgoingLocalMediaPath(filePath: string): boolean {
+        const trimmed = filePath.trim();
+        if (!trimmed || /^(https?:|data:)/i.test(trimmed)) return false;
+        if (path.isAbsolute(trimmed)) return true;
+        if (trimmed.startsWith("./") || trimmed.startsWith("../")) return true;
+        if (/[\\/]/.test(trimmed)) return true;
+        return OUTGOING_MEDIA_FILE_EXTENSIONS.has(path.extname(trimmed).toLowerCase());
+    }
+
+    private describeOutgoingMediaForLog(media: unknown): Record<string, unknown> {
+        if (media == null) return { kind: "null" };
+        if (typeof media === "string") return { kind: "string", value: this.truncateForLog(media) };
+        if (Buffer.isBuffer(media)) return { kind: "buffer", fileSize: media.length };
+        if (media instanceof Uint8Array) return { kind: "uint8array", fileSize: media.byteLength };
+        if (Array.isArray(media)) return { kind: "array", length: media.length };
+        if (typeof media !== "object") return { kind: typeof media };
+
+        const record = media as Record<string, unknown>;
+        const file = record.file;
+        const fileInfo = Buffer.isBuffer(file)
+            ? { kind: "buffer", fileSize: file.length }
+            : file instanceof Uint8Array
+                ? { kind: "uint8array", fileSize: file.byteLength }
+                : typeof file === "string"
+                    ? { kind: "string", value: this.truncateForLog(file) }
+                    : file == null
+                        ? { kind: "missing" }
+                        : { kind: typeof file };
+
+        return {
+            kind: "object",
+            type: typeof record.type === "string" ? record.type : undefined,
+            file: fileInfo,
+            fileName: typeof record.fileName === "string" ? record.fileName : undefined,
+            hasCaption: typeof record.caption === "string" && record.caption.length > 0,
+        };
+    }
+
+    private readMessageId(message: unknown): string | undefined {
+        if (!message || typeof message !== "object") return undefined;
+        const raw = message as Record<string, unknown>;
+        const id = raw.id ?? raw.messageId;
+        return id == null ? undefined : String(id);
+    }
+
+    private truncateForLog(value: string, maxLength = 240): string {
+        return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
+    }
+
+    private prepareMtcuteFileLike(file: unknown, methodName = "mtcute", key?: string): unknown {
         if (typeof file !== "string") return file;
         const trimmed = file.trim();
         if (!trimmed) return file;
@@ -1267,12 +1436,77 @@ export class TelegramAdapter implements PlatformAdapter {
             if (!localPath) {
                 throw new Error("mtcute 文件路径为空: file:");
             }
-            const existing = this.resolveExistingMtcuteUploadPath(localPath, true);
+            const existing = this.resolveMtcuteFileLikePath(localPath, true, methodName, key, trimmed);
             return `file:${existing}`;
         }
 
-        const existing = this.resolveExistingMtcuteUploadPath(trimmed, false);
+        if (!this.isLikelyOutgoingLocalMediaPath(trimmed)) return file;
+
+        const existing = this.resolveMtcuteFileLikePath(trimmed, true, methodName, key, trimmed);
         return existing ? `file:${existing}` : file;
+    }
+
+    private resolveMtcuteFileLikePath(
+        filePath: string,
+        requireExists: true,
+        methodName: string,
+        key: string | undefined,
+        source: string,
+    ): string;
+    private resolveMtcuteFileLikePath(
+        filePath: string,
+        requireExists: false,
+        methodName: string,
+        key: string | undefined,
+        source: string,
+    ): string | null;
+    private resolveMtcuteFileLikePath(
+        filePath: string,
+        requireExists: boolean,
+        methodName: string,
+        key: string | undefined,
+        source: string,
+    ): string | null;
+    private resolveMtcuteFileLikePath(
+        filePath: string,
+        requireExists: boolean,
+        methodName: string,
+        key: string | undefined,
+        source: string,
+    ): string | null {
+        const candidates = this.localUploadPathCandidates(filePath);
+        log.info("telegram.mtcute:fileLikeResolveStart", {
+            methodName,
+            key,
+            source: this.truncateForLog(source),
+            requireExists,
+            candidates,
+        });
+        try {
+            const existing = requireExists
+                ? this.resolveExistingMtcuteUploadPath(filePath, true)
+                : this.resolveExistingMtcuteUploadPath(filePath, false);
+            if (existing) {
+                log.info("telegram.mtcute:fileLikeResolved", {
+                    methodName,
+                    key,
+                    source: this.truncateForLog(source),
+                    resolvedPath: existing,
+                });
+            }
+            return existing;
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            log.warn("telegram.mtcute:fileLikeResolveFailed", {
+                methodName,
+                key,
+                source: this.truncateForLog(source),
+                requireExists,
+                candidates,
+                error: message,
+            });
+            throw err;
+        }
     }
 
     private localPathFromFileUri(fileUri: string): string {

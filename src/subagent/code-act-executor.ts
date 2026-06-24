@@ -1392,6 +1392,17 @@ export class CodeActExecutor {
                 }
 
                 const task = this.taskQueue.shift()!;
+                const updatedTask = this.globalState?.updateDispatchedSubagentTask(task.taskId, {
+                    status: "RUNNING",
+                });
+                log.info("processNext: task dequeued", {
+                    chatId: this.chatId,
+                    taskId: task.taskId,
+                    remainingQueueSize: this.taskQueue.length,
+                    statusMarkedRunning: !!updatedTask,
+                    skipRefreshTaskMessages: !!task.skipRefreshTaskMessages,
+                    isContinuation: !!task.continuationPrompt,
+                });
 
                 // 层 1: 执行前刷新目标消息。轻量续接任务只追加一条 continuation prompt。
                 if (!task.skipRefreshTaskMessages && !task.continuationPrompt) {
