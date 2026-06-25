@@ -20,6 +20,7 @@ import type { AttentionAccumulator } from "../accumulator/attention-accumulator.
 import type { PlatformAdapter } from "../adapter/platform-adapter.js";
 import { getTelegramMtcuteWriteTarget, TELEGRAM_MTCUTE_WRITE_METHODS } from "../core/telegram-mtcute-passthrough.js";
 import { timestampInputToIso } from "../core/timezone.js";
+import { resolveTodoDueAt } from "../core/todo-expiry.js";
 import { prefixedShortUuid } from "../core/ids.js";
 import { SandboxPool } from "./sandbox-pool.js";
 import { type Sandbox } from "./sandbox.js";
@@ -520,8 +521,8 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             return memory.todoGet(chatId, String(args[0]));
         }
         if (method === "todo.upsert") {
-            const [key, content, options] = args as [string, string, { dueAt?: string | number | Date | null } | undefined];
-            return memory.todoUpsert(chatId, key, content, timestampInputToIso(options?.dueAt) ?? null);
+            const [key, content, options] = args as [string, string, { dueAt?: string | number | Date | null; forever?: boolean } | undefined];
+            return memory.todoUpsert(chatId, key, content, resolveTodoDueAt(options));
         }
         if (method === "todo.remove") {
             memory.todoRemove(chatId, String(args[0]));

@@ -144,6 +144,27 @@ export class GlobalState {
         return true;
     }
 
+    /** 更新调度事件。用于 Dashboard / Meta API 热编辑，保持原 id 与触发历史。 */
+    updateSchedulerEvent(
+        id: string,
+        patch: Partial<Omit<SchedulerEvent, "id" | "type" | "createdAt">>,
+    ): SchedulerEvent | null {
+        const idx = this.state.schedulerEvents.findIndex(e => e.id === id);
+        if (idx === -1) return null;
+        const current = this.state.schedulerEvents[idx];
+        const updated: SchedulerEvent = {
+            ...current,
+            ...patch,
+            id: current.id,
+            type: current.type,
+            createdAt: current.createdAt,
+        };
+        this.state.schedulerEvents.splice(idx, 1, updated);
+        this.markDirty();
+        log.debug("updateSchedulerEvent", { id, type: updated.type });
+        return { ...updated };
+    }
+
     /** 获取所有调度事件（可按 chatId 过滤） */
     getSchedulerEvents(chatId?: string): SchedulerEvent[] {
         if (chatId) {

@@ -69,7 +69,7 @@
 | **ctx 持久化** | `ctx.key = value`，跨 task / session / remind 自动保持。只把后续任务还需要的关键状态放入 ctx |
 | **文件系统** | `fs.readFile` / `writeFile` / `exists` / `stat` / `readdir` / `mkdir` / `unlink` / `appendFile`，路径基于 workspace/ |
 | **网络请求** | `fetch(url, opts)` 全局可用，无限制 |
-| **Todo** | `todo.list` / `get` / `upsert(key, content, {dueAt})` / `remove`。存群规 / 约定 / 长期待办；dueAt 用 ISO 格式。**不适合**定时任务 |
+| **Todo** | `todo.list` / `get` / `upsert(key, content, {dueAt, forever})` / `remove`。存当前群规则 / 约定 / 长期待办；不传 dueAt 默认 30 天后过期，每次 upsert 都刷新；永久规则必须显式 `{ forever: true }`。**不适合**定时任务 |
 | **Skills** | `skills.list` / `install` / `reload`。修改 skills/ 后须 `reload()` |
 | **MCP** | `mcp.connect` / `call` / `list` / `disconnect`。连接信息持久化，重启自动重连 |
 | **跨聊天派发** | `dispatch.taskToGroup("platform:chatId", { contentDirection, quotes })`。任何需要在其他聊天执行操作的场景都必须通过 dispatch 派发给目标聊天的 Subagent，由它在自己的聊天里用平台 API 执行。**绝对禁止**用 `{{platformModule}}.sendText` 等平台 API 直接向非当前聊天发送消息。quote 语法同 Meta 派发，外部 `@[...]` 只作为 literal；完成结果会内部通知回发起方，并写入全局 session digest |

@@ -131,7 +131,7 @@
   },
   {
     "name": "todo",
-    "description": "shared/todo.d.ts — 不只是代办，可以当你的记事本用。 用于持久化当前群的待办、规则和长期约定（比如群规、话语风格、被教导的/发现的事实性记忆）。 数据按群隔离，可选设置到期时间。“定期、到期提醒”类请使用 remind 或者 cron 模块。",
+    "description": "shared/todo.d.ts — 不只是代办，可以当你的记事本用。 用于持久化当前群的待办、规则和长期约定（比如群规、话语风格、被教导的/发现的事实性记忆）。 数据按群隔离，可选设置到期时间。“定期、到期提醒”类请使用 remind 或者 cron 模块。 未传 dueAt 时默认 30 天后过期；每次 upsert 都会刷新默认过期时间。永久规则必须显式设置 forever: true。",
     "methods": [
       {
         "name": "list",
@@ -146,7 +146,7 @@
       {
         "name": "upsert",
         "brief": "新增或更新 todo。",
-        "fullDoc": "```typescript\nupsert(key: string, content: string, options?: { dueAt?: number | null }): Promise<TodoItem>\n```\n\n\n新增或更新 todo。\n\n**参数：**\n- `key`: 逻辑键，同群内唯一\n- `content`: 内容\n- `options.dueAt`: 可选到期时间，Unix epoch milliseconds\n\n**示例：**\n```typescript\nawait todo.upsert(\"周五提醒\", \"提醒大家周五 8 点开黑\", {\n  dueAt: 1777046400000,\n}); // 有到期时间，一般是阶段性的安排/规则。\n\nawait todo.upsert(\"大A昵称\", \"大A指的是Arc\"); // 事实性记忆/规则，没有到期时间\n```"
+        "fullDoc": "```typescript\nupsert(key: string, content: string, options?: { dueAt?: number | null; forever?: boolean }): Promise<TodoItem>\n```\n\n\n新增或更新 todo。\n\n**参数：**\n- `key`: 逻辑键，同群内唯一\n- `content`: 内容\n- `options.dueAt`: 可选到期时间，Unix epoch milliseconds；不传则默认 30 天后过期\n- `options.forever`: 显式设置为 true 时永久保留\n\n**示例：**\n```typescript\nawait todo.upsert(\"周五提醒\", \"提醒大家周五 8 点开黑\", {\n  dueAt: 1777046400000,\n}); // 有到期时间，一般是阶段性的安排/规则。\n\nawait todo.upsert(\"大A昵称\", \"大A指的是Arc\", { forever: true }); // 永久事实性记忆/规则\n```"
       },
       {
         "name": "remove",
@@ -532,7 +532,7 @@
       {
         "name": "sendMedia",
         "brief": "发送媒体消息。支持 URL 和本地文件路径（支持绝对路径或基于 cwd 工作区的相对路径）。",
-        "fullDoc": "```typescript\nsendMedia(chatId: number | string, media: string | { type: 'photo' | 'video' | 'document' | 'audio' | 'auto'; file: string; caption?: string; fileName?: string }, opts?: { replyTo?: number; silent?: boolean; }): Promise<{ id: number; text: string; date: Date; chat: { id: number; title?: string; username?: string; type: \"private\" | \"group\" | \"supergroup\" | \"channel\"; }; sender: { id: number; displayName?: string; title?: string; username?: string; }; isMention: boolean; replyToMessage?: { id: number } | null; media?: unknown; mediaInfo?: { type: \"photo\" | \"sticker\" | \"video\" | \"document\" | \"animation\" | \"audio\" | \"other\"; rawType?: string; fileId?: string; uniqueFileId?: string; emoji?: string; mimeType?: string; fileName?: string; width?: number; height?: number; fileSize?: number; filePath?: string; downloadStatus?: \"downloaded\" | \"cached\" | \"too_large\" | \"failed\"; downloadError?: string; }; }>\n```\n\n\n发送媒体消息。支持 URL 和本地文件路径（支持绝对路径或基于 cwd 工作区的相对路径）。\n\n**示例：**\n```typescript\n// sendMedia(chatId, { type: 'photo', file: 'https://example.com/img.jpg', caption: '看看这个' })\n```\n\n```typescript\n// sendMedia(chatId, { type: 'photo', file: 'ip_skk_moe.png' }) // 自动基于 process.cwd() 解析\n```"
+        "fullDoc": "```typescript\nsendMedia(chatId: number | string, media: string | { type: 'photo' | 'video' | 'document' | 'audio' | 'voice' | 'auto'; file: string; caption?: string; fileName?: string }, opts?: { replyTo?: number; silent?: boolean; }): Promise<{ id: number; text: string; date: Date; chat: { id: number; title?: string; username?: string; type: \"private\" | \"group\" | \"supergroup\" | \"channel\"; }; sender: { id: number; displayName?: string; title?: string; username?: string; }; isMention: boolean; replyToMessage?: { id: number } | null; media?: unknown; mediaInfo?: { type: \"photo\" | \"sticker\" | \"video\" | \"document\" | \"animation\" | \"audio\" | \"other\"; rawType?: string; fileId?: string; uniqueFileId?: string; emoji?: string; mimeType?: string; fileName?: string; width?: number; height?: number; fileSize?: number; filePath?: string; downloadStatus?: \"downloaded\" | \"cached\" | \"too_large\" | \"failed\"; downloadError?: string; }; }>\n```\n\n\n发送媒体消息。支持 URL 和本地文件路径（支持绝对路径或基于 cwd 工作区的相对路径）。\n\n**示例：**\n```typescript\n// sendMedia(chatId, { type: 'photo', file: 'https://example.com/img.jpg', caption: '看看这个' })\n```\n\n```typescript\n// sendMedia(chatId, { type: 'photo', file: 'ip_skk_moe.png' }) // 自动基于 process.cwd() 解析\n```"
       },
       {
         "name": "sendFile",

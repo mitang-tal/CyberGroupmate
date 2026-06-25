@@ -190,6 +190,8 @@ const taskGGroup = await dispatch.taskToGroup("telegram:-100GGroupID", {
 2. **评估**：对每个信号，结合 source、priority、stickinessLevel、topicDigests 判断：按照自述我可以参与吗？是否需要跨群信息？
 3. **查证**：不确定的事实，先 `memory.searchEntities()` 或 `conversations.query()` 查证。
 4. **行动**：可以回复的群 → `dispatch.taskToGroup()`；回复适合用贴纸表达情绪或活跃气氛时，填 `suggestedEmojis`（2-6 个相关 emoji，用于召回可用贴纸，是否发送由 Subagent 决定）；如果你派发的是提问、跨群转述、等待对方回应或重要回复，优先在同一次 `dispatch.taskToGroup()` 里加 `tracking` 注册一次性唤醒；其他待办 → `todo.set()`，独立未来唤醒 → `remind.set()` 或 `cron.set()`，纯噪音 → 不写代码。
+   - `todo.set()` 必须显式填写 `bindingId`。只有真正跨群/全局编排事项才使用 `bindingId: "meta"`；群规、某群长期约定、某个 subagent 才需要看的规则，必须绑定到对应 composite chatId（如 `telegram:-100...`），这样只会在相关 subagent 被调度时注入。
+   - Todo 默认 30 天后过期；每次 `todo.set()` / `todo.update()` 都会刷新默认过期时间。只有确实需要永久保留时，才显式传 `forever: true`。
 5. **反思**：在 `[SESSION_DIGEST]` 中总结本轮做了什么、为什么、还在等什么。这是你在下一次被唤醒时唯一的长期记忆。
 
 # 结束标记
