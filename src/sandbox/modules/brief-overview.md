@@ -74,6 +74,9 @@ onebot.d.ts — QQ / OneBot 平台 API 系统注入的 OneBot host proxy 接口�
 - `useUsersAndProfile`: 加载 OneBot/NapCat 用户与资料指南。用于好友列表、陌生人资料、最近会话、点赞、好友请求和账号资料等成组能力；调用本方法只披露指南。
 - `useSystemUtilities`: 加载 OneBot/NapCat 工具指南。用于版本/状态探测、发送能力检查、OCR、URL 安全检查、频道资料和 AI 语音等低频能力；调用本方法只披露指南。
 - `getMessage`: 根据 OneBot 消息 ID 获取消息详情。
+- `mention`: 构造 OneBot 标准 @ 消息段。只构造 segment，不会发送。
+- `sendMessage`: 发送 OneBot 标准消息。message 可以是 CQ 字符串或消息段数组。 用于文本、@、回复、图片、语音、视频、文件、表情等混合消息。
+- `sendAt`: 在群聊里 @ 指定 QQ 用户并追加文本。userId 支持裸 QQ 号、onebot:<qq>、onebot:private:<qq>、"all"、数组或逗号分隔字符串。
 - `sendText`: 发送文本消息。
 - `sendMedia`: 发送媒体消息。支持本地文件路径或 URL。 当 `type` 为 `audio` / `voice` 时，QQ/NapCat 不支持 `replyTo`，该参数会被忽略。
 - `sendFile`: 发送文件。

@@ -264,9 +264,24 @@
         "fullDoc": "```typescript\ngetMessage(messageId: string | number): Promise<OneBotRawMessage>\n```\n\n\n根据 OneBot 消息 ID 获取消息详情。\n\n**示例：**\n```typescript\nconst msg = await onebot.getMessage(794582600);\n```"
       },
       {
+        "name": "mention",
+        "brief": "构造 OneBot 标准 @ 消息段。只构造 segment，不会发送。",
+        "fullDoc": "```typescript\nmention(userId: string | number): OneBotMessageSegment\n```\n\n\n构造 OneBot 标准 @ 消息段。只构造 segment，不会发送。\n\n**示例：**\n```typescript\nawait onebot.sendMessage(chatId, [onebot.mention(\"123456\"), { type: \"text\", data: { text: \" 你好\" } }]);\n```"
+      },
+      {
+        "name": "sendMessage",
+        "brief": "发送 OneBot 标准消息。message 可以是 CQ 字符串或消息段数组。 用于文本、@、回复、图片、语音、视频、文件、表情等混合消息。",
+        "fullDoc": "```typescript\nsendMessage(chatId: string | number, message: OneBotMessage, opts?: OneBotSendMessageOptions): Promise<OneBotMessageAck | null>\n```\n\n\n发送 OneBot 标准消息。message 可以是 CQ 字符串或消息段数组。\n用于文本、@、回复、图片、语音、视频、文件、表情等混合消息。\n\n**示例：**\n```typescript\nawait onebot.sendMessage(chatId, [\n  { type: \"at\", data: { qq: \"123456\" } },\n  { type: \"text\", data: { text: \" 来看这个\" } },\n]);\n```"
+      },
+      {
+        "name": "sendAt",
+        "brief": "在群聊里 @ 指定 QQ 用户并追加文本。userId 支持裸 QQ 号、onebot:<qq>、onebot:private:<qq>、\"all\"、数组或逗号分隔字符串。",
+        "fullDoc": "```typescript\nsendAt(chatId: string | number, userId: string | number | Array<string | number>, text?: string, opts?: { replyTo?: string | number }): Promise<OneBotMessageAck | null>\n```\n\n\n在群聊里 @ 指定 QQ 用户并追加文本。userId 支持裸 QQ 号、onebot:<qq>、onebot:private:<qq>、\"all\"、数组或逗号分隔字符串。\n\n**示例：**\n```typescript\nawait onebot.sendAt(chatId, \"123456\", \"辛苦看下这个\");\nawait onebot.sendAt(chatId, [\"123456\", \"778899\"], \"村里发金条了\");\n```"
+      },
+      {
         "name": "sendText",
         "brief": "发送文本消息。",
-        "fullDoc": "```typescript\nsendText(chatId: string | number, text: string, opts?: { replyTo?: string | number }): Promise<OneBotMessageAck | null>\n```\n\n\n发送文本消息。\n\n**示例：**\n```typescript\nawait onebot.sendText(chatId, \"你好\");\n```"
+        "fullDoc": "```typescript\nsendText(chatId: string | number, text: string, opts?: OneBotSendMessageOptions): Promise<OneBotMessageAck | null>\n```\n\n\n发送文本消息。\n\n**示例：**\n```typescript\nawait onebot.sendText(chatId, \"你好\");\n```"
       },
       {
         "name": "sendMedia",
@@ -304,7 +319,7 @@
         "fullDoc": "```typescript\ndownloadMedia(mediaRef: string | number): Promise<string>\n```\n\n\n下载 QQ 媒体到 CyberGroupmate 本机 workspace/Downloads/。\nmediaRef 可以是图片/媒体 file、URL、base64/data URL，也可以直接传 OneBot 消息 ID；\n传消息 ID 时会通过 NapCat get_msg 解析消息里的图片/媒体段。\n\n**示例：**\n```typescript\nconst localPath = await onebot.downloadMedia(794582600);\n```"
       }
     ],
-    "typeDefs": "interface OneBotMessageAck {\n    message_id?: unknown;\n    id?: unknown;\n    chatId?: string | number;\n    group_id?: string | number;\n    user_id?: string | number;\n}\n\ninterface OneBotMediaPayload {\n    type?: string;\n    file?: string;\n    url?: string;\n    caption?: string;\n    fileName?: string;\n}\n\ninterface OneBotRawMessage {\n    message_id?: string | number;\n    real_id?: string | number;\n    time?: number;\n    message_type?: \"private\" | \"group\" | string;\n    sender?: Record<string, unknown>;\n    message?: unknown;\n    raw_message?: string;\n    [key: string]: unknown;\n}"
+    "typeDefs": "interface OneBotMessageAck {\n    message_id?: unknown;\n    id?: unknown;\n    chatId?: string | number;\n    group_id?: string | number;\n    user_id?: string | number;\n}\n\ninterface OneBotMediaPayload {\n    type?: string;\n    file?: string;\n    url?: string;\n    caption?: string;\n    fileName?: string;\n}\n\ninterface OneBotRawMessage {\n    message_id?: string | number;\n    real_id?: string | number;\n    time?: number;\n    message_type?: \"private\" | \"group\" | string;\n    sender?: Record<string, unknown>;\n    message?: unknown;\n    raw_message?: string;\n    /** 解析后的 OneBot 消息段数组。 */\n    messageSegments?: OneBotMessageSegment[];\n    /** 从 text/at/face/mface 等段提取的人类可读文本。 */\n    text?: string;\n    /** 消息里出现的 @ 对象，含 \"all\" 和当前 bot 被 @ 的标记。 */\n    mentions?: Array<{\n        userId: string;\n        rawUserId: string;\n        displayName?: string;\n        isAll?: boolean;\n        isSelf?: boolean;\n    }>;\n    /** 是否 @ 了当前 bot 或 @ 全体成员。 */\n    mentionsAgent?: boolean;\n    replyToMessageId?: string;\n    mediaInfo?: Record<string, unknown>;\n    [key: string]: unknown;\n}\n\ninterface OneBotMessageSegment {\n    type: string;\n    data?: Record<string, unknown>;\n}\n\ntype OneBotMessage = string | OneBotMessageSegment[];\n\ninterface OneBotSendMessageOptions {\n    /** 回复指定消息 ID。会在消息段数组前自动插入 OneBot reply 段。 */\n    replyTo?: string | number;\n    /** 发送前自动插入一个或多个 @ 段。支持 QQ 号、\"all\"、onebot:<qq>、onebot:private:<qq>、数组或逗号分隔字符串。 */\n    mentions?: Array<string | number> | string | number;\n}"
   },
   {
     "name": "runtime",

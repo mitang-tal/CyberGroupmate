@@ -16,6 +16,13 @@ import { DEFAULT_BANNED_WORDS, findBannedWords, buildBannedWordWarning } from ".
 
 // ─── 工具函数 ───
 
+type OneBotMessageSegment = {
+    type: string;
+    data?: Record<string, unknown>;
+};
+
+type OneBotMessage = string | OneBotMessageSegment[];
+
 export function formatOneBotAck(prefix: string, payload: unknown): string {
     if (!payload || typeof payload !== "object") return prefix;
     const raw = payload as Record<string, unknown>;
@@ -66,6 +73,89 @@ function saveDownloadedMedia(mediaRef: string, buffer: Buffer): string {
         writeFileSync(absPath, buffer);
     }
     return relPath;
+}
+
+function normalizeMentionTarget(value: unknown): string {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "";
+    if (raw.toLowerCase() === "all") return "all";
+
+    let candidate = raw;
+    const cqMatch = /^\[CQ:at,qq=([^,\]]+)/i.exec(candidate);
+    if (cqMatch) candidate = cqMatch[1];
+    if (candidate.startsWith("@")) candidate = candidate.slice(1);
+    if (candidate.startsWith("qq:")) candidate = candidate.slice("qq:".length);
+    if (candidate.startsWith("onebot:private:")) candidate = candidate.slice("onebot:private:".length);
+    else if (candidate.startsWith("onebot:group:")) candidate = candidate.slice("onebot:group:".length);
+    else if (candidate.startsWith("onebot:")) candidate = candidate.slice("onebot:".length);
+    return candidate.trim();
+}
+
+function normalizeMentionTargets(value: unknown): string[] {
+    const result: string[] = [];
+    const seen = new Set<string>();
+    const add = (target: string) => {
+        if (!target) return;
+        const key = target.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        result.push(target);
+    };
+    const visit = (item: unknown): void => {
+        if (item == null) return;
+        if (Array.isArray(item)) {
+            for (const child of item) visit(child);
+            return;
+        }
+        const raw = String(item).trim();
+        if (!raw) return;
+        const cqMatches = [...raw.matchAll(/\[CQ:at,qq=([^,\]]+)/ig)];
+        if (cqMatches.length > 0) {
+            for (const match of cqMatches) add(normalizeMentionTarget(match[1]));
+            return;
+        }
+        if (/[,，、;；\s]/.test(raw)) {
+            for (const part of raw.split(/[,，、;；\s]+/)) {
+                add(normalizeMentionTarget(part));
+            }
+            return;
+        }
+        add(normalizeMentionTarget(raw));
+    };
+    visit(value);
+    return result;
+}
+
+function oneBotMessageToText(message: OneBotMessage): string {
+    if (typeof message === "string") return message;
+    return message.map(segment => {
+        const data = segment.data ?? {};
+        switch (segment.type) {
+            case "text":
+                return String(data.text ?? "");
+            case "at": {
+                const qq = normalizeMentionTarget(data.qq ?? data.user_id ?? data.id);
+                return qq ? `@${qq}` : "@";
+            }
+            case "face":
+                return `[face:${String(data.id ?? "")}]`;
+            case "reply":
+                return `[reply:${String(data.id ?? data.message_id ?? "")}]`;
+            case "image":
+            case "record":
+            case "video":
+            case "file":
+                return `[${segment.type}:${String(data.file ?? "")}]`;
+            default:
+                return `[${segment.type}]`;
+        }
+    }).join("");
+}
+
+function mentionDedupPrefix(mentions: unknown): string {
+    return normalizeMentionTargets(mentions)
+        .map(item => `@${item}`)
+        .join("");
 }
 
 // ─── OneBot 客户端代理 ───
@@ -129,6 +219,12 @@ export function createOneBotClientProxy(
         useUsersAndProfile: async () => useOneBotGuide("useUsersAndProfile"),
         useSystemUtilities: async () => useOneBotGuide("useSystemUtilities"),
 
+        mention: (userId: string | number) => {
+            const qq = normalizeMentionTarget(userId);
+            if (!qq) throw new Error("onebot.mention: userId is required");
+            return { type: "at", data: { qq } };
+        },
+
         getMessage: async (messageId: string | number) => {
             const id = String(messageId ?? "").trim();
             if (!id) throw new Error("onebot.getMessage: messageId is required");
@@ -137,7 +233,104 @@ export function createOneBotClientProxy(
             return result;
         },
 
-        sendText: async (chatId: string, text: string, opts?: { replyTo?: string | number }) => {
+        sendMessage: async (chatId: string, message: OneBotMessage, opts?: { replyTo?: string | number; mentions?: Array<string | number> | string | number }) => {
+            const text = oneBotMessageToText(message);
+            if (bannedWords.length > 0) {
+                const found = findBannedWords(text, bannedWords);
+                if (found.length > 0) {
+                    const warning = buildBannedWordWarning(found, text);
+                    env.emitOutput(warning);
+                    env.notifyHost({
+                        type: "system.banned_word_blocked",
+                        scene: "onebot",
+                        chatId: String(chatId),
+                        text,
+                        foundWords: found,
+                        timestamp: Date.now(),
+                    });
+                    return null;
+                }
+            }
+            const dedupText = `${mentionDedupPrefix(opts?.mentions)}${text}`;
+            if (shouldBlockDuplicate(String(chatId), dedupText)) {
+                const preview = dedupText.length > 80 ? dedupText.slice(0, 80) + '...' : dedupText;
+                const warning = `[⚠ 运行时警告: 重复消息已拦截] 目标 chat=${String(chatId)} 的消息 "${preview}" 与本次 session 中已发送的消息内容完全一致，已自动拦截。`;
+                env.emitOutput(warning);
+                env.notifyHost({
+                    type: "system.duplicate_message_blocked",
+                    scene: "onebot",
+                    chatId: String(chatId),
+                    text: dedupText,
+                    timestamp: Date.now(),
+                });
+                return null;
+            }
+            const sent = await env.callHost("onebot.sendMessage", [chatId, message, opts]);
+            recordSentIfDedupEnabled(String(chatId), dedupText);
+            env.emitOutput(formatOneBotAck("[QQ] sendMessage ok", sent));
+            env.notifyHost({
+                type: "system.agent_message_sent",
+                scene: "onebot",
+                chatId: String(chatId),
+                messageId: typeof sent === "object" && sent && "message_id" in sent ? (sent as { message_id?: unknown }).message_id : undefined,
+                text: dedupText,
+                replyToMessageId: opts?.replyTo,
+                messageSegments: Array.isArray(message) ? message : undefined,
+                timestamp: Date.now(),
+            });
+            return sent;
+        },
+
+        sendAt: async (chatId: string, userId: string | number | Array<string | number>, text = "", opts?: { replyTo?: string | number }) => {
+            const qqs = normalizeMentionTargets(userId);
+            if (qqs.length === 0) throw new Error("onebot.sendAt: userId is required");
+            if (bannedWords.length > 0) {
+                const found = findBannedWords(text, bannedWords);
+                if (found.length > 0) {
+                    const warning = buildBannedWordWarning(found, text);
+                    env.emitOutput(warning);
+                    env.notifyHost({
+                        type: "system.banned_word_blocked",
+                        scene: "onebot",
+                        chatId: String(chatId),
+                        text,
+                        foundWords: found,
+                        timestamp: Date.now(),
+                    });
+                    return null;
+                }
+            }
+            const mentionText = qqs.map(qq => `@${qq}`).join(" ");
+            const dedupText = `${mentionText}${text ? (text.startsWith(" ") ? text : ` ${text}`) : ""}`;
+            if (shouldBlockDuplicate(String(chatId), dedupText)) {
+                const preview = dedupText.length > 80 ? dedupText.slice(0, 80) + '...' : dedupText;
+                const warning = `[⚠ 运行时警告: 重复消息已拦截] 目标 chat=${String(chatId)} 的消息 "${preview}" 与本次 session 中已发送的消息内容完全一致，已自动拦截。`;
+                env.emitOutput(warning);
+                env.notifyHost({
+                    type: "system.duplicate_message_blocked",
+                    scene: "onebot",
+                    chatId: String(chatId),
+                    text: dedupText,
+                    timestamp: Date.now(),
+                });
+                return null;
+            }
+            const sent = await env.callHost("onebot.sendAt", [chatId, qqs, text, opts]);
+            recordSentIfDedupEnabled(String(chatId), dedupText);
+            env.emitOutput(formatOneBotAck("[QQ] sendAt ok", sent));
+            env.notifyHost({
+                type: "system.agent_message_sent",
+                scene: "onebot",
+                chatId: String(chatId),
+                messageId: typeof sent === "object" && sent && "message_id" in sent ? (sent as { message_id?: unknown }).message_id : undefined,
+                text: dedupText,
+                replyToMessageId: opts?.replyTo,
+                timestamp: Date.now(),
+            });
+            return sent;
+        },
+
+        sendText: async (chatId: string, text: string, opts?: { replyTo?: string | number; mentions?: Array<string | number> | string | number }) => {
             // ── 禁用词拦截 ──
             if (bannedWords.length > 0) {
                 const found = findBannedWords(text, bannedWords);
@@ -155,27 +348,28 @@ export function createOneBotClientProxy(
                     return null;
                 }
             }
-            if (shouldBlockDuplicate(String(chatId), text)) {
-                const warning = `[⚠ 运行时警告: 重复消息已拦截] 目标 chat=${String(chatId)} 的消息 "${text.length > 80 ? text.slice(0, 80) + '...' : text}" 与本次 session 中已发送的消息内容完全一致，已自动拦截。`;
+            const dedupText = `${mentionDedupPrefix(opts?.mentions)}${text}`;
+            if (shouldBlockDuplicate(String(chatId), dedupText)) {
+                const warning = `[⚠ 运行时警告: 重复消息已拦截] 目标 chat=${String(chatId)} 的消息 "${dedupText.length > 80 ? dedupText.slice(0, 80) + '...' : dedupText}" 与本次 session 中已发送的消息内容完全一致，已自动拦截。`;
                 env.emitOutput(warning);
                 env.notifyHost({
                     type: "system.duplicate_message_blocked",
                     scene: "onebot",
                     chatId: String(chatId),
-                    text,
+                    text: dedupText,
                     timestamp: Date.now(),
                 });
                 return null;
             }
             const sent = await env.callHost("onebot.sendText", [chatId, text, opts]);
-            recordSentIfDedupEnabled(String(chatId), text);
+            recordSentIfDedupEnabled(String(chatId), dedupText);
             env.emitOutput(formatOneBotAck("[QQ] sendText ok", sent));
             env.notifyHost({
                 type: "system.agent_message_sent",
                 scene: "onebot",
                 chatId: String(chatId),
                 messageId: typeof sent === "object" && sent && "message_id" in sent ? (sent as { message_id?: unknown }).message_id : undefined,
-                text,
+                text: dedupText,
                 replyToMessageId: opts?.replyTo,
                 timestamp: Date.now(),
             });

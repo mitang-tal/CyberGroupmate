@@ -29,7 +29,37 @@ interface OneBotRawMessage {
     sender?: Record<string, unknown>;
     message?: unknown;
     raw_message?: string;
+    /** 解析后的 OneBot 消息段数组。 */
+    messageSegments?: OneBotMessageSegment[];
+    /** 从 text/at/face/mface 等段提取的人类可读文本。 */
+    text?: string;
+    /** 消息里出现的 @ 对象，含 "all" 和当前 bot 被 @ 的标记。 */
+    mentions?: Array<{
+        userId: string;
+        rawUserId: string;
+        displayName?: string;
+        isAll?: boolean;
+        isSelf?: boolean;
+    }>;
+    /** 是否 @ 了当前 bot 或 @ 全体成员。 */
+    mentionsAgent?: boolean;
+    replyToMessageId?: string;
+    mediaInfo?: Record<string, unknown>;
     [key: string]: unknown;
+}
+
+interface OneBotMessageSegment {
+    type: string;
+    data?: Record<string, unknown>;
+}
+
+type OneBotMessage = string | OneBotMessageSegment[];
+
+interface OneBotSendMessageOptions {
+    /** 回复指定消息 ID。会在消息段数组前自动插入 OneBot reply 段。 */
+    replyTo?: string | number;
+    /** 发送前自动插入一个或多个 @ 段。支持 QQ 号、"all"、onebot:<qq>、onebot:private:<qq>、数组或逗号分隔字符串。 */
+    mentions?: Array<string | number> | string | number;
 }
 
 declare const onebot: {
@@ -53,11 +83,37 @@ declare const onebot: {
     getMessage(messageId: string | number): Promise<OneBotRawMessage>;
 
     /**
+     * 构造 OneBot 标准 @ 消息段。只构造 segment，不会发送。
+     * @example
+     * await onebot.sendMessage(chatId, [onebot.mention("123456"), { type: "text", data: { text: " 你好" } }]);
+     */
+    mention(userId: string | number): OneBotMessageSegment;
+
+    /**
+     * 发送 OneBot 标准消息。message 可以是 CQ 字符串或消息段数组。
+     * 用于文本、@、回复、图片、语音、视频、文件、表情等混合消息。
+     * @example
+     * await onebot.sendMessage(chatId, [
+     *   { type: "at", data: { qq: "123456" } },
+     *   { type: "text", data: { text: " 来看这个" } },
+     * ]);
+     */
+    sendMessage(chatId: string | number, message: OneBotMessage, opts?: OneBotSendMessageOptions): Promise<OneBotMessageAck | null>;
+
+    /**
+     * 在群聊里 @ 指定 QQ 用户并追加文本。userId 支持裸 QQ 号、onebot:<qq>、onebot:private:<qq>、"all"、数组或逗号分隔字符串。
+     * @example
+     * await onebot.sendAt(chatId, "123456", "辛苦看下这个");
+     * await onebot.sendAt(chatId, ["123456", "778899"], "村里发金条了");
+     */
+    sendAt(chatId: string | number, userId: string | number | Array<string | number>, text?: string, opts?: { replyTo?: string | number }): Promise<OneBotMessageAck | null>;
+
+    /**
      * 发送文本消息。
      * @example
      * await onebot.sendText(chatId, "你好");
      */
-    sendText(chatId: string | number, text: string, opts?: { replyTo?: string | number }): Promise<OneBotMessageAck | null>;
+    sendText(chatId: string | number, text: string, opts?: OneBotSendMessageOptions): Promise<OneBotMessageAck | null>;
 
     /**
         * 发送媒体消息。支持本地文件路径或 URL。

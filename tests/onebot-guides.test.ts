@@ -93,6 +93,63 @@ describe("OneBot NapCat builtin guides", () => {
         }]);
     });
 
+    it("supports OneBot message segments and @ helpers in the sandbox proxy", async () => {
+        const outputs: string[] = [];
+        const notifications: Array<Record<string, unknown>> = [];
+        const hostCalls: Array<{ method: string; args: unknown[] }> = [];
+        const env: CapabilityRegistryEnv = {
+            ctx: {},
+            emitOutput: (line) => outputs.push(line),
+            notifyHost: (event) => notifications.push(event),
+            requestInput: async () => "",
+            printToHost: (message) => outputs.push(message),
+            spawnTask: () => {},
+            killTask: () => {},
+            listTasks: () => [],
+            callHost: async (method, args = []) => {
+                hostCalls.push({ method, args });
+                return { message_id: 100 };
+            },
+        };
+
+        const client = createOneBotClientProxy(env, new Map(), false) as {
+            mention(userId: string | number): { type: string; data?: Record<string, unknown> };
+            sendMessage(chatId: string, message: unknown, opts?: Record<string, unknown>): Promise<unknown>;
+            sendAt(chatId: string, userId: string | number | Array<string | number>, text?: string, opts?: Record<string, unknown>): Promise<unknown>;
+        };
+
+        const mention = client.mention("onebot:private:778899");
+        assert.deepEqual(mention, { type: "at", data: { qq: "778899" } });
+
+        await client.sendMessage("onebot:group:42", [
+            mention,
+            { type: "text", data: { text: " hello" } },
+        ], { replyTo: 9 });
+        await client.sendAt("onebot:group:42", "onebot:778899,223344", "看下", { replyTo: 10 });
+
+        assert.deepEqual(hostCalls, [
+            {
+                method: "onebot.sendMessage",
+                args: [
+                    "onebot:group:42",
+                    [
+                        { type: "at", data: { qq: "778899" } },
+                        { type: "text", data: { text: " hello" } },
+                    ],
+                    { replyTo: 9 },
+                ],
+            },
+            {
+                method: "onebot.sendAt",
+                args: ["onebot:group:42", ["778899", "223344"], "看下", { replyTo: 10 }],
+            },
+        ]);
+        assert.ok(outputs.some(line => line.includes("[QQ] sendMessage ok")));
+        assert.ok(outputs.some(line => line.includes("[QQ] sendAt ok")));
+        assert.ok(notifications.some(event => event.type === "system.agent_message_sent" && event.text === "@778899 hello"));
+        assert.ok(notifications.some(event => event.type === "system.agent_message_sent" && event.text === "@778899 @223344 看下"));
+    });
+
     it("allows only curated NapCat actions through adapter passthrough", async () => {
         const nc = makeNC();
         const adapter = new OneBotAdapter(makeConfig(), nc);

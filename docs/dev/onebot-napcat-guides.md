@@ -20,7 +20,7 @@ await onebot.useSystemUtilities();
 await onebot.callApi("get_group_info", { group_id: 123456 });
 ```
 
-`sendText()`、`sendMedia()`、`downloadMedia()` 这类一行就能表达用户意图的函数仍然常驻暴露。
+`sendText()`、`sendMessage()`、`sendAt()`、`sendMedia()`、`downloadMedia()` 这类一行就能表达用户意图的函数仍然常驻暴露。
 
 ## 顶层 brief API
 
@@ -32,6 +32,9 @@ await onebot.callApi("get_group_info", { group_id: 123456 });
 
 当前保留：
 
+- `mention`
+- `sendMessage`
+- `sendAt`（支持单个 QQ、数组或逗号分隔字符串；发送时会展开为多个 OneBot `at` 消息段）
 - `sendText`
 - `sendMedia`
 - `sendFile`

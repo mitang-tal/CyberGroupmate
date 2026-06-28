@@ -130,6 +130,83 @@ function getCaptionLength(value: unknown): number {
         : 0;
 }
 
+function normalizeOneBotMentionTarget(value: unknown): string {
+    const raw = String(value ?? "").trim();
+    if (!raw) return "";
+    if (raw.toLowerCase() === "all") return "all";
+    if (raw.startsWith("onebot:private:")) return raw.slice("onebot:private:".length);
+    if (raw.startsWith("onebot:")) return raw.slice("onebot:".length);
+    if (raw.startsWith("@")) return raw.slice(1);
+    return raw;
+}
+
+function normalizeOneBotMentionTargets(value: unknown): string[] {
+    const result: string[] = [];
+    const seen = new Set<string>();
+    const add = (target: string) => {
+        if (!target) return;
+        const key = target.toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        result.push(target);
+    };
+    const visit = (item: unknown): void => {
+        if (item == null) return;
+        if (Array.isArray(item)) {
+            for (const child of item) visit(child);
+            return;
+        }
+        const raw = String(item).trim();
+        if (!raw) return;
+        const cqMatches = [...raw.matchAll(/\[CQ:at,qq=([^,\]]+)/ig)];
+        if (cqMatches.length > 0) {
+            for (const match of cqMatches) add(normalizeOneBotMentionTarget(match[1]));
+            return;
+        }
+        if (/[,，、;；\s]/.test(raw)) {
+            for (const part of raw.split(/[,，、;；\s]+/)) {
+                add(normalizeOneBotMentionTarget(part));
+            }
+            return;
+        }
+        add(normalizeOneBotMentionTarget(raw));
+    };
+    visit(value);
+    return result;
+}
+
+function summarizeOneBotMessage(value: unknown): string {
+    if (typeof value === "string") return value;
+    if (!Array.isArray(value)) return String(value ?? "");
+    return value.map((segment) => {
+        if (!segment || typeof segment !== "object") return "";
+        const record = segment as Record<string, unknown>;
+        const type = String(record.type ?? "");
+        const data = record.data && typeof record.data === "object"
+            ? record.data as Record<string, unknown>
+            : {};
+        switch (type) {
+            case "text":
+                return String(data.text ?? "");
+            case "at": {
+                const qq = normalizeOneBotMentionTarget(data.qq ?? data.user_id ?? data.id);
+                return qq ? `@${qq}` : "@";
+            }
+            case "reply":
+                return `[reply:${String(data.id ?? data.message_id ?? "")}]`;
+            case "face":
+                return `[face:${String(data.id ?? "")}]`;
+            case "image":
+            case "record":
+            case "video":
+            case "file":
+                return `[${type}:${String(data.file ?? "")}]`;
+            default:
+                return type ? `[${type}]` : "";
+        }
+    }).join("");
+}
+
 function getSendIntent(platform: string, method: string, args: unknown[]): (InterruptedSendPayload & { textLength: number }) | null {
     const chatId = String(args[0] ?? "");
     if (!chatId) return null;
@@ -166,6 +243,20 @@ function getSendIntent(platform: string, method: string, args: unknown[]): (Inte
 
     if (platform === "onebot") {
         switch (method) {
+            case "onebot.sendMessage":
+            case "qq.sendMessage": {
+                const text = summarizeOneBotMessage(args[1]);
+                return { method, chatId, text, textLength: text.length };
+            }
+            case "onebot.sendAt":
+            case "qq.sendAt": {
+                const mentionText = normalizeOneBotMentionTargets(args[1])
+                    .map(qq => `@${qq}`)
+                    .join(" ");
+                const text = String(args[2] ?? "");
+                const rendered = `${mentionText}${text ? (text.startsWith(" ") ? text : ` ${text}`) : ""}`;
+                return { method, chatId, text: rendered, textLength: text.length };
+            }
             case "onebot.sendText":
             case "qq.sendText": {
                 const text = String(args[1] ?? "");
