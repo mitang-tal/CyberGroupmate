@@ -158,6 +158,26 @@ function mentionDedupPrefix(mentions: unknown): string {
         .join("");
 }
 
+function normalizeOneBotNativeAction(action: unknown): string {
+    return String(action ?? "").trim().replace(/^\/+/, "");
+}
+
+function isOneBotNativeSendAction(action: string): boolean {
+    return action === "send_msg" || action === "send_group_msg" || action === "send_private_msg";
+}
+
+function oneBotNativeTarget(action: string, params: Record<string, unknown>): string {
+    if ((action === "send_group_msg" || String(params.message_type ?? "") === "group") && params.group_id != null) {
+        return `onebot:group:${String(params.group_id)}`;
+    }
+    if ((action === "send_private_msg" || String(params.message_type ?? "") === "private") && params.user_id != null) {
+        return `onebot:private:${String(params.user_id)}`;
+    }
+    if (params.group_id != null) return `onebot:group:${String(params.group_id)}`;
+    if (params.user_id != null) return `onebot:private:${String(params.user_id)}`;
+    return action;
+}
+
 // ─── OneBot 客户端代理 ───
 
 export function createOneBotClientProxy(
@@ -212,7 +232,7 @@ export function createOneBotClientProxy(
         return wrapped;
     }
 
-    return {
+    const methods = {
         useMessages: async () => useOneBotGuide("useMessages"),
         useGroupAdministration: async () => useOneBotGuide("useGroupAdministration"),
         useFiles: async () => useOneBotGuide("useFiles"),
@@ -527,11 +547,77 @@ export function createOneBotClientProxy(
             return localPath;
         },
         callApi: async (action: string, params?: Record<string, unknown>) => {
-            const normalizedAction = String(action ?? "").trim().replace(/^\/+/, "");
+            const normalizedAction = normalizeOneBotNativeAction(action);
             if (!normalizedAction) throw new Error("onebot.callApi: action is required");
-            const result = await env.callHost("onebot.callApi", [normalizedAction, params ?? {}]);
-            env.emitOutput(`[QQ] callApi ok action=${normalizedAction}`);
-            return result;
+            return callNativeApi(normalizedAction, params ?? {}, "onebot.callApi");
         },
     };
+
+    async function callNativeApi(action: string, params: Record<string, unknown>, hostMethod = `onebot.${action}`): Promise<unknown> {
+        const normalizedAction = normalizeOneBotNativeAction(action);
+        if (!normalizedAction) throw new Error("onebot.callApi: action is required");
+        const normalizedParams = params && typeof params === "object" && !Array.isArray(params) ? params : {};
+        const text = isOneBotNativeSendAction(normalizedAction)
+            ? oneBotMessageToText((normalizedParams as { message?: OneBotMessage }).message ?? "")
+            : "";
+        const target = oneBotNativeTarget(normalizedAction, normalizedParams);
+
+        if (text && bannedWords.length > 0) {
+            const found = findBannedWords(text, bannedWords);
+            if (found.length > 0) {
+                const warning = buildBannedWordWarning(found, text);
+                env.emitOutput(warning);
+                env.notifyHost({
+                    type: "system.banned_word_blocked",
+                    scene: "onebot",
+                    chatId: target,
+                    text,
+                    foundWords: found,
+                    timestamp: Date.now(),
+                });
+                return null;
+            }
+        }
+
+        if (text && shouldBlockDuplicate(target, text)) {
+            const preview = text.length > 80 ? text.slice(0, 80) + "..." : text;
+            const warning = `[⚠ 运行时警告: 重复消息已拦截] 目标 chat=${target} 的消息 "${preview}" 与本次 session 中已发送的消息内容完全一致，已自动拦截。`;
+            env.emitOutput(warning);
+            env.notifyHost({
+                type: "system.duplicate_message_blocked",
+                scene: "onebot",
+                chatId: target,
+                text,
+                timestamp: Date.now(),
+            });
+            return null;
+        }
+
+        const result = await env.callHost(hostMethod, hostMethod === "onebot.callApi" ? [normalizedAction, normalizedParams] : [normalizedParams]);
+        if (text) {
+            recordSentIfDedupEnabled(target, text);
+            env.notifyHost({
+                type: "system.agent_message_sent",
+                scene: "onebot",
+                chatId: target,
+                messageId: typeof result === "object" && result && "message_id" in result ? (result as { message_id?: unknown }).message_id : undefined,
+                text,
+                messageSegments: Array.isArray(normalizedParams.message) ? normalizedParams.message : undefined,
+                timestamp: Date.now(),
+            });
+        }
+        env.emitOutput(formatOneBotAck(`[QQ] ${normalizedAction} ok`, result));
+        return result;
+    }
+
+    return new Proxy(methods, {
+        get(target, prop, receiver) {
+            if (typeof prop !== "string") return Reflect.get(target, prop, receiver);
+            if (prop in target) return Reflect.get(target, prop, receiver);
+            if (prop === "then" || prop === "catch" || prop === "finally" || prop === "toJSON") return undefined;
+            const action = normalizeOneBotNativeAction(prop);
+            if (!action) return undefined;
+            return async (params?: Record<string, unknown>) => callNativeApi(action, params ?? {});
+        },
+    });
 }

@@ -19,7 +19,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { Long } from "@mtcute/node";
-import { isAllowedTelegramMtcutePassthroughMethod } from "../core/telegram-mtcute-passthrough.js";
+import { isAllowedTelegramMtcutePassthroughMethod, isBlockedTelegramMtcuteNativeMethod } from "../core/telegram-mtcute-passthrough.js";
 
 const log = createLogger("telegram-adapter");
 
@@ -504,7 +504,7 @@ export class TelegramAdapter implements PlatformAdapter {
             case "telegram.sendText": {
                 const peer = await this.ensurePeerCached(args[0]);
                 const opts = this.normalizeReplyOpts(args[2]);
-                const textLen = typeof args[1] === "string" ? args[1].length : 0;
+                const textLen = this.telegramInputTextLength(args[1]);
                 await this.applyHumanizedDelay(String(args[0] ?? ""), textLen);
                 return this.normalizeMessage(
                     await this.client.sendText(peer, args[1], opts),
@@ -1014,8 +1014,22 @@ export class TelegramAdapter implements PlatformAdapter {
                 return this.handleMtcutePassthrough(["sendStoryReaction", ...args]);
             }
             default:
+                if (method.startsWith("telegram.")) {
+                    const methodName = method.slice("telegram.".length);
+                    if (methodName && methodName !== "mtcute") {
+                        return this.handleMtcutePassthrough([methodName, ...args], { allowAnyNativeMethod: true });
+                    }
+                }
                 throw new Error(`Unsupported TelegramAdapter call: ${method}`);
         }
+    }
+
+    private telegramInputTextLength(value: unknown): number {
+        if (typeof value === "string") return value.length;
+        if (value && typeof value === "object" && typeof (value as { text?: unknown }).text === "string") {
+            return (value as { text: string }).text.length;
+        }
+        return 0;
     }
 
     private async resolveInputUser(peer: unknown): Promise<unknown> {
@@ -1029,9 +1043,12 @@ export class TelegramAdapter implements PlatformAdapter {
         return this.client.resolveUser(this.normalizePeerArg(peer));
     }
 
-    private async handleMtcutePassthrough(args: unknown[]): Promise<unknown> {
+    private async handleMtcutePassthrough(args: unknown[], opts: { allowAnyNativeMethod?: boolean } = {}): Promise<unknown> {
         const methodName = String(args[0] ?? "");
-        if (!isAllowedTelegramMtcutePassthroughMethod(methodName)) {
+        if (isBlockedTelegramMtcuteNativeMethod(methodName)) {
+            throw new Error(`telegram.${methodName || "(empty)"} is not exposed through built-in guides or sandbox policy`);
+        }
+        if (!opts.allowAnyNativeMethod && !isAllowedTelegramMtcutePassthroughMethod(methodName)) {
             throw new Error(`telegram.${methodName || "(empty)"} is not exposed through built-in guides`);
         }
 
@@ -1041,15 +1058,6 @@ export class TelegramAdapter implements PlatformAdapter {
         }
 
         const rawArgs = args.slice(1);
-        if (rawArgs.some(arg => this.hasMtcuteLocalFileLikeArg(arg))) {
-            log.info("telegram.mtcute:prepareLocalFiles", { methodName });
-            const preparedArgs = await Promise.all(
-                rawArgs.map(arg => this.prepareMtcutePassthroughArg(arg, undefined, methodName)),
-            );
-            const result = await this.invokeMtcuteMethod(fn as (...callArgs: unknown[]) => unknown, preparedArgs);
-            return this.toSandboxMtcuteValue(result);
-        }
-
         const primaryArgs = rawArgs.map(arg => this.hydrateMtcuteArg(arg));
 
         try {
@@ -1199,23 +1207,6 @@ export class TelegramAdapter implements PlatformAdapter {
     private isFileLikeKey(key?: string): boolean {
         if (!key) return false;
         return /^(file|media|thumb|thumbnail|videoCover|sticker|photo)$/i.test(key);
-    }
-
-    private hasMtcuteLocalFileLikeArg(value: unknown, key?: string): boolean {
-        if (typeof value === "string") {
-            if (!this.isFileLikeKey(key)) return false;
-            const normalized = this.normalizeMtcuteStringArg(value, key);
-            if (/^(https?:|data:)/i.test(String(normalized))) return false;
-            if (/^file:/i.test(String(normalized))) return true;
-            return this.isLikelyOutgoingLocalMediaPath(String(normalized));
-        }
-        if (!value || typeof value !== "object") return false;
-        if (value instanceof Date || Buffer.isBuffer(value) || value instanceof Uint8Array || Long.isLong(value)) return false;
-        if (Array.isArray(value)) return value.some(item => this.hasMtcuteLocalFileLikeArg(item, key));
-
-        const raw = value as Record<string, unknown>;
-        if (typeof raw[MTCUTE_OBJECT_REF_KEY] === "string") return false;
-        return Object.entries(raw).some(([childKey, childValue]) => this.hasMtcuteLocalFileLikeArg(childValue, childKey));
     }
 
     private normalizeInlineBotResults(raw: unknown): Record<string, unknown> {

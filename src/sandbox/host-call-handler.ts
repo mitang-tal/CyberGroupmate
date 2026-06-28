@@ -19,6 +19,7 @@ import { createMemoryApi } from "../meta-sandbox/meta-api/memory.js";
 import type { AttentionAccumulator } from "../accumulator/attention-accumulator.js";
 import type { PlatformAdapter } from "../adapter/platform-adapter.js";
 import { getTelegramMtcuteWriteTarget, TELEGRAM_MTCUTE_WRITE_METHODS } from "../core/telegram-mtcute-passthrough.js";
+import { getOneBotNapCatWriteTarget, isOneBotNapCatWriteAction, normalizeOneBotNapCatAction } from "../core/onebot-napcat-passthrough.js";
 import { timestampInputToIso } from "../core/timezone.js";
 import { resolveTodoDueAt } from "../core/todo-expiry.js";
 import { prefixedShortUuid } from "../core/ids.js";
@@ -89,10 +90,22 @@ function isBoundChatWriteRestrictionEnabled(): boolean {
 
 function getRestrictedWriteTarget(method: string, args: unknown[], adapter: PlatformAdapter): unknown {
     if (adapter.getWriteMethods().includes(method)) return args[0];
+    if (adapter.platform === "telegram" && method.startsWith("telegram.")) {
+        const mtcuteMethod = method.slice("telegram.".length);
+        if (TELEGRAM_MTCUTE_WRITE_METHODS.has(mtcuteMethod)) {
+            return getTelegramMtcuteWriteTarget(mtcuteMethod, args);
+        }
+    }
     if (method === "telegram.mtcute") {
         const mtcuteMethod = String(args[0] ?? "");
         if (!TELEGRAM_MTCUTE_WRITE_METHODS.has(mtcuteMethod)) return undefined;
         return getTelegramMtcuteWriteTarget(mtcuteMethod, args.slice(1));
+    }
+    if (adapter.platform === "onebot") {
+        const native = getOneBotNativeParams(method, args);
+        if (native && isOneBotNapCatWriteAction(native.action)) {
+            return getOneBotNapCatWriteTarget(native.action, native.params);
+        }
     }
     return undefined;
 }
@@ -118,6 +131,28 @@ function enforceBackgroundWriteRestriction(method: string, args: unknown[], adap
             }
         }
     }
+    if (adapter.platform === "telegram" && method.startsWith("telegram.")) {
+        const mtcuteMethod = method.slice("telegram.".length);
+        if (TELEGRAM_MTCUTE_WRITE_METHODS.has(mtcuteMethod)) {
+            const target = getTelegramMtcuteWriteTarget(mtcuteMethod, args);
+            if (target != null && !isSelfTarget(target)) {
+                throw new Error(
+                    `[Background sandbox] ${method} 不允许操作其他 chat，只允许自操作。`,
+                );
+            }
+        }
+    }
+    if (adapter.platform === "onebot") {
+        const native = getOneBotNativeParams(method, args);
+        if (native && isOneBotNapCatWriteAction(native.action)) {
+            const target = getOneBotNapCatWriteTarget(native.action, native.params);
+            if (target == null || !isSelfTarget(target)) {
+                throw new Error(
+                    `[Background sandbox] ${method} 不允许：请使用 notify 工具发送消息。`,
+                );
+            }
+        }
+    }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -128,6 +163,40 @@ function getCaptionLength(value: unknown): number {
     return value && typeof value === "object" && "caption" in value && typeof (value as { caption?: unknown }).caption === "string"
         ? ((value as { caption: string }).caption.length)
         : 0;
+}
+
+function getTelegramInputText(value: unknown): string {
+    if (typeof value === "string") return value;
+    if (value && typeof value === "object" && "text" in value && typeof (value as { text?: unknown }).text === "string") {
+        return (value as { text: string }).text;
+    }
+    return String(value ?? "");
+}
+
+function getDiscordMessageContent(value: unknown): string {
+    if (typeof value === "string") return value;
+    if (value && typeof value === "object" && "content" in value && typeof (value as { content?: unknown }).content === "string") {
+        return (value as { content: string }).content;
+    }
+    return "";
+}
+
+function getOneBotNativeParams(method: string, args: unknown[]): { action: string; params: unknown } | null {
+    if (method === "onebot.callApi" || method === "qq.callApi") {
+        return { action: normalizeOneBotNapCatAction(String(args[0] ?? "")), params: args[1] };
+    }
+    if (method.startsWith("onebot.")) {
+        return { action: normalizeOneBotNapCatAction(method.slice("onebot.".length)), params: args[0] };
+    }
+    if (method.startsWith("qq.")) {
+        return { action: normalizeOneBotNapCatAction(method.slice("qq.".length)), params: args[0] };
+    }
+    return null;
+}
+
+function getOneBotNativeMessageText(params: unknown): string {
+    const rec = params && typeof params === "object" ? params as Record<string, unknown> : {};
+    return summarizeOneBotMessage(rec.message);
 }
 
 function normalizeOneBotMentionTarget(value: unknown): string {
@@ -214,7 +283,7 @@ function getSendIntent(platform: string, method: string, args: unknown[]): (Inte
     if (platform === "telegram") {
         switch (method) {
             case "telegram.sendText": {
-                const text = String(args[1] ?? "");
+                const text = getTelegramInputText(args[1]);
                 return { method, chatId, text, textLength: text.length };
             }
             case "telegram.sendMedia": {
@@ -235,6 +304,18 @@ function getSendIntent(platform: string, method: string, args: unknown[]): (Inte
             case "telegram.sendPoll": {
                 const text = String(args[1] ?? "");
                 return { method, chatId, text: `[poll:${text}]`, textLength: text.length };
+            }
+            default:
+                return null;
+        }
+    }
+
+    if (platform === "discord") {
+        switch (method) {
+            case "discord.send":
+            case "discord.createMessage": {
+                const text = getDiscordMessageContent(args[1]);
+                return { method, chatId, text: text || "[message]", textLength: text.length };
             }
             default:
                 return null;
@@ -282,8 +363,14 @@ function getSendIntent(platform: string, method: string, args: unknown[]): (Inte
             case "onebot.sendFace":
             case "qq.sendFace":
                 return { method, chatId, text: `[face:${String(args[1] ?? "")}]`, textLength: 0 };
-            default:
-                return null;
+            default: {
+                const native = getOneBotNativeParams(method, args);
+                if (!native) return null;
+                const target = getOneBotNapCatWriteTarget(native.action, native.params);
+                if (!target) return null;
+                const text = getOneBotNativeMessageText(native.params);
+                return { method, chatId: target, text: text || `[${native.action}]`, textLength: text.length };
+            }
         }
     }
 

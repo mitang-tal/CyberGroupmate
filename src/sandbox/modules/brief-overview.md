@@ -10,8 +10,10 @@ shared/cron.d.ts — 定时任务管理模块类型定义 通过 Host 侧 Global
 ## discord
 discord.d.ts — Discord 平台 API 系统注入的 Discord host proxy 接口。 提供给 Agent 在 sandbox 执行时作为 TypeScript 强类型上下文参考。 平台连接与消息监听由宿主侧 DiscordAdapter 管理。
 
-- `sendText`: 发送文本消息到指定频道。
-- `sendMedia`: 发送媒体消息（附件）到指定频道。支持 URL 和本地文件路径（支持绝对路径或基于 cwd 工作区的相对路径）。
+- `send`: Discord.js 原生 TextBasedChannel.send(options) 风格入口。 channelId 由 CyberGroupmate 用来定位频道；options 保持 discord.js MessageCreateOptions 形状。 旧 sendText/sendMedia wrapper 只保留兼容，不再扩展新 Discord 参数。
+- `createMessage`: Discord REST create message 风格别名，参数同 discord.send(channelId, options)。
+- `sendText`: 发送文本消息到指定频道。兼容 wrapper，冻结为兜底用法；新参数优先用 discord.send。
+- `sendMedia`: 发送媒体消息（附件）到指定频道。兼容 wrapper，冻结为兜底用法；新参数优先用 discord.send。 支持 URL 和本地文件路径（支持绝对路径或基于 cwd 工作区的相对路径）。
 - `sendReaction`: 对指定消息添加表情反应。支持 Unicode emoji、自定义 emoji ID、name:id 或 Discord emoji mention 格式。
 - `sendTyping`: 在频道中显示 "正在输入..." 状态。
 
@@ -74,14 +76,20 @@ onebot.d.ts — QQ / OneBot 平台 API 系统注入的 OneBot host proxy 接口�
 - `useUsersAndProfile`: 加载 OneBot/NapCat 用户与资料指南。用于好友列表、陌生人资料、最近会话、点赞、好友请求和账号资料等成组能力；调用本方法只披露指南。
 - `useSystemUtilities`: 加载 OneBot/NapCat 工具指南。用于版本/状态探测、发送能力检查、OCR、URL 安全检查、频道资料和 AI 语音等低频能力；调用本方法只披露指南。
 - `getMessage`: 根据 OneBot 消息 ID 获取消息详情。
-- `mention`: 构造 OneBot 标准 @ 消息段。只构造 segment，不会发送。
-- `sendMessage`: 发送 OneBot 标准消息。message 可以是 CQ 字符串或消息段数组。 用于文本、@、回复、图片、语音、视频、文件、表情等混合消息。
-- `sendAt`: 在群聊里 @ 指定 QQ 用户并追加文本。userId 支持裸 QQ 号、onebot:<qq>、onebot:private:<qq>、"all"、数组或逗号分隔字符串。
-- `sendText`: 发送文本消息。
-- `sendMedia`: 发送媒体消息。支持本地文件路径或 URL。 当 `type` 为 `audio` / `voice` 时，QQ/NapCat 不支持 `replyTo`，该参数会被忽略。
-- `sendFile`: 发送文件。
-- `sendSticker`: 发送贴纸或图片表情。
-- `sendFace`: 发送 QQ 系统表情（CQ face）。
+- `callApi`: 调用 OneBot/NapCat 原生 action，参数保持平台原始 params 对象。 这是新增能力的首选入口；旧 sendText/sendMedia wrapper 只保留兼容，不再扩展新平台参数。
+- `send_group_msg`: OneBot 原生 send_group_msg(params)。参数名和行为保持 OneBot/NapCat 原样。
+- `send_private_msg`: OneBot 原生 send_private_msg(params)。参数名和行为保持 OneBot/NapCat 原样。
+- `send_msg`: OneBot 原生 send_msg(params)，可用 message_type/group_id/user_id 选择目标。
+- `delete_msg`: OneBot 原生 delete_msg(params)。
+- `get_msg`: OneBot 原生 get_msg(params)。
+- `mention`: 构造 OneBot 标准 @ 消息段。只构造 segment，不会发送。兼容辅助函数，冻结为兜底用法。
+- `sendMessage`: 发送 OneBot 标准消息。message 可以是 CQ 字符串或消息段数组。兼容辅助函数，冻结为兜底用法。 用于文本、@、回复、图片、语音、视频、文件、表情等混合消息。
+- `sendAt`: 在群聊里 @ 指定 QQ 用户并追加文本。兼容辅助函数，冻结为兜底用法。 userId 支持裸 QQ 号、onebot:<qq>、onebot:private:<qq>、"all"、数组或逗号分隔字符串。
+- `sendText`: 发送文本消息。兼容 wrapper，冻结为兜底用法；新参数优先用 send_group_msg/send_private_msg/callApi。
+- `sendMedia`: 发送媒体消息。兼容 wrapper，冻结为兜底用法；新参数优先用 OneBot 原生 action。 支持本地文件路径或 URL。当 `type` 为 `audio` / `voice` 时，QQ/NapCat 不支持 `replyTo`，该参数会被忽略。
+- `sendFile`: 发送文件。兼容 wrapper，冻结为兜底用法；新参数优先用 OneBot 原生 action。
+- `sendSticker`: 发送贴纸或图片表情。兼容 wrapper，冻结为兜底用法；新参数优先用 OneBot 原生 action。
+- `sendFace`: 发送 QQ 系统表情（CQ face）。兼容 wrapper，冻结为兜底用法；新参数优先用 OneBot 原生 action。
 - `sendTyping`: OneBot 无 typing 指示，此方法为 no-op。
 - `deleteMessages`: 撤回消息。
 - `downloadMedia`: 下载 QQ 媒体到 CyberGroupmate 本机 workspace/Downloads/。 mediaRef 可以是图片/媒体 file、URL、base64/data URL，也可以直接传 OneBot 消息 ID； 传消息 ID 时会通过 NapCat get_msg 解析消息里的图片/媒体段。
@@ -140,7 +148,7 @@ telegram.d.ts — Telegram 平台 API 这是系统注入的 Telegram host proxy 
 - `useInvites`: 加载邀请链接与入群请求指南。用于创建/编辑/撤销邀请链接、查看邀请成员、处理 join request 或预览邀请链接；调用本方法只披露指南。
 - `useForumTopics`: 加载论坛话题指南。用于确认群是否开启 Forum、列出话题或定位 topic id；调用本方法只披露相关 API。
 - `useMediaDownload`: 加载媒体下载指南。包含：1) 用 fs.writeFileBinary() 正确保存 base64 buffer 的方法；2) GIF/短视频抽帧分析时避免 60s 超时的策略（默认 4-6 帧、复用已有文件、先发进度）。遇到 downloadMedia 或 GIF 分析相关问题时调用。
-- `sendText`: 发送普通文本消息
+- `sendText`: mtcute 原生 sendText(chatId, text, params?)。text 支持 string 或 { text, entities }，params 保留 mtcute CommonSendParams 及新增字段。
 - `sendMedia`: 发送媒体消息。支持 URL 和本地文件路径（支持绝对路径或基于 cwd 工作区的相对路径）。
 - `sendFile`: 发送磁盘文件到聊天。支持绝对路径或基于 cwd 的相对路径。host 侧读取文件并上传。始终作为文件/文档发送。
 - `sendSticker`: 发送贴纸。通过 uniqueFileId 引用本地已缓存的贴纸文件。

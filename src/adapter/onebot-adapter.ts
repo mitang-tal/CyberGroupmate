@@ -15,7 +15,7 @@ import { createLogger } from "../core/logger.js";
 import {
     getOneBotNapCatGuideGroupForAction,
     getOneBotNapCatWriteTarget,
-    isAllowedOneBotNapCatAction,
+    isBlockedOneBotNapCatAction,
     normalizeOneBotNapCatAction,
 } from "../core/onebot-napcat-passthrough.js";
 import { WebSocket } from "ws";
@@ -397,7 +397,7 @@ export class OneBotAdapter implements PlatformAdapter {
                 const params = rawParams && typeof rawParams === "object" && !Array.isArray(rawParams)
                     ? rawParams as Record<string, unknown>
                     : {};
-                return this.callNapCatGuideAction(action, params);
+                return this.callNapCatNativeAction(action, params);
             }
             case "onebot.sendMessage":
             case "qq.sendMessage": {
@@ -481,8 +481,24 @@ export class OneBotAdapter implements PlatformAdapter {
                 };
             }
             default:
+                {
+                    const nativeAction = this.nativeActionFromMethod(method);
+                    if (nativeAction) {
+                        const rawParams = args[0];
+                        const params = rawParams && typeof rawParams === "object" && !Array.isArray(rawParams)
+                            ? rawParams as Record<string, unknown>
+                            : {};
+                        return this.callNapCatNativeAction(nativeAction, params);
+                    }
+                }
                 throw new Error(`Unsupported OneBot method: ${method}`);
         }
+    }
+
+    private nativeActionFromMethod(method: string): string | undefined {
+        if (method.startsWith("onebot.")) return normalizeOneBotNapCatAction(method.slice("onebot.".length));
+        if (method.startsWith("qq.")) return normalizeOneBotNapCatAction(method.slice("qq.".length));
+        return undefined;
     }
 
     private async getMessage(messageId: string): Promise<unknown> {
@@ -512,11 +528,11 @@ export class OneBotAdapter implements PlatformAdapter {
         };
     }
 
-    private async callNapCatGuideAction(action: string, params: Record<string, unknown>): Promise<unknown> {
+    private async callNapCatNativeAction(action: string, params: Record<string, unknown>): Promise<unknown> {
         const normalizedAction = normalizeOneBotNapCatAction(action);
         if (!normalizedAction) throw new Error("onebot.callApi: action is required");
-        if (!isAllowedOneBotNapCatAction(normalizedAction)) {
-            throw new Error(`onebot.callApi: NapCat action '${normalizedAction}' is not exposed through built-in guides`);
+        if (isBlockedOneBotNapCatAction(normalizedAction)) {
+            throw new Error(`onebot.callApi: NapCat action '${normalizedAction}' is blocked by sandbox policy`);
         }
 
         const targetChatId = getOneBotNapCatWriteTarget(normalizedAction, params);
@@ -526,7 +542,7 @@ export class OneBotAdapter implements PlatformAdapter {
 
         const preparedParams = this.prepareNapCatGuideParams(normalizedAction, params);
         const group = getOneBotNapCatGuideGroupForAction(normalizedAction);
-        log.debug("OneBot NapCat passthrough", { action: normalizedAction, guide: group });
+        log.debug("OneBot NapCat native call", { action: normalizedAction, guide: group });
         return this.callAction(normalizedAction, preparedParams);
     }
 
