@@ -20,6 +20,7 @@ function scopeByChatId(ctx: ResolveContext): string | undefined {
 
 interface MetaHistoricalData {
     sessionDigests: Array<{
+        id?: string;
         createdAt: string;
         content: string;
         kind?: string;
@@ -369,11 +370,11 @@ export const metaHistoricalProvider: SectionProvider<MetaHistoricalData> = {
             };
         }
 
-        const committedSet = new Set(
-            committed.sessionDigests.map((item) => `${item.createdAt}::${item.content}`)
-        );
+        const digestKey = (item: MetaHistoricalData["sessionDigests"][number]) =>
+            item.id ?? `${item.createdAt}::${item.content}`;
+        const committedSet = new Set(committed.sessionDigests.map(digestKey));
         const deltaDigests = current.sessionDigests.filter(
-            (item) => !committedSet.has(`${item.createdAt}::${item.content}`)
+            (item) => !committedSet.has(digestKey(item))
         );
 
         return {

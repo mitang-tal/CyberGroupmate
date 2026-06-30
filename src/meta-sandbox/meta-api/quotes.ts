@@ -5,7 +5,6 @@ import { loadConfig } from "../../core/config.js";
 import { formatTsForPrompt } from "../../core/timezone.js";
 import { isPrivateChat, makePolicyContext, scrubRowsByVisibility, type PolicyContext } from "../../core/visibility-policy.js";
 import { createMemoryApi, scrubDossiers } from "./memory.js";
-import type { GlobalState } from "../../main-agent/global-state.js";
 import type { MemoryStoreV2, RecentMessageEntry, TopicNode, TopicSearchResult } from "../../memory-v2/index.js";
 
 /**
@@ -71,7 +70,6 @@ export interface QuoteResolverDeps {
         "getRecentTopics" |
         "queryMessages"
     >;
-    globalState?: Pick<GlobalState, "getSessionDigests">;
     workspaceRoot?: string;
     getOutput?: (index: number) => QuoteExecutionOutput | null | undefined;
     /**
@@ -316,7 +314,7 @@ function resolveOutputQuote(ref: Extract<ParsedQuoteRef, { kind: "output" }>, de
 }
 
 async function resolvePersonQuote(ref: Extract<ParsedQuoteRef, { kind: "person" }>, deps: QuoteResolverDeps): Promise<ResolvedQuoteItem> {
-    const memoryApi = createMemoryApi(deps.memory as MemoryStoreV2, deps.globalState);
+    const memoryApi = createMemoryApi(deps.memory as MemoryStoreV2);
     const result = await memoryApi.getPersonDossier(ref.query, {
         chatId: ref.chatId,
         limit: 3,

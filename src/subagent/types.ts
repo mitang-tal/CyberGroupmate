@@ -512,6 +512,7 @@ export type SessionDigestKind =
     | "dispatch_done"
     | "background_notify"
     | "harness_callback"
+    | "attention_enqueue"
     | "consciousness_tick"
     | "system"
     | "legacy";

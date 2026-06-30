@@ -15,7 +15,6 @@ import type {
     UserProfileSearchResult,
     MemoryStoreV2,
 } from "../../memory-v2/index.js";
-import type { GlobalState } from "../../main-agent/global-state.js";
 import { timestampInputToIso } from "../../core/timezone.js";
 import { isPrivateChat, scrubAssociatedMemoriesByVisibility, scrubFactsByVisibility, scrubRowsByVisibility, type PolicyContext } from "../../core/visibility-policy.js";
 
@@ -108,7 +107,6 @@ type MemoryEntityReader = Pick<MemoryStoreV2,
     | "getTimeline"
 >;
 
-type SessionDigestReader = Pick<GlobalState, "getSessionDigests">;
 
 const DEFAULT_SEARCH_LIMIT = 10;
 const MAX_SEARCH_LIMIT = 50;
@@ -156,7 +154,7 @@ export function scrubDossiers(dossiers: MemoryPersonDossier[] | undefined, ctx: 
     }
 }
 
-export function createMemoryApi(memory: MemoryEntityReader, globalState?: SessionDigestReader) {
+export function createMemoryApi(memory: MemoryEntityReader) {
     return {
         resolvePerson: async (
             query: string,
@@ -278,9 +276,7 @@ export function createMemoryApi(memory: MemoryEntityReader, globalState?: Sessio
                 .slice(0, limit);
             const topicKeywords = [...new Set(recentSessions.flatMap((session) => session.keywords))]
                 .slice(0, limit * 5);
-            const sessionDigests = typeof memory.searchAgentMemory === "function"
-                ? memory.searchAgentMemory(normalizedQuery, { chatId: options.chatId, after, before, limit })
-                : searchSessionDigests(globalState, normalizedQuery, limit);
+            const sessionDigests = memory.searchAgentMemory(normalizedQuery, { chatId: options.chatId, after, before, limit });
 
             return {
                 identities,
@@ -590,20 +586,3 @@ function normalizeForMatch(value: string | undefined): string {
     return (value ?? "").trim().toLocaleLowerCase();
 }
 
-function searchSessionDigests(
-    globalState: SessionDigestReader | undefined,
-    query: string,
-    limit: number,
-): SessionDigestEntry[] {
-    if (!globalState) {
-        return [];
-    }
-    const lowered = query.toLocaleLowerCase();
-    return globalState.getSessionDigests()
-        .filter((digest) =>
-            digest.content.toLocaleLowerCase().includes(lowered)
-            || digest.createdAt.toLocaleLowerCase().includes(lowered)
-        )
-        .slice(-limit)
-        .reverse();
-}

@@ -69,7 +69,7 @@ export function registerNotifyTools(mcp: McpServer, deps: McpServerDeps): void {
                     ? `${input.summary}\nrequestedAction: ${input.requestedAction}`
                     : input.summary;
                 deps.globalState.addSessionDigest(content, {
-                    kind: "harness_callback",
+                    kind: "attention_enqueue",
                     actorType: "harness",
                     actorId: input.actorId,
                     sourceChatId: input.sourceChatId ?? "__background__",
@@ -94,7 +94,13 @@ export function registerNotifyTools(mcp: McpServer, deps: McpServerDeps): void {
                         type: "attention_enqueue",
                         id: `attention:${now}`,
                         description: input.summary,
-                        ...input,
+                        actorId: input.actorId,
+                        triggerReason: input.triggerReason,
+                        requestedAction: input.requestedAction,
+                        sourceChatId: input.sourceChatId,
+                        taskId: input.taskId,
+                        runId: input.runId,
+                        priority: input.priority,
                     },
                 });
                 return { content: [{ type: "text" as const, text: JSON.stringify({ delivered: true, target: "meta", method: "attention_item" }) }] };
@@ -176,13 +182,35 @@ export function registerNotifyTools(mcp: McpServer, deps: McpServerDeps): void {
 
     mcp.tool(
         "harness_enqueue",
-        "Enqueue work to the consciousness/background harness.",
+        "Enqueue work to the consciousness/background harness with structured metadata.",
         {
             content: z.string().describe("Task content for the harness"),
             source: z.string().optional().describe("Source identifier"),
+            actorId: z.string().optional().describe("Harness/actor identifier"),
+            runId: z.string().optional().describe("Harness run id"),
+            triggerReason: z.string().optional().describe("Why this work is being enqueued"),
+            sourceChatId: z.string().optional().describe("Source chat/context id"),
+            sourceChatTitle: z.string().optional().describe("Human-readable source chat title"),
+            taskId: z.string().optional().describe("Related task id"),
+            metadata: z.record(z.unknown()).optional().describe("Additional structured context"),
         },
-        async ({ content, source }) => {
-            const result = await deps.metaApi.background.enqueue(content, source ?? "mcp");
+        async (input) => {
+            deps.globalState.addSessionDigest(`[harness_enqueue] ${input.content}`, {
+                kind: "consciousness_tick",
+                actorType: "harness",
+                actorId: input.actorId ?? input.source ?? "mcp",
+                sourceChatId: input.sourceChatId,
+                sourceChatTitle: input.sourceChatTitle,
+                targetChatId: "__harness__",
+                taskId: input.taskId,
+                runId: input.runId,
+                tags: ["harness", "enqueue"],
+                metadata: {
+                    triggerReason: input.triggerReason,
+                    ...(input.metadata ?? {}),
+                },
+            });
+            const result = await deps.metaApi.background.enqueue(input.content, input.source ?? "mcp");
             return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
         },
     );
