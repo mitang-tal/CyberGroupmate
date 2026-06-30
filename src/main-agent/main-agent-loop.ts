@@ -30,6 +30,7 @@ import { markChatAsRead } from "../adapter/read-receipts.js";
 import type { MetaSessionHandler } from "./meta-session-handler.js";
 import { shortUuid } from "../core/ids.js";
 import { truncateForPrompt } from "../core/text-safety.js";
+import type { HarnessNotify } from "../harness/types.js";
 
 const log = createLogger("main-agent-loop");
 const DISPATCH_SOURCE_NOTIFICATION_TASK_PREFIX = "dispatch-notify:";
@@ -79,6 +80,7 @@ export class MainAgentLoop {
     /** attend 完成后的回调（metrics 使用） */
     private onAttendCompleteCallback: ((chatId: string, decisions: AttendResult) => void) | null = null;
     private proactiveIdleHandler: ((payload: { id: string; description: string; enqueuedAt: number }) => boolean) | null = null;
+    private harnessDispatchCallbackHandler: ((payload: HarnessNotify) => boolean) | null = null;
 
     constructor(
         accumulator: AttentionAccumulator,
@@ -436,6 +438,10 @@ export class MainAgentLoop {
         dispatchedTask: DispatchedSubagentTaskRecord,
         callback: SubagentCallback,
     ): void {
+        if (dispatchedTask.sourceType === "harness") {
+            this.enqueueHarnessDispatchCallback(dispatchedTask, callback);
+            return;
+        }
         if (dispatchedTask.sourceType !== "subagent" || !dispatchedTask.sourceChatId) {
             return;
         }
@@ -488,6 +494,44 @@ export class MainAgentLoop {
         });
     }
 
+    private enqueueHarnessDispatchCallback(
+        dispatchedTask: DispatchedSubagentTaskRecord,
+        callback: SubagentCallback,
+    ): void {
+        if (!this.harnessDispatchCallbackHandler) {
+            log.warn("harness dispatch callback skipped: harness handler unavailable", {
+                sourceChatId: dispatchedTask.sourceChatId,
+                targetChatId: dispatchedTask.chatId,
+                taskId: dispatchedTask.taskId,
+            });
+            return;
+        }
+        const handled = this.harnessDispatchCallbackHandler({
+            content: formatHarnessDispatchCallbackContent(dispatchedTask, callback),
+            source: "dispatch-callback",
+            actorId: dispatchedTask.sourceChatId ?? "harness",
+            runId: dispatchedTask.sourceRunId,
+            triggerReason: "subagent_dispatch_callback",
+            sourceChatId: dispatchedTask.sourceChatId,
+            taskId: dispatchedTask.taskId,
+            metadata: {
+                targetChatId: dispatchedTask.chatId,
+                status: callback.status,
+                summary: callback.summary,
+                error: callback.error,
+                sentMessages: callback.sentMessages,
+            },
+        });
+        if (handled) {
+            log.info("harness dispatch callback enqueued", {
+                sourceChatId: dispatchedTask.sourceChatId,
+                targetChatId: dispatchedTask.chatId,
+                taskId: dispatchedTask.taskId,
+                runId: dispatchedTask.sourceRunId,
+            });
+        }
+    }
+
     /**
      * 获取 tick 计数
      */
@@ -511,6 +555,10 @@ export class MainAgentLoop {
 
     setProactiveIdleHandler(handler: ((payload: { id: string; description: string; enqueuedAt: number }) => boolean) | null): void {
         this.proactiveIdleHandler = handler;
+    }
+
+    setHarnessDispatchCallbackHandler(handler: ((payload: HarnessNotify) => boolean) | null): void {
+        this.harnessDispatchCallbackHandler = handler;
     }
 
     private shouldTriggerProactiveIdle(now: number): boolean {
@@ -822,6 +870,36 @@ function formatDispatchSourceNotificationPrompt(
         "- 根据这个结果决定是否需要继续跟进、再次派发、更新 ctx/todo，或向当前群同步。",
         "- 如果不需要公开回应，不要调用平台发送 API；只写清 SESSION_DIGEST 后结束。",
         "- 这条通知本身不会再主动推给 Meta；系统已经把 source/target/result 写入全局 session digest。",
+    ].filter((line) => line !== "").join("\n");
+}
+
+function formatHarnessDispatchCallbackContent(
+    task: DispatchedSubagentTaskRecord,
+    callback: SubagentCallback,
+): string {
+    const sentMessages = callback.sentMessages?.length
+        ? callback.sentMessages.map((msg) => `- ${msg.messageId ? `[${msg.messageId}] ` : ""}${msg.text}`).join("\n")
+        : "- (目标 Subagent 没有发送公开消息)";
+    const error = callback.error ? `\nerror: ${callback.error}` : "";
+    return [
+        "[Harness Dispatch Result]",
+        `sourceActor: ${task.sourceChatId ?? "harness"}`,
+        task.sourceRunId ? `sourceRunId: ${task.sourceRunId}` : "",
+        `targetChatId: ${task.chatId}`,
+        `targetTaskId: ${task.taskId}`,
+        `status: ${callback.status}`,
+        `originalDirection: ${task.contentDirection}`,
+        "",
+        "targetSummary:",
+        callback.summary,
+        error,
+        "",
+        "targetSentMessages:",
+        sentMessages,
+        "",
+        "处理要求：",
+        "- 根据结果决定是否继续派发、callback 给 Meta、写入 digest，或结束本轮意识流。",
+        "- 不要直接在群/私聊发消息；需要对话时继续走 dispatch/notify/attention 工具。",
     ].filter((line) => line !== "").join("\n");
 }
 

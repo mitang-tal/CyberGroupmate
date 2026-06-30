@@ -56,6 +56,7 @@ interface DispatchedTaskStatus {
     sourceType?: "meta" | "subagent" | "harness";
     sourceChatId?: string;
     sourceTaskId?: string;
+    sourceRunId?: string;
     contentDirection: string;
     toneGuidance?: string;
     quotes?: string[];

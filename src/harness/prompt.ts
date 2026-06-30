@@ -22,9 +22,36 @@ export function selectPendingNotifications(pending: HarnessNotify[]): HarnessNot
 /** 渲染 pending 通知文件内容（写入 PENDING_FILE） */
 export function renderPendingFile(pending: HarnessNotify[]): string {
     const items = pending
-        .map((n, i) => `${i + 1}. ${n.source ? `[来自 ${n.source}] ` : ""}${n.content}`)
+        .map((n, i) => formatPendingNotification(n, i))
         .join("\n");
     return `# 有人找你\n\n这些是启动前积攒的通知：\n\n${items}\n`;
+}
+
+function formatPendingNotification(notify: HarnessNotify, index: number): string {
+    const lines = [`${index + 1}. ${notify.source ? `[来自 ${notify.source}] ` : ""}${notify.content}`];
+    const context = [
+        notify.actorId ? `actorId=${notify.actorId}` : "",
+        notify.runId ? `runId=${notify.runId}` : "",
+        notify.triggerReason ? `triggerReason=${notify.triggerReason}` : "",
+        notify.sourceChatId ? `sourceChatId=${notify.sourceChatId}` : "",
+        notify.sourceChatTitle ? `sourceChatTitle=${notify.sourceChatTitle}` : "",
+        notify.taskId ? `taskId=${notify.taskId}` : "",
+    ].filter(Boolean);
+    if (context.length > 0) {
+        lines.push(`   context: ${context.join("；")}`);
+    }
+    if (notify.metadata && Object.keys(notify.metadata).length > 0) {
+        lines.push(`   metadata: ${safeStringify(notify.metadata)}`);
+    }
+    return lines.join("\n");
+}
+
+function safeStringify(value: unknown): string {
+    try {
+        return JSON.stringify(value);
+    } catch {
+        return String(value);
+    }
 }
 
 export function buildSystemPrompt(

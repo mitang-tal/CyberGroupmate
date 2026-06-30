@@ -1289,6 +1289,9 @@ async function main(): Promise<void> {
             harnessManager!.enqueue({
                 content: `consciousness_tick: ${payload.description}`,
                 source: "proactive-idle",
+                actorId: "main-loop",
+                triggerReason: "proactive_idle",
+                metadata: { idleId: payload.id },
             });
             globalState.addSessionDigest(`[CONSCIOUSNESS_TICK] ${payload.description}`, {
                 kind: "consciousness_tick",
@@ -1299,6 +1302,10 @@ async function main(): Promise<void> {
                 tags: ["consciousness", "idle"],
                 metadata: { idleId: payload.id },
             });
+            return true;
+        });
+        mainLoop.setHarnessDispatchCallbackHandler((payload) => {
+            harnessManager!.enqueue(payload);
             return true;
         });
         if (dashboardDeps) dashboardDeps.harnessManager = harnessManager;

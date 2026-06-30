@@ -210,7 +210,15 @@ export function registerNotifyTools(mcp: McpServer, deps: McpServerDeps): void {
                     ...(input.metadata ?? {}),
                 },
             });
-            const result = await deps.metaApi.background.enqueue(input.content, input.source ?? "mcp");
+            const result = await deps.metaApi.background.enqueue(input.content, input.source ?? "mcp", {
+                actorId: input.actorId,
+                runId: input.runId,
+                triggerReason: input.triggerReason,
+                sourceChatId: input.sourceChatId,
+                sourceChatTitle: input.sourceChatTitle,
+                taskId: input.taskId,
+                metadata: input.metadata,
+            });
             return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
         },
     );

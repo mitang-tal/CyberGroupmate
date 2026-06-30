@@ -44,8 +44,8 @@ function createToolHarness() {
                 },
             },
             background: {
-                enqueue: async (content: string, source: string) => {
-                    harnessTasks.push({ content, source });
+                enqueue: async (content: string, source: string, options?: unknown) => {
+                    harnessTasks.push({ content, source, options });
                     return { queued: true, id: "harness-1" };
                 },
                 getStatus: async () => ({ running: false, pending: harnessTasks.length }),
@@ -78,7 +78,7 @@ describe("MCP notify/consciousness tools", () => {
 
         assert.match(result.content[0]!.text, /"delivered":true/);
         assert.equal(digests.length, 1);
-        assert.equal(digests[0]!.options.kind, "harness_callback");
+        assert.equal(digests[0]!.options.kind, "attention_enqueue");
         assert.equal(digests[0]!.options.actorType, "harness");
         assert.equal(digests[0]!.options.actorId, "harness:test");
         assert.equal(digests[0]!.options.sourceChatId, "telegram:g1");
@@ -122,10 +122,25 @@ describe("MCP notify/consciousness tools", () => {
         const enqueued = await tools.get("harness_enqueue")!.handler({
             content: "consciousness_tick: inspect pending thoughts",
             source: "test",
+            actorId: "harness:test",
+            runId: "run-h",
+            triggerReason: "manual audit",
         }) as { content: Array<{ text: string }> };
         const status = await tools.get("harness_status")!.handler({}) as { content: Array<{ text: string }> };
 
-        assert.deepEqual(harnessTasks, [{ content: "consciousness_tick: inspect pending thoughts", source: "test" }]);
+        assert.deepEqual(harnessTasks, [{
+            content: "consciousness_tick: inspect pending thoughts",
+            source: "test",
+            options: {
+                actorId: "harness:test",
+                runId: "run-h",
+                triggerReason: "manual audit",
+                sourceChatId: undefined,
+                sourceChatTitle: undefined,
+                taskId: undefined,
+                metadata: undefined,
+            },
+        }]);
         assert.match(enqueued.content[0]!.text, /"queued": true/);
         assert.match(status.content[0]!.text, /"pending": 1/);
     });

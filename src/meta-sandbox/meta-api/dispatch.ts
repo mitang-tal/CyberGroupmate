@@ -145,6 +145,7 @@ export function createDispatchApi(deps: DispatchApiDeps) {
                 sourceType: source.type,
                 sourceChatId: source.chatId,
                 sourceTaskId: source.taskId,
+                sourceRunId: source.runId,
                 contentDirection: taskSpec.contentDirection,
                 toneGuidance: taskSpec.toneGuidance,
                 quotes: taskSpec.quotes,
@@ -290,7 +291,7 @@ async function buildDispatchContext(
     taskSpec: DispatchTaskSpec,
     groundingContext?: string,
     activeUserProfiles?: ActiveUserProfile[],
-    deps?: Pick<DispatchApiDeps, "globalState" | "getQuoteOutput" | "workspaceRoot">,
+    deps?: Pick<DispatchApiDeps, "getQuoteOutput" | "workspaceRoot">,
 ): Promise<GroupContextPackage> {
     const groupModel = typeof memory.getGroupModel === "function"
         ? memory.getGroupModel(getGroupModelKey(chatId))
@@ -318,7 +319,7 @@ async function resolveDispatchQuoteContext(
     memory: MemoryStoreV2,
     targetChatId: string,
     taskSpec: DispatchTaskSpec,
-    deps?: Pick<DispatchApiDeps, "globalState" | "getQuoteOutput" | "workspaceRoot">,
+    deps?: Pick<DispatchApiDeps, "getQuoteOutput" | "workspaceRoot">,
 ) {
     const refs = collectQuoteRefs({
         contentDirection: taskSpec.contentDirection,
@@ -332,7 +333,6 @@ async function resolveDispatchQuoteContext(
         memory,
         // 派发目标会话：引用「目标会话自己」的私密内容放行（在本会话内服务），跨别的私密会话才拦/scrub。
         boundChatId: targetChatId,
-        globalState: deps?.globalState,
         getOutput: deps?.getQuoteOutput,
         workspaceRoot: deps?.workspaceRoot,
     });

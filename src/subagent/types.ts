@@ -302,6 +302,7 @@ export interface DispatchedSubagentTaskRecord {
     sourceType?: "meta" | "subagent" | "harness";
     sourceChatId?: string;
     sourceTaskId?: string;
+    sourceRunId?: string;
     contentDirection: string;
     toneGuidance?: string;
     suggestedEmojis?: string[];
