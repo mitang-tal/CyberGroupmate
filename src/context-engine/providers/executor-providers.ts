@@ -329,6 +329,15 @@ function clampSessionDigestLimit(value: unknown): number {
     return Math.max(1, Math.min(30, Math.floor(value)));
 }
 
+function stripDigestForSubagent(content: string): string {
+    const match = content.match(/\[SESSION_DIGEST\]([\s\S]*?)(?:\[\/SESSION_DIGEST\]|$)/);
+    if (match?.[1]?.trim()) return match[1].trim();
+    return content
+        .split("；")
+        .filter((seg) => !seg.startsWith("summary=") && !seg.startsWith("sent="))
+        .join("；");
+}
+
 function formatSessionDigestLine(item: ExecutorSessionDigestsData["sessionDigests"][number]): string {
     const sourceParts = [
         item.actorType,
@@ -343,7 +352,7 @@ function formatSessionDigestLine(item: ExecutorSessionDigestsData["sessionDigest
         item.targetChatId ? `target=${item.targetChatId}` : "",
     ].filter(Boolean);
     const refText = refs.length > 0 ? ` (${refs.join(", ")})` : "";
-    return `- [${formatTsForPrompt(item.createdAt)}]${source}${refText} ${item.content}`;
+    return `- [${formatTsForPrompt(item.createdAt)}]${source}${refText} ${stripDigestForSubagent(item.content)}`;
 }
 
 // ═══ 0. Meta Session Digests ═══

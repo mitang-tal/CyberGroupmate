@@ -150,6 +150,14 @@ function extractLatestSessionDigest(turns: MetaSessionTurn[]): string | undefine
             return digest;
         }
     }
+
+    for (let index = turns.length - 1; index >= 0; index--) {
+        const digest = extractSessionDigest(turns[index]?.thinking);
+        if (digest) {
+            return digest;
+        }
+    }
+
     return undefined;
 }
 
