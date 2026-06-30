@@ -53,7 +53,7 @@ interface DispatchTaskResult {
 interface DispatchedTaskStatus {
     taskId: string;
     chatId: string;
-    sourceType?: "meta" | "subagent";
+    sourceType?: "meta" | "subagent" | "harness";
     sourceChatId?: string;
     sourceTaskId?: string;
     contentDirection: string;

@@ -570,6 +570,14 @@ async function main(): Promise<void> {
         filePath: join(DATA_DIR, "global-state.json"),
         autoSaveInterval: 30000,
     });
+    memory.migrateLegacySessionDigests(globalState.getLegacySessionDigests());
+    globalState.setSessionDigestAdapter({
+        append: (content, options) => memory.appendSessionDigest({
+            content,
+            ...(options ?? {}),
+        }),
+        list: (options) => memory.listSessionDigests({ limit: options?.limit ?? 30 }),
+    });
     accumulator = new AttentionAccumulator(globalState, {
         windowMs: appConfig.subagent?.pollInterval ?? 5000,
     });
@@ -1264,11 +1272,35 @@ async function main(): Promise<void> {
                 listTasks: () => globalState.listDispatchedSubagentTasks({ limit: 200 }).tasks,
                 memory,
                 sinceTs,
+                sessionDigests: memory.listSessionDigests({ limit: 30 }).slice().reverse(),
             }),
         });
         harnessManager.onSpawnFailure = (error, pendingCount) => {
-            globalState.addSessionDigest(`[Background Agent spawn failed] ${error} (${pendingCount} pending tasks)`);
+            globalState.addSessionDigest(`[Background Agent spawn failed] ${error} (${pendingCount} pending tasks)`, {
+                kind: "system",
+                actorType: "system",
+                actorId: "harness-manager",
+                sourceChatId: "__background__",
+                tags: ["harness", "failure"],
+                metadata: { pendingCount },
+            });
         };
+        mainLoop.setProactiveIdleHandler((payload) => {
+            harnessManager!.enqueue({
+                content: `consciousness_tick: ${payload.description}`,
+                source: "proactive-idle",
+            });
+            globalState.addSessionDigest(`[CONSCIOUSNESS_TICK] ${payload.description}`, {
+                kind: "consciousness_tick",
+                actorType: "system",
+                actorId: "main-loop",
+                sourceChatId: "__background__",
+                targetChatId: "__background__",
+                tags: ["consciousness", "idle"],
+                metadata: { idleId: payload.id },
+            });
+            return true;
+        });
         if (dashboardDeps) dashboardDeps.harnessManager = harnessManager;
         log.info("HarnessManager 已创建", { harness: bgHarness });
     }

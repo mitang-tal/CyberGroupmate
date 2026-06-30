@@ -39,9 +39,10 @@ export interface DispatchTaskResult {
 }
 
 export interface DispatchSource {
-    type: "meta" | "subagent";
+    type: "meta" | "subagent" | "harness";
     chatId?: string;
     taskId?: string;
+    runId?: string;
 }
 
 export interface DispatchTaskOptions {
@@ -153,8 +154,16 @@ export function createDispatchApi(deps: DispatchApiDeps) {
                 tracking: taskSpec.tracking,
                 createdAt: task.createdAt,
             });
-            deps.globalState?.addSessionDigest?.(formatDispatchCreatedDigest(source, chatId, taskId, taskSpec));
-
+            deps.globalState?.addSessionDigest?.(formatDispatchCreatedDigest(source, chatId, taskId, taskSpec), {
+                kind: "dispatch_created",
+                actorType: source.type === "subagent" ? "subagent" : source.type === "harness" ? "harness" : "meta",
+                actorId: source.chatId,
+                sourceChatId: source.chatId,
+                targetChatId: chatId,
+                taskId,
+                runId: source.runId,
+                tags: ["dispatch"],
+            });
             executor.enqueue(task);
             deps.accumulator.markActioned(chatId);
             await deps.onTaskDispatched?.(task);
@@ -188,6 +197,14 @@ function normalizeDispatchSource(source?: DispatchSource): DispatchSource {
             taskId: source.taskId,
         };
     }
+    if (source?.type === "harness") {
+        return {
+            type: "harness",
+            chatId: source.chatId,
+            taskId: source.taskId,
+            runId: source.runId,
+        };
+    }
     return { type: "meta" };
 }
 
@@ -199,6 +216,8 @@ function formatDispatchCreatedDigest(
 ): string {
     const sourceLabel = source.type === "subagent"
         ? `Subagent ${source.chatId}${source.taskId ? ` task=${source.taskId}` : ""}`
+        : source.type === "harness"
+            ? `Harness${source.chatId ? ` ${source.chatId}` : ""}${source.runId ? ` run=${source.runId}` : ""}`
         : "Meta";
     const quoteCount = taskSpec.quotes?.length ?? 0;
     return [

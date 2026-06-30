@@ -48,6 +48,11 @@ const DEFAULT_CONFIG: GlobalStateConfig = {
 const MAX_SESSION_DIGESTS = 30;
 const MAX_DISPATCHED_SUBAGENT_TASKS = 500;
 
+export interface SessionDigestAdapter {
+    append(content: string, options?: Partial<Omit<SessionDigestEntry, "content" | "createdAt">> & { createdAt?: string }): SessionDigestEntry;
+    list(options?: { limit?: number }): SessionDigestEntry[];
+}
+
 /** 派发任务的终态集合：进入终态即视为不可逆，立即落盘并补全 completedAt */
 const TERMINAL_TASK_STATUSES: ReadonlySet<DispatchedSubagentTaskRecord["status"]> = new Set([
     "COMPLETED",
@@ -64,6 +69,7 @@ export class GlobalState {
     private config: GlobalStateConfig;
     private dirty = false;
     private autoSaveTimer: ReturnType<typeof setInterval> | null = null;
+    private sessionDigestAdapter: SessionDigestAdapter | null = null;
 
     constructor(config?: Partial<GlobalStateConfig>) {
         this.config = { ...DEFAULT_CONFIG, ...config };
@@ -233,10 +239,26 @@ export class GlobalState {
         return removed;
     }
 
-    addSessionDigest(content: string): void {
+    setSessionDigestAdapter(adapter: SessionDigestAdapter): void {
+        this.sessionDigestAdapter = adapter;
+    }
+
+    getLegacySessionDigests(): SessionDigestEntry[] {
+        return [...this.state.sessionDigests];
+    }
+
+    addSessionDigest(
+        content: string,
+        options?: Partial<Omit<SessionDigestEntry, "content" | "createdAt">> & { createdAt?: string },
+    ): void {
+        if (this.sessionDigestAdapter) {
+            this.sessionDigestAdapter.append(content, options);
+            return;
+        }
         const entry: SessionDigestEntry = {
             content,
-            createdAt: new Date().toISOString(),
+            createdAt: options?.createdAt ?? new Date().toISOString(),
+            ...options,
         };
         this.state.sessionDigests.push(entry);
         while (this.state.sessionDigests.length > MAX_SESSION_DIGESTS) {
@@ -246,6 +268,9 @@ export class GlobalState {
     }
 
     getSessionDigests(): SessionDigestEntry[] {
+        if (this.sessionDigestAdapter) {
+            return this.sessionDigestAdapter.list({ limit: 30 }).slice().reverse();
+        }
         return [...this.state.sessionDigests];
     }
 

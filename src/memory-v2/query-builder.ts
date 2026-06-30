@@ -64,6 +64,11 @@ export const COLUMN_WHITELIST = {
         "message_id", "chat_id", "user_id", "display_name",
         "text", "reply_to_message_id", "timestamp", "media_type", "media_info",
     ],
+    session_digests: [
+        "kind", "actor_type", "actor_id", "source_chat_id", "source_chat_title",
+        "target_chat_id", "task_id", "run_id", "content", "tags", "importance",
+        "visibility", "metadata", "embedding", "created_at",
+    ],
 } as const;
 
 export type TableName = keyof typeof COLUMN_WHITELIST;

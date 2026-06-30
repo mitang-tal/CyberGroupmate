@@ -876,6 +876,49 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             scrubDossiers(result.dossiers, policy());
             return result;
         }
+        if (method === "memory.searchAgentMemory") {
+            const [query, options] = args as [string, {
+                chatId?: string;
+                actorType?: "meta" | "subagent" | "harness" | "system";
+                kind?: string;
+                after?: string | number | Date;
+                before?: string | number | Date;
+                limit?: number;
+            } | undefined];
+            const ctx = policy();
+            if (options?.chatId && isExplicitReadBlocked(options.chatId, ctx)) return { sessionDigests: [] };
+            const api = createMemoryApi(memory);
+            const result = await api.searchAgentMemory(query, {
+                ...options,
+                chatId: options?.chatId ?? chatId,
+                after: timestampInputToIso(options?.after) ?? undefined,
+                before: timestampInputToIso(options?.before) ?? undefined,
+                kind: options?.kind as any,
+            });
+            result.sessionDigests = scrubRowsByVisibility(result.sessionDigests, (r) => r.sourceChatId ?? r.targetChatId, ctx, method).kept;
+            return result;
+        }
+        if (method === "memory.getTimeline") {
+            const [options] = args as [{
+                chatId?: string;
+                after?: string | number | Date;
+                before?: string | number | Date;
+                limit?: number;
+                includeTopics?: boolean;
+                includeDigests?: boolean;
+            } | undefined];
+            const ctx = policy();
+            if (options?.chatId && isExplicitReadBlocked(options.chatId, ctx)) return { entries: [] };
+            const api = createMemoryApi(memory);
+            const result = await api.getTimeline({
+                ...options,
+                chatId: options?.chatId ?? chatId,
+                after: timestampInputToIso(options?.after) ?? undefined,
+                before: timestampInputToIso(options?.before) ?? undefined,
+            });
+            result.entries = scrubRowsByVisibility(result.entries, (r) => r.chatId, ctx, method).kept;
+            return result;
+        }
         if (method === "memory.semanticSearch") {
             const [rawQuery, options] = args as [string, { scope?: "facts" | "topics" | "all"; limit?: number } | undefined];
             const query = String(rawQuery ?? "").slice(0, 200);

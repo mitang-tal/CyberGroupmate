@@ -78,6 +78,7 @@ export class MainAgentLoop {
 
     /** attend 完成后的回调（metrics 使用） */
     private onAttendCompleteCallback: ((chatId: string, decisions: AttendResult) => void) | null = null;
+    private proactiveIdleHandler: ((payload: { id: string; description: string; enqueuedAt: number }) => boolean) | null = null;
 
     constructor(
         accumulator: AttentionAccumulator,
@@ -203,7 +204,19 @@ export class MainAgentLoop {
             if (this.globalState && !isDispatchSourceNotification) {
                 dispatchedTask = this.globalState.getDispatchedSubagentTask(cb.taskId);
                 if (dispatchedTask) {
-                    this.globalState.addSessionDigest(formatDispatchCompletionDigest(dispatchedTask, cb));
+                    this.globalState.addSessionDigest(formatDispatchCompletionDigest(dispatchedTask, cb), {
+                        kind: "dispatch_done",
+                        actorType: dispatchedTask.sourceType === "subagent" ? "subagent" : dispatchedTask.sourceType === "harness" ? "harness" : "meta",
+                        actorId: dispatchedTask.sourceChatId,
+                        sourceChatId: dispatchedTask.sourceChatId,
+                        targetChatId: dispatchedTask.chatId,
+                        taskId: dispatchedTask.taskId,
+                        tags: ["dispatch", "callback"],
+                        metadata: {
+                            status: cb.status,
+                            sourceTaskId: dispatchedTask.sourceTaskId,
+                        },
+                    });
                     this.enqueueDispatchSourceNotification(dispatchedTask, cb);
                 }
             }
@@ -251,16 +264,25 @@ export class MainAgentLoop {
             const now = Date.now();
             if (this.shouldTriggerProactiveIdle(now)) {
                 this.lastProactiveIdleAt = now;
-                this.accumulator.ingest(1, {
-                    chatId: "__meta__",
-                    source: "PROACTIVE_IDLE",
+                const idlePayload = {
+                    id: `idle:${now}`,
+                    description: "系统空闲，执行一次主动巡视",
                     enqueuedAt: now,
-                    payload: {
-                        type: "proactive_idle",
-                        id: `idle:${now}`,
-                        description: "系统空闲，执行一次主动巡视",
-                    },
-                });
+                };
+                if (this.proactiveIdleHandler?.(idlePayload)) {
+                    log.info("proactive idle routed to consciousness harness", { id: idlePayload.id });
+                } else {
+                    this.accumulator.ingest(1, {
+                        chatId: "__meta__",
+                        source: "PROACTIVE_IDLE",
+                        enqueuedAt: now,
+                        payload: {
+                            type: "proactive_idle",
+                            id: idlePayload.id,
+                            description: idlePayload.description,
+                        },
+                    });
+                }
             }
         }
         if (queueSnapshot.active.length > 0 || queueSnapshot.blockedChatIds.length > 0) {
@@ -333,7 +355,14 @@ export class MainAgentLoop {
                         metaEndReason = result?.endReason ?? null;
                         metaHandledEntries = !!result;
                         if (result?.sessionDigest && this.globalState) {
-                            this.globalState.addSessionDigest(result.sessionDigest);
+                            this.globalState.addSessionDigest(result.sessionDigest, {
+                                kind: "meta_turn",
+                                actorType: "meta",
+                                actorId: "__meta__",
+                                sourceChatId: "__meta__",
+                                tags: ["meta"],
+                                metadata: { endReason: result.endReason },
+                            });
                         }
                         if (result) {
                             this.resetCircuitBreaker();
@@ -478,6 +507,10 @@ export class MainAgentLoop {
      */
     setGlobalState(gs: GlobalState): void {
         this.globalState = gs;
+    }
+
+    setProactiveIdleHandler(handler: ((payload: { id: string; description: string; enqueuedAt: number }) => boolean) | null): void {
+        this.proactiveIdleHandler = handler;
     }
 
     private shouldTriggerProactiveIdle(now: number): boolean {
@@ -745,6 +778,8 @@ function formatDispatchCompletionDigest(
 ): string {
     const source = task.sourceType === "subagent" && task.sourceChatId
         ? `Subagent ${task.sourceChatId}${task.sourceTaskId ? ` task=${task.sourceTaskId}` : ""}`
+        : task.sourceType === "harness"
+            ? `Harness${task.sourceChatId ? ` ${task.sourceChatId}` : ""}`
         : "Meta";
     const sent = callback.sentMessages?.length
         ? `sent=${callback.sentMessages.map((msg) => `"${truncateForPrompt(msg.text, 80)}"`).join(" / ")}`

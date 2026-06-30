@@ -7,6 +7,10 @@ import type {
     MessageSearchResult,
     PersonGroupProfile,
     PersonIdentity,
+    SessionDigestEntry,
+    SessionDigestSearchOptions,
+    TimelineEntry,
+    TimelineOptions,
     TopicSearchResult,
     UserProfileSearchResult,
     MemoryStoreV2,
@@ -45,7 +49,7 @@ export interface MemoryIdentityMatch {
 export interface MemorySearchEntitiesResult {
     identities: MemoryIdentityMatch[];
     recentSessions: TopicSearchResult[];
-    sessionDigests: Array<{ createdAt: string; content: string }>;
+    sessionDigests: SessionDigestEntry[];
     coreFacts: FactSearchResult[];
     topicKeywords: string[];
 }
@@ -99,6 +103,9 @@ type MemoryEntityReader = Pick<MemoryStoreV2,
     "getRecentInteractions" |
     "getRecentTopics" |
     "queryMessages"
+    | "listSessionDigests"
+    | "searchAgentMemory"
+    | "getTimeline"
 >;
 
 type SessionDigestReader = Pick<GlobalState, "getSessionDigests">;
@@ -271,7 +278,9 @@ export function createMemoryApi(memory: MemoryEntityReader, globalState?: Sessio
                 .slice(0, limit);
             const topicKeywords = [...new Set(recentSessions.flatMap((session) => session.keywords))]
                 .slice(0, limit * 5);
-            const sessionDigests = searchSessionDigests(globalState, normalizedQuery, limit);
+            const sessionDigests = typeof memory.searchAgentMemory === "function"
+                ? memory.searchAgentMemory(normalizedQuery, { chatId: options.chatId, after, before, limit })
+                : searchSessionDigests(globalState, normalizedQuery, limit);
 
             return {
                 identities,
@@ -279,6 +288,37 @@ export function createMemoryApi(memory: MemoryEntityReader, globalState?: Sessio
                 sessionDigests,
                 coreFacts,
                 topicKeywords,
+            };
+        },
+
+        searchAgentMemory: async (
+            query: string,
+            options: SessionDigestSearchOptions = {},
+        ): Promise<{ sessionDigests: SessionDigestEntry[] }> => {
+            const normalizedQuery = query.trim();
+            if (!normalizedQuery) return { sessionDigests: [] };
+            const limit = clampLimit(options.limit, DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
+            return {
+                sessionDigests: memory.searchAgentMemory(normalizedQuery, {
+                    ...options,
+                    limit,
+                    after: timestampInputToIso(options.after) ?? undefined,
+                    before: timestampInputToIso(options.before) ?? undefined,
+                }),
+            };
+        },
+
+        getTimeline: async (
+            options: TimelineOptions = {},
+        ): Promise<{ entries: TimelineEntry[] }> => {
+            const limit = clampLimit(options.limit, 30, 100);
+            return {
+                entries: memory.getTimeline({
+                    ...options,
+                    limit,
+                    after: timestampInputToIso(options.after) ?? undefined,
+                    before: timestampInputToIso(options.before) ?? undefined,
+                }),
             };
         },
     };
@@ -554,7 +594,7 @@ function searchSessionDigests(
     globalState: SessionDigestReader | undefined,
     query: string,
     limit: number,
-): Array<{ createdAt: string; content: string }> {
+): SessionDigestEntry[] {
     if (!globalState) {
         return [];
     }

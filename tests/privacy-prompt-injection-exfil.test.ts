@@ -40,6 +40,7 @@ const SECRET_TEXT = "我的信用卡号是 4111-1111-1111-1111，验证码 321";
 const SECRET_PLAN = "周五凌晨两点在码头碰头，别让任何人知道";
 const SECRET_FACT = "内部暗号 needle OR 绝不能跨群泄露";
 const SECRET_ASSOCIATED_MEMORY = "关联记忆中的私密事实 assocpriv-secret";
+const SECRET_DIGEST = "digestbridge 私密 digest 里记录了验证码 321 和码头碰头计划";
 
 let memory: MemoryStoreV2;
 
@@ -97,7 +98,7 @@ function makeHandler(boundChatId: string) {
 function leaksSecret(value: unknown): boolean {
     const blob = JSON.stringify(value ?? null);
     return blob.includes(SECRET_TEXT) || blob.includes(SECRET_PLAN)
-        || blob.includes(SECRET_FACT) || blob.includes(SECRET_ASSOCIATED_MEMORY)
+        || blob.includes(SECRET_FACT) || blob.includes(SECRET_ASSOCIATED_MEMORY) || blob.includes(SECRET_DIGEST)
         || blob.includes("4111-1111") || blob.includes("码头碰头") || blob.includes("assocpriv-secret");
 }
 
@@ -131,6 +132,19 @@ describe("提示注入 / 社工诱导下，Subagent 仍无法提取指定私密�
             sourceChatId: VICTIM_PRIVATE,
             visibility: "contextual",
             sensitivity: "low",
+        });
+
+        // ── 永久 session digest：source 是私密会话，即使 target 命中当前群也必须按 provenance scrub。──
+        memory.appendSessionDigest({
+            content: SECRET_DIGEST,
+            kind: "harness_callback",
+            actorType: "harness",
+            actorId: "privacy-test-harness",
+            sourceChatId: VICTIM_PRIVATE,
+            sourceChatTitle: "受害者私密会话",
+            targetChatId: ATTACKER_GROUP,
+            runId: "digestbridge-run",
+            tags: ["digestbridge"],
         });
 
         // ── 话题（显式 target 读 searchTopics 的 R1 路径）──
@@ -212,6 +226,22 @@ describe("提示注入 / 社工诱导下，Subagent 仍无法提取指定私密�
             const { handler } = makeHandler(ATTACKER_GROUP);
             const rows = await handler("memory.semanticSearch", ["needle OR", { scope: "facts", limit: 5 }]);
             assert.ok(!leaksSecret(rows), "FTS 失败后的 LIKE fallback 不得带出私密 fact");
+        });
+
+        it("memory.searchAgentMemory / getTimeline 会 scrub 私密来源的永久 digest", async () => {
+            const { handler } = makeHandler(ATTACKER_GROUP);
+
+            const agentMemory = await handler("memory.searchAgentMemory", ["digestbridge", { limit: 10 }]) as {
+                sessionDigests: Array<{ sourceChatId?: string; targetChatId?: string }>;
+            };
+            assert.deepEqual(agentMemory.sessionDigests, [], "target 命中当前群也不能带出 source 私密的 digest");
+            assert.ok(!leaksSecret(agentMemory));
+
+            const timeline = await handler("memory.getTimeline", [{ chatId: ATTACKER_GROUP, includeTopics: false, limit: 10 }]) as {
+                entries: Array<{ chatId?: string }>;
+            };
+            assert.deepEqual(timeline.entries, [], "timeline 也必须按 digest source provenance 过滤");
+            assert.ok(!leaksSecret(timeline));
         });
 
         it("memory.searchTopics 返回普通群 topic 时会递归 scrub 私密 associatedMemories", async () => {

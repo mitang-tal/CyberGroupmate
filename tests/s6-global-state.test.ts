@@ -67,7 +67,7 @@ describe("S6: Global State", () => {
         gs.dispose();
     });
 
-    it("#4 addSessionDigest cap at 30", () => {
+    it("#4 addSessionDigest legacy JSON fallback cap at 30", () => {
         const dir = tempDir();
         const gs = new GlobalState({ filePath: join(dir, "s.json"), autoSaveInterval: 0 });
         for (let i = 0; i < 32; i++) gs.addSessionDigest(`digest-${i}`);
@@ -75,6 +75,35 @@ describe("S6: Global State", () => {
         assert.equal(digests.length, 30);
         assert.equal(digests[0].content, "digest-2");
         assert.equal(digests.at(-1)?.content, "digest-31");
+        gs.dispose();
+    });
+
+    it("#4a addSessionDigest delegates to the permanent digest adapter when configured", () => {
+        const dir = tempDir();
+        const gs = new GlobalState({ filePath: join(dir, "s.json"), autoSaveInterval: 0 });
+        const written: unknown[] = [];
+        gs.setSessionDigestAdapter({
+            append: (content, options) => {
+                const entry = {
+                    content,
+                    createdAt: options?.createdAt ?? "2026-01-01T00:00:00.000Z",
+                    ...options,
+                };
+                written.push(entry);
+                return entry;
+            },
+            list: () => written as any,
+        });
+
+        gs.addSessionDigest("meta thought", {
+            kind: "meta_turn",
+            actorType: "meta",
+            sourceChatId: "__meta__",
+        });
+
+        assert.equal(gs.getLegacySessionDigests().length, 0);
+        assert.deepEqual(gs.getSessionDigests(), written);
+        assert.equal((written[0] as any).kind, "meta_turn");
         gs.dispose();
     });
 

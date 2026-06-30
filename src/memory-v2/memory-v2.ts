@@ -11,7 +11,7 @@
  */
 
 import Database from "better-sqlite3";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createLogger } from "../core/logger.js";
@@ -51,6 +51,11 @@ import type {
     RecentMessageEntry,
     RecallOptions,
     RecallResult,
+    SessionDigestEntry,
+    SessionDigestSearchOptions,
+    SessionDigestKind,
+    TimelineEntry,
+    TimelineOptions,
     HistoryBrowseRequest,
     HistoryBrowseResult,
     ReflectionResult,
@@ -292,10 +297,11 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             };
             const tDims = existingDims("topics_vec");
             const fDims = existingDims("facts_vec");
-            const oldDims = tDims ?? fDims;
+            const dDims = existingDims("session_digests_vec");
+            const oldDims = tDims ?? fDims ?? dDims;
             // 仅在 embedding 启用时才因维度不符重建——关闭时不写向量，旧维度表闲置无害，不动它（避免 toggle off 误删向量）。
             const mismatch = !!this.embeddingConfig
-                && ((tDims != null && tDims !== dims) || (fDims != null && fDims !== dims));
+                && ((tDims != null && tDims !== dims) || (fDims != null && fDims !== dims) || (dDims != null && dDims !== dims));
 
             if (mismatch) {
                 // 维度变了：旧 vec 表 + 旧主表向量都按旧维度存的，对新维度不可用。
@@ -307,8 +313,10 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
                 );
                 this.db.exec(`DROP TABLE IF EXISTS topics_vec`);
                 this.db.exec(`DROP TABLE IF EXISTS facts_vec`);
+                this.db.exec(`DROP TABLE IF EXISTS session_digests_vec`);
                 try { this.db.exec(`UPDATE core_facts SET embedding = NULL WHERE embedding IS NOT NULL`); } catch { /* 列可能不存在 */ }
                 try { this.db.exec(`UPDATE topics SET embedding = NULL WHERE embedding IS NOT NULL`); } catch { /* 列可能不存在 */ }
+                try { this.db.exec(`UPDATE session_digests SET embedding = NULL WHERE embedding IS NOT NULL`); } catch { /* 列可能不存在 */ }
             }
 
             this.db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS topics_vec USING vec0(
@@ -316,6 +324,9 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             )`);
             this.db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS facts_vec USING vec0(
                 fact_id TEXT PRIMARY KEY, embedding float[${dims}]
+            )`);
+            this.db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS session_digests_vec USING vec0(
+                digest_id TEXT PRIMARY KEY, embedding float[${dims}]
             )`);
             log.debug("vec0 虚拟表就绪", { dims, recreatedForDimChange: mismatch });
         } catch (err) {
@@ -479,6 +490,30 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             );
             CREATE INDEX IF NOT EXISTS idx_msglog_chat_time ON message_log(chat_id, timestamp);
             CREATE INDEX IF NOT EXISTS idx_msglog_user ON message_log(user_id, timestamp);
+
+            -- Agent session digests / consciousness memory（永久落盘）
+            CREATE TABLE IF NOT EXISTS session_digests (
+                id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                kind TEXT NOT NULL DEFAULT 'system',
+                actor_type TEXT NOT NULL DEFAULT 'system',
+                actor_id TEXT,
+                source_chat_id TEXT,
+                source_chat_title TEXT,
+                target_chat_id TEXT,
+                task_id TEXT,
+                run_id TEXT,
+                content TEXT NOT NULL,
+                tags TEXT NOT NULL DEFAULT '[]',
+                importance REAL DEFAULT 0.5,
+                visibility TEXT DEFAULT 'contextual',
+                metadata TEXT NOT NULL DEFAULT '{}',
+                embedding BLOB
+            );
+            CREATE INDEX IF NOT EXISTS idx_session_digests_created ON session_digests(created_at);
+            CREATE INDEX IF NOT EXISTS idx_session_digests_source_chat ON session_digests(source_chat_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_session_digests_actor ON session_digests(actor_type, actor_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_session_digests_kind ON session_digests(kind, created_at);
         `);
 
         // FTS5 虚拟表（独立模式，手动同步内容）
@@ -496,6 +531,20 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             this.db.exec(`
                 CREATE VIRTUAL TABLE IF NOT EXISTS core_facts_fts USING fts5(
                     content, subject
+                );
+            `);
+        } catch {
+            // FTS5 表已存在时忽略
+        }
+
+        try {
+            this.db.exec(`
+                CREATE VIRTUAL TABLE IF NOT EXISTS session_digests_fts USING fts5(
+                    id UNINDEXED,
+                    content,
+                    tags,
+                    actor_id,
+                    source_chat_title
                 );
             `);
         } catch {
@@ -1595,6 +1644,213 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         return result;
     }
 
+    appendSessionDigest(entry: Omit<SessionDigestEntry, "id" | "createdAt"> & { id?: string; createdAt?: string; embedding?: Float32Array }): SessionDigestEntry {
+        const content = String(entry.content ?? "").trim();
+        if (!content) {
+            throw new Error("session digest content is required");
+        }
+        const id = entry.id?.trim() || randomUUID();
+        const createdAt = entry.createdAt ?? now();
+        const kind = normalizeSessionDigestKind(entry.kind);
+        const actorType = entry.actorType ?? entry.source?.actorType ?? "system";
+        const actorId = entry.actorId ?? entry.source?.actorId ?? null;
+        const sourceChatId = entry.sourceChatId ?? entry.source?.chatId ?? null;
+        const sourceChatTitle = entry.sourceChatTitle ?? entry.source?.chatTitle ?? null;
+        const targetChatId = entry.targetChatId ?? null;
+        const taskId = entry.taskId ?? entry.source?.taskId ?? null;
+        const runId = entry.runId ?? entry.source?.runId ?? null;
+        const tags = entry.tags ?? [];
+        const importance = boundNumber(entry.importance, 0.5, 0, 1);
+        const visibility = entry.visibility ?? "contextual";
+        const metadata = entry.metadata ?? {};
+        const embeddingBuffer = entry.embedding ? embeddingToBuffer(entry.embedding) : null;
+
+        const result = this.db.prepare(`
+            INSERT OR IGNORE INTO session_digests (
+                id, created_at, kind, actor_type, actor_id, source_chat_id, source_chat_title,
+                target_chat_id, task_id, run_id, content, tags, importance, visibility, metadata, embedding
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+            id,
+            createdAt,
+            kind,
+            actorType,
+            actorId,
+            sourceChatId,
+            sourceChatTitle,
+            targetChatId,
+            taskId,
+            runId,
+            content,
+            toJSON(tags),
+            importance,
+            visibility,
+            JSON.stringify(metadata),
+            embeddingBuffer,
+        );
+
+        if (result.changes > 0) {
+            this.upsertSessionDigestFts(id, content, tags, actorId, sourceChatTitle);
+            if (embeddingBuffer && this.sqliteVecAvailable) {
+                try {
+                    this.db.prepare(
+                        "INSERT OR REPLACE INTO session_digests_vec (digest_id, embedding) VALUES (?, ?)"
+                    ).run(id, embeddingBuffer);
+                } catch (err) {
+                    log.debug("session_digests_vec 写入失败", { id, error: String(err) });
+                }
+            }
+        }
+
+        return this.getSessionDigestById(id) ?? {
+            id,
+            content,
+            createdAt,
+            kind,
+            actorType,
+            actorId: actorId ?? undefined,
+            sourceChatId,
+            sourceChatTitle,
+            targetChatId,
+            taskId,
+            runId,
+            tags,
+            importance,
+            visibility,
+            metadata,
+        };
+    }
+
+    migrateLegacySessionDigests(entries: Array<{ createdAt: string; content: string }>): number {
+        let migrated = 0;
+        for (const entry of entries) {
+            const content = String(entry.content ?? "").trim();
+            const createdAt = String(entry.createdAt ?? "").trim();
+            if (!content || !createdAt) continue;
+            const id = legacySessionDigestId(createdAt, content);
+            const before = this.getSessionDigestById(id);
+            if (before) continue;
+            this.appendSessionDigest({
+                id,
+                createdAt,
+                content,
+                kind: "legacy",
+                actorType: "system",
+                tags: ["legacy"],
+                metadata: { migratedFrom: "global-state.sessionDigests" },
+            });
+            migrated++;
+        }
+        if (migrated > 0) log.info("legacy session digests migrated", { migrated });
+        return migrated;
+    }
+
+    listSessionDigests(options: SessionDigestSearchOptions = {}): SessionDigestEntry[] {
+        return this.querySessionDigests(options);
+    }
+
+    searchAgentMemory(query: string, options: SessionDigestSearchOptions = {}): SessionDigestEntry[] {
+        return this.querySessionDigests({ ...options, query });
+    }
+
+    getTimeline(options: TimelineOptions = {}): TimelineEntry[] {
+        const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+        const entries: TimelineEntry[] = [];
+        const includeDigests = options.includeDigests !== false;
+        const includeTopics = options.includeTopics !== false;
+
+        if (includeDigests) {
+            for (const digest of this.listSessionDigests({
+                chatId: options.chatId,
+                after: options.after,
+                before: options.before,
+                limit,
+            })) {
+                entries.push({
+                    type: "session_digest",
+                    timestamp: digest.createdAt,
+                    chatId: digest.sourceChatId ?? digest.targetChatId,
+                    title: digest.sourceChatTitle ?? digest.kind,
+                    content: digest.content,
+                    refId: digest.id,
+                    metadata: {
+                        kind: digest.kind,
+                        actorType: digest.actorType,
+                        actorId: digest.actorId,
+                        taskId: digest.taskId,
+                        runId: digest.runId,
+                    },
+                });
+            }
+        }
+
+        if (includeTopics) {
+            const conditions: string[] = [];
+            const params: unknown[] = [];
+            if (options.chatId) {
+                conditions.push("chat_id = ?");
+                params.push(options.chatId);
+            }
+            if (options.after) {
+                conditions.push("started_at >= ?");
+                params.push(options.after);
+            }
+            if (options.before) {
+                conditions.push("started_at <= ?");
+                params.push(options.before);
+            }
+            params.push(limit);
+            const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+            const rows = this.db.prepare(`
+                SELECT id, chat_id, label, summary, started_at
+                FROM topics
+                ${where}
+                ORDER BY started_at DESC
+                LIMIT ?
+            `).all(...params) as Array<Record<string, unknown>>;
+            for (const row of rows) {
+                entries.push({
+                    type: "topic",
+                    timestamp: row.started_at as string,
+                    chatId: row.chat_id as string,
+                    title: row.label as string,
+                    content: row.summary as string,
+                    refId: row.id as string,
+                });
+            }
+        }
+
+        return entries
+            .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+            .slice(0, limit);
+    }
+
+    vectorSearchSessionDigests(
+        queryEmbedding: Float32Array,
+        limit: number = 10,
+    ): Array<SessionDigestEntry & { similarity: number }> {
+        if (this.sqliteVecAvailable) {
+            try {
+                const rows = this.db.prepare(
+                    `SELECT digest_id, distance FROM session_digests_vec WHERE embedding MATCH ? AND k = ? ORDER BY distance`
+                ).all(embeddingToBuffer(queryEmbedding), limit) as Array<{ digest_id: string; distance: number }>;
+                return rows.flatMap((row) => {
+                    const digest = this.getSessionDigestById(row.digest_id);
+                    return digest ? [{ ...digest, similarity: 1 / (1 + row.distance) }] : [];
+                });
+            } catch (err) {
+                log.warn("vectorSearchSessionDigests[vec0] 查询失败，fallback 纯 JS", { error: String(err) });
+            }
+        }
+
+        const rows = this.db.prepare("SELECT * FROM session_digests WHERE embedding IS NOT NULL").all() as Record<string, unknown>[];
+        const simFn = getSimilarityFn(this.embeddingConfig?.similarityMetric ?? "cosine");
+        return rows.map((row) => ({
+            ...this.rowToSessionDigest(row),
+            similarity: simFn(queryEmbedding, bufferToEmbedding(row.embedding as Buffer)),
+        })).sort((a, b) => b.similarity - a.similarity).slice(0, limit);
+    }
+
     // ─── 检索方法 ───
 
     /** 本地 SQLite 语义检索（向量 + FTS5 + LIKE 三级回退）。 */
@@ -1743,6 +1999,11 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
 
         const topics = [...topicMap.values()];
         const facts = [...factMap.values()];
+        const sessionDigests = this.searchAgentMemory(query, {
+            chatId: chatIdFilter,
+            limit: maxResults,
+            after: daysBack ? new Date(Date.now() - daysBack * 86400000).toISOString() : undefined,
+        });
 
         // ─── 关联 persons（通过 topic.participants 匹配） ───
         let persons = this.resolvePersonsFromTopics(topics);
@@ -1793,9 +2054,10 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             topicsFound: topics.length,
             factsFound: facts.length,
             personsFound: persons.length,
+            sessionDigestsFound: sessionDigests.length,
             hasDeepSummary: !!deepSummary,
         });
-        return { topics, facts, persons, deepSummary };
+        return { topics, facts, persons, deepSummary, sessionDigests };
     }
 
     /** 从 topic 参与者解析关联的 person_group_profiles */
@@ -3409,4 +3671,188 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             updatedAt: row.updated_at as string,
         };
     }
+
+    private getSessionDigestById(id: string): SessionDigestEntry | null {
+        const row = this.db.prepare("SELECT * FROM session_digests WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+        return row ? this.rowToSessionDigest(row) : null;
+    }
+
+    private rowToSessionDigest(row: Record<string, unknown>): SessionDigestEntry {
+        const actorType = (row.actor_type as SessionDigestEntry["actorType"]) ?? "system";
+        const actorId = (row.actor_id as string | null) ?? undefined;
+        const sourceChatId = (row.source_chat_id as string | null) ?? null;
+        const sourceChatTitle = (row.source_chat_title as string | null) ?? null;
+        const taskId = (row.task_id as string | null) ?? null;
+        const runId = (row.run_id as string | null) ?? null;
+        return {
+            id: row.id as string,
+            createdAt: row.created_at as string,
+            kind: normalizeSessionDigestKind(row.kind as string),
+            actorType,
+            actorId,
+            sourceChatId,
+            sourceChatTitle,
+            targetChatId: (row.target_chat_id as string | null) ?? null,
+            taskId,
+            runId,
+            content: row.content as string,
+            tags: fromJSON<string[]>(row.tags as string, []),
+            importance: Number(row.importance ?? 0.5),
+            visibility: ((row.visibility as string) ?? "contextual") as SessionDigestEntry["visibility"],
+            metadata: fromJSON<Record<string, unknown>>(row.metadata as string, {}),
+            source: {
+                actorType,
+                ...(actorId ? { actorId } : {}),
+                ...(sourceChatId ? { chatId: sourceChatId } : {}),
+                ...(sourceChatTitle ? { chatTitle: sourceChatTitle } : {}),
+                ...(taskId ? { taskId } : {}),
+                ...(runId ? { runId } : {}),
+            },
+        };
+    }
+
+    private upsertSessionDigestFts(
+        id: string,
+        content: string,
+        tags: string[],
+        actorId: string | null,
+        sourceChatTitle: string | null,
+    ): void {
+        try {
+            this.db.prepare("DELETE FROM session_digests_fts WHERE id = ?").run(id);
+            this.db.prepare(`
+                INSERT INTO session_digests_fts (id, content, tags, actor_id, source_chat_title)
+                VALUES (?, ?, ?, ?, ?)
+            `).run(id, content, tags.join(" "), actorId ?? "", sourceChatTitle ?? "");
+        } catch (err) {
+            log.debug("session_digests_fts 同步失败", { id, error: String(err) });
+        }
+    }
+
+    private querySessionDigests(options: SessionDigestSearchOptions = {}): SessionDigestEntry[] {
+        const limit = Math.min(Math.max(options.limit ?? 30, 1), 200);
+        const conditions: string[] = [];
+        const params: unknown[] = [];
+        const query = options.query?.trim();
+        let from = "session_digests sd";
+
+        if (query) {
+            const ftsQuery = buildFtsOrQuery(query);
+            if (ftsQuery) {
+                from = "session_digests sd INNER JOIN session_digests_fts fts ON fts.id = sd.id";
+                conditions.push("session_digests_fts MATCH ?");
+                params.push(ftsQuery);
+            } else {
+                conditions.push("sd.content LIKE ?");
+                params.push(`%${query}%`);
+            }
+        }
+        if (options.chatId) {
+            conditions.push("(sd.source_chat_id = ? OR sd.target_chat_id = ?)");
+            params.push(options.chatId, options.chatId);
+        }
+        if (options.actorType) {
+            conditions.push("sd.actor_type = ?");
+            params.push(options.actorType);
+        }
+        if (options.kind) {
+            conditions.push("sd.kind = ?");
+            params.push(options.kind);
+        }
+        if (options.after) {
+            conditions.push("sd.created_at >= ?");
+            params.push(options.after);
+        }
+        if (options.before) {
+            conditions.push("sd.created_at <= ?");
+            params.push(options.before);
+        }
+        for (const tag of options.tags ?? []) {
+            conditions.push("sd.tags LIKE ?");
+            params.push(`%"${tag}"%`);
+        }
+
+        const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+        params.push(limit);
+        try {
+            const rows = this.db.prepare(`
+                SELECT sd.*
+                FROM ${from}
+                ${where}
+                ORDER BY sd.created_at DESC, sd.id DESC
+                LIMIT ?
+            `).all(...params) as Array<Record<string, unknown>>;
+            return rows.map((row) => this.rowToSessionDigest(row));
+        } catch (err) {
+            if (!query) throw err;
+            log.debug("session digest FTS query failed, falling back to LIKE", { error: String(err) });
+            return this.querySessionDigestsLike(options);
+        }
+    }
+
+    private querySessionDigestsLike(options: SessionDigestSearchOptions): SessionDigestEntry[] {
+        const limit = Math.min(Math.max(options.limit ?? 30, 1), 200);
+        const conditions: string[] = [];
+        const params: unknown[] = [];
+        const query = options.query?.trim();
+        if (query) {
+            const pattern = `%${query}%`;
+            conditions.push("(content LIKE ? OR tags LIKE ? OR actor_id LIKE ? OR source_chat_title LIKE ?)");
+            params.push(pattern, pattern, pattern, pattern);
+        }
+        if (options.chatId) {
+            conditions.push("(source_chat_id = ? OR target_chat_id = ?)");
+            params.push(options.chatId, options.chatId);
+        }
+        if (options.actorType) {
+            conditions.push("actor_type = ?");
+            params.push(options.actorType);
+        }
+        if (options.kind) {
+            conditions.push("kind = ?");
+            params.push(options.kind);
+        }
+        if (options.after) {
+            conditions.push("created_at >= ?");
+            params.push(options.after);
+        }
+        if (options.before) {
+            conditions.push("created_at <= ?");
+            params.push(options.before);
+        }
+        const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+        params.push(limit);
+        const rows = this.db.prepare(`
+            SELECT * FROM session_digests
+            ${where}
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+        `).all(...params) as Array<Record<string, unknown>>;
+        return rows.map((row) => this.rowToSessionDigest(row));
+    }
+}
+
+function normalizeSessionDigestKind(kind: string | undefined): SessionDigestKind {
+    const allowed = new Set<SessionDigestKind>([
+        "meta_turn",
+        "subagent_callback",
+        "dispatch_created",
+        "dispatch_done",
+        "background_notify",
+        "harness_callback",
+        "consciousness_tick",
+        "system",
+        "legacy",
+    ]);
+    return allowed.has(kind as SessionDigestKind) ? kind as SessionDigestKind : "system";
+}
+
+function boundNumber(value: unknown, fallback: number, min: number, max: number): number {
+    if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+    return Math.max(min, Math.min(max, value));
+}
+
+function legacySessionDigestId(createdAt: string, content: string): string {
+    const hash = createHash("sha256").update(`${createdAt}\n${content}`).digest("hex").slice(0, 32);
+    return `legacy:${hash}`;
 }

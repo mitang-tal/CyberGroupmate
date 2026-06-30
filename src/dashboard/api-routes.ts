@@ -34,7 +34,7 @@ import {
 import { getMetaHistoryWindowStatus } from "../main-agent/meta-history-retention.js";
 import { getPlatform } from "../core/chat-id.js";
 import { extractAnimatedStickerFrames } from "../core/vision-processor.js";
-import type { MainAgentGlobalState, SchedulerEvent } from "../subagent/types.js";
+import type { MainAgentGlobalState, SchedulerEvent, SessionDigestEntry } from "../subagent/types.js";
 import { createCronApi, createReminderApi } from "../meta-sandbox/meta-api/scheduler.js";
 import { createTodoApi } from "../meta-sandbox/meta-api/todo.js";
 
@@ -281,14 +281,17 @@ function previewText(value: unknown, limit = 180): string {
     return text.length > limit ? `${text.slice(0, limit)}...` : text;
 }
 
-function buildGlobalStateSummary(state: Readonly<MainAgentGlobalState>): Record<string, unknown> {
+function buildGlobalStateSummary(
+    state: Readonly<MainAgentGlobalState>,
+    sessionDigestOverride?: SessionDigestEntry[],
+): Record<string, unknown> {
     const schedulerEvents = state.schedulerEvents ?? [];
     const reminders = schedulerEvents.filter((event) => event.type === "reminder");
     const crons = schedulerEvents.filter((event) => event.type === "cron");
     const activeReminders = reminders.filter((event) => !event.triggered);
     const triggeredReminders = reminders.length - activeReminders.length;
     const memos = state.memos ?? [];
-    const sessionDigests = state.sessionDigests ?? [];
+    const sessionDigests = sessionDigestOverride ?? state.sessionDigests ?? [];
     const metaSessionHistory = state.metaSessionHistory ?? [];
     const signalPool = state.signalPool ?? [];
     const wakeConditions = state.wakeConditions ?? [];
@@ -852,7 +855,7 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
     });
 
     router.get("/global-state/summary", (_req, res) => {
-        res.json(buildGlobalStateSummary(deps.globalState.getState()));
+        res.json(buildGlobalStateSummary(deps.globalState.getState(), deps.globalState.getSessionDigests()));
     });
 
     router.get("/global-state", (_req, res) => {

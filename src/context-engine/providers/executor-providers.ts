@@ -61,7 +61,18 @@ interface ExecutorTargetMessagesData {
 }
 
 interface ExecutorSessionDigestsData {
-    sessionDigests: Array<{ createdAt: string; content: string }>;
+    sessionDigests: Array<{
+        createdAt: string;
+        content: string;
+        kind?: string;
+        actorType?: string;
+        actorId?: string;
+        sourceChatId?: string | null;
+        sourceChatTitle?: string | null;
+        targetChatId?: string | null;
+        taskId?: string | null;
+        runId?: string | null;
+    }>;
 }
 
 const TARGET_MESSAGE_HEADER_RE = /^\[[^\]]*\] \[msgId:([^\]]+)\] /;
@@ -306,8 +317,25 @@ function renderTargetMessagesBody(data: ExecutorTargetMessagesData): string {
 }
 
 function clampSessionDigestLimit(value: unknown): number {
-    if (typeof value !== "number" || !Number.isFinite(value)) return 10;
+    if (typeof value !== "number" || !Number.isFinite(value)) return 30;
     return Math.max(1, Math.min(30, Math.floor(value)));
+}
+
+function formatSessionDigestLine(item: ExecutorSessionDigestsData["sessionDigests"][number]): string {
+    const sourceParts = [
+        item.actorType,
+        item.actorId,
+        item.sourceChatTitle || item.sourceChatId,
+        item.kind,
+    ].filter(Boolean);
+    const source = sourceParts.length > 0 ? ` [${sourceParts.join(" / ")}]` : "";
+    const refs = [
+        item.taskId ? `task=${item.taskId}` : "",
+        item.runId ? `run=${item.runId}` : "",
+        item.targetChatId ? `target=${item.targetChatId}` : "",
+    ].filter(Boolean);
+    const refText = refs.length > 0 ? ` (${refs.join(", ")})` : "";
+    return `- [${formatTsForPrompt(item.createdAt)}]${source}${refText} ${item.content}`;
 }
 
 // ═══ 0. Meta Session Digests ═══
@@ -355,7 +383,7 @@ export const executorSessionDigestsProvider: SectionProvider<ExecutorSessionDige
     render(data) {
         return [
             "# 历史 Session Digests",
-            ...data.sessionDigests.map((item) => `- [${formatTsForPrompt(item.createdAt)}] ${item.content}`),
+            ...data.sessionDigests.map(formatSessionDigestLine),
         ].join("\n");
     },
     renderDelta(delta) {
@@ -366,7 +394,7 @@ export const executorSessionDigestsProvider: SectionProvider<ExecutorSessionDige
         return [
             "# 历史 Session Digests",
             `(增量: ${delta.sessionDigests.length} 条)`,
-            ...delta.sessionDigests.map((item) => `- [${formatTsForPrompt(item.createdAt)}] ${item.content}`),
+            ...delta.sessionDigests.map(formatSessionDigestLine),
         ].join("\n");
     },
 };
