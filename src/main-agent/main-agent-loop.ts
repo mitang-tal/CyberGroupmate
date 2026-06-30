@@ -820,6 +820,11 @@ function createSyntheticMetaEntry(item: AttentionItem): AttentionQueueEntry {
     };
 }
 
+function extractExplicitDigest(text?: string): string | undefined {
+    const match = text?.match(/\[SESSION_DIGEST\]([\s\S]*?)(?:\[\/SESSION_DIGEST\]|$)/);
+    return match?.[1]?.trim() || undefined;
+}
+
 function formatDispatchCompletionDigest(
     task: DispatchedSubagentTaskRecord,
     callback: SubagentCallback,
@@ -829,15 +834,12 @@ function formatDispatchCompletionDigest(
         : task.sourceType === "harness"
             ? `Harness${task.sourceChatId ? ` ${task.sourceChatId}` : ""}`
         : "Meta";
-    const sent = callback.sentMessages?.length
-        ? `sent=${callback.sentMessages.map((msg) => `"${truncateForPrompt(msg.text, 80)}"`).join(" / ")}`
-        : "sent=none";
+    const digest = extractExplicitDigest(callback.summary);
     return [
         `[DISPATCH_DONE] ${source} -> ${task.chatId}: task=${task.taskId}, status=${callback.status}`,
         `direction=${truncateForPrompt(task.contentDirection, 160)}`,
-        `summary=${truncateForPrompt(callback.summary, 240)}`,
+        digest ? `summary=${truncateForPrompt(digest, 240)}` : "",
         callback.error ? `error=${truncateForPrompt(callback.error, 160)}` : "",
-        sent,
     ].filter(Boolean).join("；");
 }
 

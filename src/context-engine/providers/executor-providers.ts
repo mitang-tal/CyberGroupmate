@@ -38,7 +38,14 @@ export interface ExecutorResolveContext extends ResolveContext {
     targetMessages?: string;
     availableStickers?: Array<{ emoji?: string; emojis?: string[]; description: string; uniqueFileId: string }>;
     groundingContext?: string;
-    sessionDigests?: Array<{ createdAt: string; content: string }>;
+    sessionDigests?: Array<{
+        createdAt: string;
+        content: string;
+        kind?: string;
+        actorType?: string;
+        sourceChatId?: string | null;
+        targetChatId?: string | null;
+    }>;
     sessionDigestLimit?: number;
     imageParts?: unknown[];
     useSkills?: string[];
@@ -341,19 +348,27 @@ function formatSessionDigestLine(item: ExecutorSessionDigestsData["sessionDigest
 
 // ═══ 0. Meta Session Digests ═══
 
-/** Meta 历史 Session Digests — delta-only（给 subagent 同步总编排者最近状态增量） */
+/** 历史 Session Digests — delta-only（meta 和本体相关的摘要增量） */
 export const executorSessionDigestsProvider: SectionProvider<ExecutorSessionDigestsData> = {
     schema: {
         name: "executor.session_digests",
-        label: "Meta 历史 Session Digests",
+        label: "历史 Session Digests",
         source: "globalState.sessionDigests",
         cache: "delta",
         history: "delta-only",
     },
     resolve(ctx: ExecutorResolveContext) {
         if (!ctx.sessionDigests?.length) return null;
+        const myChat = ctx.chatId;
+        const visible = ctx.sessionDigests.filter((d) => {
+            if (d.actorType === "meta" || d.sourceChatId === "__meta__") return true;
+            if (d.sourceChatId === myChat || d.targetChatId === myChat) return true;
+            if (!d.sourceChatId && !d.targetChatId) return true;
+            return false;
+        });
+        if (!visible.length) return null;
         const limit = clampSessionDigestLimit(ctx.sessionDigestLimit);
-        return { sessionDigests: ctx.sessionDigests.slice(-limit) };
+        return { sessionDigests: visible.slice(-limit) };
     },
     diff(current, committed): DiffResult<ExecutorSessionDigestsData> {
         if (!committed) {
