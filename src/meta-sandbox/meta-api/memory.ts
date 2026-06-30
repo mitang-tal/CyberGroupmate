@@ -13,7 +13,7 @@ import type {
 } from "../../memory-v2/index.js";
 import type { GlobalState } from "../../main-agent/global-state.js";
 import { timestampInputToIso } from "../../core/timezone.js";
-import { isPrivateChat, scrubFactsByVisibility, scrubRowsByVisibility, type PolicyContext } from "../../core/visibility-policy.js";
+import { isPrivateChat, scrubAssociatedMemoriesByVisibility, scrubFactsByVisibility, scrubRowsByVisibility, type PolicyContext } from "../../core/visibility-policy.js";
 
 export interface MemorySearchEntitiesOptions {
     chatId?: string;
@@ -143,6 +143,7 @@ export function scrubDossiers(dossiers: MemoryPersonDossier[] | undefined, ctx: 
         d.facts = scrubFactsByVisibility(d.facts ?? [], ctx, "memory.getPersonDossier").kept;
         d.recentMessages = scrubRowsByVisibility(d.recentMessages ?? [], (r) => r.chatId, ctx).kept;
         d.recentTopics = scrubRowsByVisibility(d.recentTopics ?? [], (r) => r.chatId, ctx).kept;
+        d.recentTopics = scrubAssociatedMemoriesByVisibility(d.recentTopics, ctx, "memory.getPersonDossier.recentTopics").kept;
         d.recentInteractions = scrubRowsByVisibility(d.recentInteractions ?? [], (r) => r.chatId, ctx).kept;
         d.groupProfiles = scrubRowsByVisibility(d.groupProfiles ?? [], (r) => r.chatId, ctx).kept;
     }

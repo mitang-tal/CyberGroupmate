@@ -300,6 +300,11 @@ export interface FactVisibilityFields {
     sourceChatId?: string | null;
 }
 
+/** 带有关联记忆的返回行最小形态（topic / dossier recentTopics 等）。 */
+export interface AssociatedMemoriesVisibilityFields {
+    associatedMemories?: readonly unknown[];
+}
+
 /**
  * R1（聚合，fact 专用）— 丢弃来源 ≠ C 且任一为真的 fact：
  * - fact 自身被标记 `visibility=private`，或
@@ -322,4 +327,44 @@ export function scrubFactsByVisibility<T extends FactVisibilityFields>(
         ctx,
         method,
     );
+}
+
+/**
+ * R1（聚合，嵌套 associatedMemories）— topic 本身可能来自 shared 会话，但其关联记忆里
+ * 携带了来自 private 会话的 core_fact。返回给调用方前只过滤嵌套关联记忆，不修改写入路径。
+ */
+export function scrubAssociatedMemoriesByVisibility<T extends AssociatedMemoriesVisibilityFields>(
+    rows: readonly T[],
+    ctx: PolicyContext,
+    method?: string,
+): ScrubResult<T> {
+    if (ctx.enforce === "off" || !Array.isArray(rows)) {
+        return { kept: (rows ?? []) as T[], dropped: 0 };
+    }
+
+    let kept: T[] | null = null;
+    let dropped = 0;
+    for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const memories = row.associatedMemories;
+        if (!Array.isArray(memories) || memories.length === 0) {
+            if (kept !== null) kept.push(row);
+            continue;
+        }
+
+        const scrubbed = scrubFactsByVisibility(
+            memories.map((memory) => memory as FactVisibilityFields),
+            ctx,
+            method ? `${method}.associatedMemories` : undefined,
+        );
+        dropped += scrubbed.dropped;
+        if (scrubbed.dropped > 0) {
+            if (kept === null) kept = rows.slice(0, i) as T[];
+            kept.push({ ...row, associatedMemories: scrubbed.kept as unknown[] } as T);
+            continue;
+        }
+        if (kept !== null) kept.push(row);
+    }
+
+    return { kept: kept ?? (rows as T[]), dropped };
 }

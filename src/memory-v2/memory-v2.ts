@@ -1734,6 +1734,8 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
                         category: row.category as FactCategory,
                         subject: row.subject as string,
                         confidence: row.confidence as number,
+                        sourceChatId: (row.source_chat_id as string | null) ?? null,
+                        visibility: (row.visibility as "private" | "contextual" | "public") ?? undefined,
                     });
                 }
             } catch { /* LIKE fallback */ }

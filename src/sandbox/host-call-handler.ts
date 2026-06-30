@@ -5,6 +5,7 @@ import {
     assertEgressAllowed,
     isExplicitReadBlocked,
     makePolicyContext,
+    scrubAssociatedMemoriesByVisibility,
     scrubFactsByVisibility,
     scrubRowsByVisibility,
     type PolicyContext,
@@ -803,7 +804,8 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
                 before: timestampInputToIso(options?.before) ?? undefined,
                 chatId: options?.chatId ?? chatId,
             });
-            return scrubRowsByVisibility(rows, (r) => r.chatId, ctx, method).kept;
+            const visibleRows = scrubRowsByVisibility(rows, (r) => r.chatId, ctx, method).kept;
+            return scrubAssociatedMemoriesByVisibility(visibleRows, ctx, method).kept;
         }
         if (method === "memory.searchMessages") {
             const [query, options] = args as [string, { chatId?: string; userId?: string; after?: string | number | Date; before?: string | number | Date; limit?: number } | undefined];

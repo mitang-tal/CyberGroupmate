@@ -38,6 +38,8 @@ const OTHER_SHARED = "telegram:-1007003";
 // 私密会话里的"机密"原文：兜底有效 ⇒ 这些字符串永远不该出现在跨界读取/外发结果里。
 const SECRET_TEXT = "我的信用卡号是 4111-1111-1111-1111，验证码 321";
 const SECRET_PLAN = "周五凌晨两点在码头碰头，别让任何人知道";
+const SECRET_FACT = "内部暗号 needle OR 绝不能跨群泄露";
+const SECRET_ASSOCIATED_MEMORY = "关联记忆中的私密事实 assocpriv-secret";
 
 let memory: MemoryStoreV2;
 
@@ -95,7 +97,8 @@ function makeHandler(boundChatId: string) {
 function leaksSecret(value: unknown): boolean {
     const blob = JSON.stringify(value ?? null);
     return blob.includes(SECRET_TEXT) || blob.includes(SECRET_PLAN)
-        || blob.includes("4111-1111") || blob.includes("码头碰头");
+        || blob.includes(SECRET_FACT) || blob.includes(SECRET_ASSOCIATED_MEMORY)
+        || blob.includes("4111-1111") || blob.includes("码头碰头") || blob.includes("assocpriv-secret");
 }
 
 describe("提示注入 / 社工诱导下，Subagent 仍无法提取指定私密会话的消息", () => {
@@ -123,6 +126,13 @@ describe("提示注入 / 社工诱导下，Subagent 仍无法提取指定私密�
         memory.storeInteraction({ date: "2026-01-10T11:00:00Z", chatId: ATTACKER_GROUP, userId: "attacker", topicId: "tp_chat", type: "agent_mentioned", summary: "群里闲聊被 @", sentiment: "positive", significance: 0.3 } as any);
         memory.storeInteraction({ date: "2026-01-10T12:00:00Z", chatId: OTHER_SHARED, userId: "someone", topicId: "tp_ball", type: "agent_mentioned", summary: "约打球", sentiment: "positive", significance: 0.3 } as any);
 
+        // ── 私密 fact（覆盖 recall FTS 失败 → LIKE fallback 的 provenance scrub 路径）──
+        memory.storeFact("victim", SECRET_FACT, "general", "test", undefined, undefined, 1, {
+            sourceChatId: VICTIM_PRIVATE,
+            visibility: "contextual",
+            sensitivity: "low",
+        });
+
         // ── 话题（显式 target 读 searchTopics 的 R1 路径）──
         memory.upsertTopic("tp_secret", {
             chatId: VICTIM_PRIVATE,
@@ -132,6 +142,27 @@ describe("提示注入 / 社工诱导下，Subagent 仍无法提取指定私密�
             participants: ["victim"],
             messageRange: { firstMessageId: 1, lastMessageId: 2, count: 2 },
             startedAt: "2026-01-10T10:00:00Z",
+        });
+        // 普通群 topic 里夹带一条来自私密会话的 associatedMemory：返回时应递归 scrub，不改写入路径。
+        memory.upsertTopic("tp_public_assoc", {
+            chatId: ATTACKER_GROUP,
+            label: "公开关联测试",
+            summary: "普通群里的公开话题",
+            keywords: ["assocpriv"],
+            participants: ["attacker"],
+            messageRange: { firstMessageId: 3, lastMessageId: 3, count: 1 },
+            startedAt: "2026-01-10T11:30:00Z",
+            associatedMemories: [{
+                type: "core_fact",
+                factId: "private-associated-fact",
+                subject: "victim",
+                category: "general",
+                content: SECRET_ASSOCIATED_MEMORY,
+                confidence: 1,
+                sourceChatId: VICTIM_PRIVATE,
+                visibility: "contextual",
+                sensitivity: "low",
+            }],
         });
     });
 
@@ -175,6 +206,20 @@ describe("提示注入 / 社工诱导下，Subagent 仍无法提取指定私密�
             assert.ok(rows.every((r) => r.chatId !== VICTIM_PRIVATE), "私密会话的交互必须被 scrub");
             assert.ok(rows.some((r) => r.chatId === ATTACKER_GROUP));
             assert.ok(!leaksSecret(rows), "聚合结果不得带出私密会话的机密 summary");
+        });
+
+        it("memory.semanticSearch 的 recall fallback 也保留 provenance 并 scrub 私密 fact", async () => {
+            const { handler } = makeHandler(ATTACKER_GROUP);
+            const rows = await handler("memory.semanticSearch", ["needle OR", { scope: "facts", limit: 5 }]);
+            assert.ok(!leaksSecret(rows), "FTS 失败后的 LIKE fallback 不得带出私密 fact");
+        });
+
+        it("memory.searchTopics 返回普通群 topic 时会递归 scrub 私密 associatedMemories", async () => {
+            const { handler } = makeHandler(ATTACKER_GROUP);
+            const rows = (await handler("memory.searchTopics", ["assocpriv", { chatId: ATTACKER_GROUP }])) as Array<{ associatedMemories?: unknown[] }>;
+            assert.ok(rows.length > 0, "普通群 topic 本身应保留");
+            assert.ok(!leaksSecret(rows), "普通群 topic 不得夹带来自私密会话的 associatedMemories");
+            assert.ok((rows[0]?.associatedMemories ?? []).length === 0, "私密 associatedMemories 应在返回时被过滤");
         });
 
         it("对照组：读攻击者群自己的消息 / 跨另一个普通群仍正常（兜底是定向的，不是一刀切）", async () => {
