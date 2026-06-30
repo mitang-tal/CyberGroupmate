@@ -283,6 +283,15 @@ export interface GroupModel {
     chatTitle: string;
     /** 是否为私聊（由 adapter 层提供） */
     isDirectMessage?: boolean;
+    /**
+     * 是否被标记为敏感/私密会话（append-only，只进不出）。
+     * 由人工配置种子或 LLM 运行时 privacy.markSensitive() 设置，用于全局 visibility 兜底。
+     */
+    markedSensitive?: boolean;
+    /** 标记为敏感的原因（markedSensitive 为 true 时记录）。 */
+    sensitiveReason?: string;
+    /** 标记为敏感的时间 (ISO 8601)。 */
+    sensitiveAt?: string | null;
     /** 群组描述/定位 */
     description: string;
     /** 主要语言 */
@@ -377,12 +386,14 @@ export interface RecallOptions {
 export interface RecallResult {
     /** 匹配的话题节点 */
     topics: TopicNode[];
-    /** 匹配的核心事实 */
+    /** 匹配的核心事实（携带 sourceChatId/visibility，供 chokepoint 兜底 scrub 跨会话私密内容） */
     facts: Array<{
         content: string;
         category: FactCategory;
         subject: string;
         confidence: number;
+        sourceChatId?: string | null;
+        visibility?: "private" | "contextual" | "public";
     }>;
     /** 匹配的个体画像 */
     persons: PersonGroupProfile[];
@@ -631,6 +642,12 @@ export interface IMemoryStoreV2 {
     /** 获取群组画像 */
     getGroupModel(chatId: string): GroupModel | null;
 
+    /**
+     * 将某会话标记为敏感/私密（append-only：只置 true、幂等、无取消路径）。
+     * 用于全局 visibility 兜底；标记后该会话按 private 处理。
+     */
+    markChatSensitive(chatId: string, reason?: string): GroupModel | null;
+
     /** 获取全局个体身份 */
     getPersonIdentity(userId: string): PersonIdentity | null;
 
@@ -649,8 +666,8 @@ export interface IMemoryStoreV2 {
     /** 向量搜索 topics（纯 JS 余弦相似度） */
     vectorSearchTopics(queryEmbedding: Float32Array, limit?: number, chatId?: string): Array<TopicNode & { similarity: number }>;
 
-    /** 向量搜索 core_facts（纯 JS 余弦相似度） */
-    vectorSearchFacts(queryEmbedding: Float32Array, limit?: number, categories?: FactCategory[]): Array<{ id: string; content: string; category: FactCategory; subject: string; confidence: number; similarity: number }>;
+    /** 向量搜索 core_facts（纯 JS 余弦相似度）。返回 visibility/sourceChatId 供 chokepoint scrub。 */
+    vectorSearchFacts(queryEmbedding: Float32Array, limit?: number, categories?: FactCategory[]): Array<{ id: string; content: string; category: FactCategory; subject: string; confidence: number; similarity: number; visibility?: "private" | "contextual" | "public"; sourceChatId?: string | null }>;
 
     // ─── 检索方法 ───
 
