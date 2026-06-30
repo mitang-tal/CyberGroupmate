@@ -166,6 +166,7 @@ export function createDispatchApi(deps: DispatchApiDeps) {
                 tags: ["dispatch"],
             });
             executor.enqueue(task);
+            deps.accumulator.block(chatId);
             deps.accumulator.markActioned(chatId);
             await deps.onTaskDispatched?.(task);
 
