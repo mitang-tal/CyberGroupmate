@@ -289,7 +289,7 @@ export interface SubagentExternalConfig {
     /**
      * Subagent 发言前禁用词列表。
      * 若文本消息中包含列表中的任一词语，发送将被拦截并向 LLM 发出警告提示改写。
-     * 若不配置，使用内置默认词表（见 src/core/banned-words.ts DEFAULT_BANNED_WORDS）。
+     * 通过 Dashboard 或 config.yaml 配置；未配置时不拦截。
      */
     bannedWords?: string[];
     cosineDecay?: {

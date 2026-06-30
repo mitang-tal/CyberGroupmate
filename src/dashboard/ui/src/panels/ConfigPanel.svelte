@@ -43,6 +43,7 @@
   let newProfileName = "";
   let newKeyword = "";
   let newBaseSkill = "";
+  let newBannedWord = "";
   /** 当前展开的 profile 名称集合 */
   let expandedProfiles = new Set();
 
@@ -121,6 +122,9 @@
       if (!config.subagent.metaHistory) config.subagent.metaHistory = {};
       if (!config.subagent.baseSkills) config.subagent.baseSkills = [
         "runtime", "fs", "skills", "mcp", "cron", "todo", "memory", "dispatch", "vision", "shell",
+      ];
+      if (!config.subagent.bannedWords) config.subagent.bannedWords = [
+        "确实", "笑死", "还真是", "接住", "抓住", "你说得对", "说得对", "不绕", "我认了",
       ];
       if (!config.llmRouting) config.llmRouting = {};
       if (!config.llmRouting.timeouts) config.llmRouting.timeouts = {};
@@ -343,6 +347,25 @@
   function resetBaseSkills() {
     config.subagent.baseSkills = [
       "runtime", "fs", "skills", "mcp", "cron", "todo", "memory", "dispatch", "vision", "shell",
+    ];
+    config = config;
+  }
+  // ── Banned Words helpers ──
+  function addBannedWord() {
+    const w = newBannedWord.trim();
+    if (!w) return;
+    if (!config.subagent.bannedWords) config.subagent.bannedWords = [];
+    if (!config.subagent.bannedWords.includes(w)) {
+      config.subagent.bannedWords = [...config.subagent.bannedWords, w];
+    }
+    newBannedWord = "";
+  }
+  function removeBannedWord(w) {
+    config.subagent.bannedWords = config.subagent.bannedWords.filter((x) => x !== w);
+  }
+  function resetBannedWords() {
+    config.subagent.bannedWords = [
+      "确实", "笑死", "还真是", "接住", "抓住", "你说得对", "说得对", "不绕", "我认了",
     ];
     config = config;
   }
@@ -616,6 +639,10 @@
               {addBaseSkill}
               {removeBaseSkill}
               {resetBaseSkills}
+              bind:newBannedWord
+              {addBannedWord}
+              {removeBannedWord}
+              {resetBannedWords}
             />
           {:else if currentSection === "recordingPipeline"}
             <RecordingPipelineTab bind:config />
