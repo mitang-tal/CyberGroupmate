@@ -322,6 +322,20 @@ export class MainAgentLoop {
                 if (item.source !== "PROACTIVE_IDLE") {
                     this.lastNonIdleActivityAt = Date.now();
                 }
+
+                // 如果该 chatId 的 executor 正在处理或队列中有任务，
+                // 跳过本轮（subagent 执行时已能看到新消息，无需重复派发）。
+                // CALLBACK 不排除（那是 subagent 完成后的回调通知）。
+                if (item.source !== "CALLBACK") {
+                    const ex = this.subagentManager.get(item.chatId)?.codeActExecutor as
+                        { isProcessing?(): boolean; getQueueSize?(): number } | null | undefined;
+                    if (ex && (ex.isProcessing?.() || (ex.getQueueSize?.() ?? 0) > 0)) {
+                        this.accumulator.requeue(item);
+                        log.debug("executor busy，放回 accumulator", { chatId: item.chatId, layer: item.layer });
+                        continue;
+                    }
+                }
+
                 if (attendedThisTick.has(item.chatId)) {
                     const existingEntry = entryByChatId.get(item.chatId);
                     if (existingEntry && item.source === "TOPIC_SIGNAL") {
