@@ -407,7 +407,7 @@ export interface DashboardExternalConfig {
 
 /** Metrics Exporter 配置 */
 export interface MetricsConfig {
-    /** 是否启用。默认 true */
+    /** 是否启用。默认 false */
     enabled?: boolean;
     /**
      * 绑定地址。默认且强烈推荐保持 "127.0.0.1"（仅本机可访问）。

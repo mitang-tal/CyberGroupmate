@@ -1314,7 +1314,7 @@ async function main(): Promise<void> {
 
     // ─── Prometheus Metrics Exporter ───
     let metricsInstance: import("./metrics/index.js").MetricsInstance | null = null;
-    const metricsEnabled = appConfig.metrics?.enabled !== false;
+    const metricsEnabled = appConfig.metrics?.enabled === true;
     if (metricsEnabled) {
         const { startMetrics } = await import("./metrics/index.js");
         metricsInstance = await startMetrics(

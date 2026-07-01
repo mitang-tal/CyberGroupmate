@@ -372,8 +372,8 @@ dashboard:
 # 对外暴露 Prometheus 兼容的 /metrics 端点，供 Grafana / Prometheus 抓取
 # 所有字段可选，缺省使用括号内安全默认值
 metrics:
-  # 是否启用（默认 true）
-  enabled: true
+  # 是否启用（默认 false）
+  enabled: false
   # ⚠️ 绑定地址（默认 "127.0.0.1" = 仅本机可访问）
   # 强烈建议保持此值。若需要远端 Prometheus 抓取，请使用 nginx/Caddy 反向代理
   # 并配置 IP allowlist，而非直接修改此字段为 0.0.0.0。
