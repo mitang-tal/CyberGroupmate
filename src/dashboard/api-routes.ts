@@ -9,6 +9,7 @@ import * as fs from "node:fs";
 import { join } from "node:path";
 import type { DashboardDeps } from "./types.js";
 import type { EventBridge } from "./event-bridge.js";
+import { userGate } from "../adapter/user-gate.js";
 import type { CodeActExecutor } from "../subagent/code-act-executor.js";
 import { refreshModuleRegistryCache } from "../subagent/code-act-executor.js";
 import { createLogger } from "../core/logger.js";
@@ -1913,18 +1914,11 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         res.json({ ok: true, unmutedCount: count });
     });
 
-    // ─── Invisible Users（隐身用户：消息对 Bot 完全不可见，目前仅 Telegram）───
-    // 获取隐身用户列表
+    // ─── Invisible Users（隐身用户：消息对 Bot 完全不可见，跨平台）───
+    const toUserRows = (ids: string[]) => ids.map((id) => ({ userId: id, platform: id.split(":")[0] || "" }));
+
     router.get("/invisible", (_req, res) => {
-        const users: Array<{ userId: string; platform: string }> = [];
-        for (const adapter of (deps.adapters ?? [])) {
-            if (typeof adapter.getInvisibleUsers === "function") {
-                for (const uid of adapter.getInvisibleUsers()) {
-                    users.push({ userId: uid, platform: adapter.platform });
-                }
-            }
-        }
-        res.json({ users });
+        res.json({ users: toUserRows(userGate.getInvisible()) });
     });
 
     // 覆盖设置隐身用户列表（立即生效，无需重启）
@@ -1932,19 +1926,23 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         const ids = Array.isArray(req.body?.userIds)
             ? req.body.userIds.map((v: unknown) => String(v).trim()).filter(Boolean)
             : [];
-        let applied = false;
-        for (const adapter of (deps.adapters ?? [])) {
-            if (typeof adapter.setInvisibleUsers === "function") {
-                // 只把属于该平台的 composite id 交给对应 adapter（如 "telegram:123"）
-                adapter.setInvisibleUsers(ids.filter((id: string) => id.startsWith(`${adapter.platform}:`)));
-                applied = true;
-            }
-        }
-        if (!applied) {
-            res.status(404).json({ ok: false, error: "no adapter supports invisible users" });
-            return;
-        }
+        userGate.setInvisible(ids);
         log.info("Dashboard 更新隐身用户列表", { count: ids.length });
+        res.json({ ok: true });
+    });
+
+    // ─── Blocked Users（紧急拉黑：LLM 触发，仅此处人工解除；跨平台）───
+    router.get("/blocked", (_req, res) => {
+        res.json({ users: toUserRows(userGate.getBlocked()) });
+    });
+
+    // 覆盖设置拉黑列表（主要用于人工解除；立即生效，无需重启）
+    router.put("/blocked", (req, res) => {
+        const ids = Array.isArray(req.body?.userIds)
+            ? req.body.userIds.map((v: unknown) => String(v).trim()).filter(Boolean)
+            : [];
+        userGate.setBlocked(ids);
+        log.info("Dashboard 更新拉黑列表", { count: ids.length });
         res.json({ ok: true });
     });
 

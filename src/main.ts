@@ -12,6 +12,7 @@
 
 import { NotificationCenter, type NotificationEvent } from "./event/notification-center.js";
 import { ensureCompositeId, getRawId, getPlatform, getGroupModelKey } from "./core/chat-id.js";
+import { userGate } from "./adapter/user-gate.js";
 import { SandboxPool } from "./sandbox/sandbox-pool.js";
 import type { ShellWakeEvent } from "./sandbox/sandbox.js";
 import { installSkillsDependencies } from "./sandbox/skill-loader.js";
@@ -707,6 +708,13 @@ async function main(): Promise<void> {
                 log.debug("chatFilter 丢弃入站消息", { chatId, mode: chatFilter.mode ?? "blacklist" });
                 return;
             }
+        }
+
+        // ─── 跨平台用户闸门：隐身 / 紧急拉黑用户的消息直接丢弃（所有平台统一，无需重启） ───
+        const senderUid = ensureCompositeId(getPlatform(chatId), String(event.userId ?? event.user_id ?? event.senderId ?? ""));
+        if (senderUid && userGate.shouldDrop(senderUid)) {
+            log.debug("userGate 丢弃入站消息", { userId: senderUid, chatId });
+            return;
         }
 
         // ─── 即时落盘：确保 message_log 实时可查 ───

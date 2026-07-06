@@ -699,6 +699,7 @@ export class CodeActExecutor {
         const allowedSkills = new Set<string>([
             ...baseSkills,
             "dispatch",
+            "emergency",  // 安全兜底：紧急拉黑始终可用，不受 baseSkills 配置影响
             platform,
             ...(task.useSkills ?? []),
         ]);

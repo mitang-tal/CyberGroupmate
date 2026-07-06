@@ -29,8 +29,4 @@ export interface PlatformAdapter {
     isChatMuted?(chatId: string): boolean;
     /** 将指定聊天标记为已读（不支持的平台应静默忽略） */
     markAsRead?(chatId: string): Promise<void>;
-    /** 获取隐身用户 id 列表（composite id；Dashboard 用，目前仅 Telegram 实现） */
-    getInvisibleUsers?(): string[];
-    /** 覆盖设置隐身用户列表并持久化（Dashboard 用，目前仅 Telegram 实现） */
-    setInvisibleUsers?(userIds: string[]): void;
 }

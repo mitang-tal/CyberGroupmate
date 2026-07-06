@@ -434,6 +434,16 @@ export interface ChatFilterConfig {
     chatIds?: string[];
 }
 
+/** 紧急拉黑（emergency.block）预设文案。拉黑瞬间对被拉黑者发送一次。 */
+export interface EmergencyBlockConfig {
+    /** 拉黑时发送的预设文案。 */
+    message?: string;
+}
+
+/** 紧急拉黑默认文案（config 未设置时使用）。 */
+export const DEFAULT_EMERGENCY_BLOCK_MESSAGE =
+    "抱歉，这个对话我没有办法继续了。如果你正处于困境或危机中，请联系当地专业求助渠道或你信任的人。相关情况会由管理员处理。";
+
 /** Token 价格配置（每百万 token，USD） */
 export type TokenPricingEntry = NonNullable<LLMConfig["pricing"]>;
 
@@ -537,6 +547,8 @@ export interface AppConfig {
     metrics?: MetricsConfig;
     /** 聊天过滤（按 chatId 黑/白名单过滤入站消息） */
     chatFilter?: ChatFilterConfig;
+    /** 紧急拉黑预设文案（emergency.block） */
+    emergencyBlock?: EmergencyBlockConfig;
     /** MCP Server 预配置列表（Sandbox 启动时自动连接） */
     mcpServers?: McpServerPreConfig[];
     /** Grounding（联网事实查证）配置 */
@@ -741,6 +753,7 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
         envVars: parseEnvVars(fileConfig),
         metrics: parseMetricsConfig(fileConfig),
         chatFilter: parseChatFilterConfig(fileConfig),
+        emergencyBlock: parseEmergencyBlockConfig(fileConfig),
         mcpServers: parseMcpServersConfig(fileConfig),
         grounding: parseGroundingConfig(fileConfig),
         rateLimiting: parseRateLimitingConfig(fileConfig),
@@ -879,6 +892,14 @@ function parseChatFilterConfig(fileConfig: Record<string, unknown>): ChatFilterC
             ? idsRaw.map(v => String(v).trim()).filter(Boolean)
             : undefined,
     };
+}
+
+function parseEmergencyBlockConfig(fileConfig: Record<string, unknown>): EmergencyBlockConfig | undefined {
+    const raw = (fileConfig.emergency_block ?? fileConfig.emergencyBlock) as Record<string, unknown> | undefined;
+    if (!raw || typeof raw !== "object") return undefined;
+    const message = str(raw.message);
+    if (message == null) return undefined;
+    return { message };
 }
 
 // ─── MCP Servers 预配置解析 ───
@@ -1723,6 +1744,11 @@ export function serializeConfigToObject(config: AppConfig): Record<string, unkno
         if (config.chatFilter.mode) cf.mode = config.chatFilter.mode;
         if (config.chatFilter.chatIds && config.chatFilter.chatIds.length > 0) cf.chat_ids = config.chatFilter.chatIds;
         if (Object.keys(cf).length > 0) obj.chat_filter = cf;
+    }
+
+    // emergency_block
+    if (config.emergencyBlock && config.emergencyBlock.message != null) {
+        obj.emergency_block = { message: config.emergencyBlock.message };
     }
 
     return obj;

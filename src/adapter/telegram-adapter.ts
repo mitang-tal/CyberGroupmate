@@ -12,6 +12,7 @@ import type { TelegramConfig } from "../core/config.js";
 import type { PlatformAdapter } from "./platform-adapter.js";
 import { composeChatId, parseChatId, isTelegram, isValidCompositeChatId, ensureCompositeId, getPlatform } from "../core/chat-id.js";
 import { createLogger } from "../core/logger.js";
+import { userGate } from "./user-gate.js";
 import type { MediaDownloader } from "../core/media-downloader.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -33,35 +34,12 @@ function normalizeWhitelistId(raw: string): string {
 // ─── 常量 ───
 
 const DEFAULT_MEDIA_CACHE_DIR = "workspace/media-cache";
-const INVISIBLE_USERS_PATH = "workspace/invisible-users.json";
 const OUTGOING_MEDIA_FILE_EXTENSIONS = new Set([
     ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".avif", ".heic", ".heif",
     ".mp4", ".m4v", ".mov", ".webm", ".mkv", ".avi",
     ".mp3", ".m4a", ".aac", ".ogg", ".oga", ".opus", ".wav", ".flac",
     ".pdf", ".txt", ".zip", ".rar", ".7z",
 ]);
-
-// ─── Invisible Users 持久化 ───
-
-function loadInvisibleUsers(): Set<string> {
-    try {
-        if (fs.existsSync(INVISIBLE_USERS_PATH)) {
-            const data = JSON.parse(fs.readFileSync(INVISIBLE_USERS_PATH, "utf-8"));
-            if (Array.isArray(data)) return new Set(data);
-        }
-    } catch { /* ignore corrupt file */ }
-    return new Set();
-}
-
-function saveInvisibleUsers(users: Set<string>): void {
-    try {
-        const dir = path.dirname(INVISIBLE_USERS_PATH);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        fs.writeFileSync(INVISIBLE_USERS_PATH, JSON.stringify([...users]), "utf-8");
-    } catch (err) {
-        log.warn("saveInvisibleUsers: 写入失败", { error: String(err) });
-    }
-}
 
 // ─── 媒体文件缓存 ───
 
@@ -267,8 +245,7 @@ export class TelegramAdapter implements PlatformAdapter {
     // ─── 拟人化延迟状态 ───
     private lastSendTimes = new Map<string, number>();
 
-    // ─── /invisible & /mute 状态 ───
-    private invisibleUsers: Set<string> = loadInvisibleUsers();
+    // ─── /mute 状态（invisible/blocked 已迁移到跨平台 userGate） ───
     private mutedChats: Map<string, number> = new Map();  // chatId → expiry timestamp (ms)
 
     /** 白名单 ID 集合（配置加载时构建，与 rawId 比对） */
@@ -343,11 +320,7 @@ export class TelegramAdapter implements PlatformAdapter {
             const cmdHandled = await this.handleBotCommand(normalized, msg);
             if (cmdHandled) return;  // 命令消息不进入 NC
 
-            // ─── invisible 用户消息静默丢弃 ───
-            if (this.invisibleUsers.has(normalized.userId)) {
-                log.debug("invisible 用户消息已丢弃", { userId: normalized.userId, chatId: normalized.chatId });
-                return;
-            }
+            // invisible / 紧急拉黑用户的消息由 main.ts 的 userGate 统一丢弃（跨平台）。
 
             log.debug("接收 Telegram 消息", {
                 messageId: normalized.messageId,
@@ -1953,24 +1926,7 @@ export class TelegramAdapter implements PlatformAdapter {
         }
     }
 
-    // ─── /invisible & /mute 公开查询方法 ───
-
-    /** 检查用户是否处于 invisible 状态 */
-    isUserInvisible(userId: string): boolean {
-        return this.invisibleUsers.has(userId);
-    }
-
-    /** 获取隐身用户列表（Dashboard 用） */
-    getInvisibleUsers(): string[] {
-        return [...this.invisibleUsers];
-    }
-
-    /** 覆盖设置隐身用户列表并持久化（Dashboard 用，立即生效） */
-    setInvisibleUsers(userIds: string[]): void {
-        this.invisibleUsers = new Set(userIds.map(s => String(s).trim()).filter(Boolean));
-        saveInvisibleUsers(this.invisibleUsers);
-        log.info("隐身用户列表已更新（Dashboard）", { count: this.invisibleUsers.size });
-    }
+    // ─── /mute 公开查询方法（invisible/blocked 已迁移到跨平台 userGate） ───
 
     /** 检查聊天是否被 mute（未过期） */
     isChatMuted(chatId: string): boolean {
@@ -2073,19 +2029,16 @@ export class TelegramAdapter implements PlatformAdapter {
             }
         }
 
-        // ── /invisible ──
+        // ── /invisible ──（跨平台 userGate 统一维护隐身集）
         if (/^\/invisible(?:@\S+)?$/i.test(text)) {
             const userId = normalized.userId;
-            if (this.invisibleUsers.has(userId)) {
-                this.invisibleUsers.delete(userId);
-                saveInvisibleUsers(this.invisibleUsers);
-                log.info("/invisible OFF", { userId, chatId: normalized.chatId });
-                await this.replySafe(normalized.chatId, `👁 你已取消隐身。Bot 将正常处理你的消息。`, 8000);
-            } else {
-                this.invisibleUsers.add(userId);
-                saveInvisibleUsers(this.invisibleUsers);
+            const nowInvisible = userGate.toggleInvisible(userId);
+            if (nowInvisible) {
                 log.info("/invisible ON", { userId, chatId: normalized.chatId });
                 await this.replySafe(normalized.chatId, `🫥 你已开启隐身。你的所有消息将对 Bot 完全不可见（不处理、不记录）。再次发送 /invisible 可取消。`, 8000);
+            } else {
+                log.info("/invisible OFF", { userId, chatId: normalized.chatId });
+                await this.replySafe(normalized.chatId, `👁 你已取消隐身。Bot 将正常处理你的消息。`, 8000);
             }
             return true;
         }
