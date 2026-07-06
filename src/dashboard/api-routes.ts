@@ -1913,6 +1913,41 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         res.json({ ok: true, unmutedCount: count });
     });
 
+    // ─── Invisible Users（隐身用户：消息对 Bot 完全不可见，目前仅 Telegram）───
+    // 获取隐身用户列表
+    router.get("/invisible", (_req, res) => {
+        const users: Array<{ userId: string; platform: string }> = [];
+        for (const adapter of (deps.adapters ?? [])) {
+            if (typeof adapter.getInvisibleUsers === "function") {
+                for (const uid of adapter.getInvisibleUsers()) {
+                    users.push({ userId: uid, platform: adapter.platform });
+                }
+            }
+        }
+        res.json({ users });
+    });
+
+    // 覆盖设置隐身用户列表（立即生效，无需重启）
+    router.put("/invisible", (req, res) => {
+        const ids = Array.isArray(req.body?.userIds)
+            ? req.body.userIds.map((v: unknown) => String(v).trim()).filter(Boolean)
+            : [];
+        let applied = false;
+        for (const adapter of (deps.adapters ?? [])) {
+            if (typeof adapter.setInvisibleUsers === "function") {
+                // 只把属于该平台的 composite id 交给对应 adapter（如 "telegram:123"）
+                adapter.setInvisibleUsers(ids.filter((id: string) => id.startsWith(`${adapter.platform}:`)));
+                applied = true;
+            }
+        }
+        if (!applied) {
+            res.status(404).json({ ok: false, error: "no adapter supports invisible users" });
+            return;
+        }
+        log.info("Dashboard 更新隐身用户列表", { count: ids.length });
+        res.json({ ok: true });
+    });
+
     // ─── System Prompts Override ───
 
     // 列出所有 prompt 文件（含 override 状态）

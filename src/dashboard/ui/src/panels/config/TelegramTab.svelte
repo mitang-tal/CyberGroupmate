@@ -1,9 +1,45 @@
 <script>
+  import { onMount } from "svelte";
   export let config;
   export let telegramEnabled = false;
   export let pwFocus;
   export let pwBlur;
   import MonacoEditor from "../../components/MonacoEditor.svelte";
+  import { api } from "../../lib/api.js";
+
+  // ─── 隐身用户（runtime 状态，独立于配置文件；立即生效，无需重启） ───
+  let invisibleText = "";
+  let invisibleLoading = false;
+  let invisibleSaved = false;
+
+  async function loadInvisible() {
+    try {
+      const res = await api("/invisible");
+      invisibleText = (res.users ?? []).map((u) => u.userId).join("\n");
+    } catch { /* ignore */ }
+  }
+
+  async function saveInvisible() {
+    invisibleLoading = true;
+    invisibleSaved = false;
+    try {
+      const userIds = invisibleText.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      const res = await api("/invisible", { method: "PUT", body: { userIds } });
+      if (res.ok) {
+        invisibleSaved = true;
+        setTimeout(() => (invisibleSaved = false), 2000);
+      } else {
+        alert("保存失败: " + (res.error ?? "unknown"));
+      }
+      await loadInvisible();
+    } catch (e) {
+      alert("保存失败: " + e.message);
+    } finally {
+      invisibleLoading = false;
+    }
+  }
+
+  onMount(loadInvisible);
 </script>
 
 <h3 class="card-title text-sm">
@@ -160,5 +196,27 @@
         }}
       /></div
     >
+  </div>
+
+  <div class="divider text-xs opacity-50 my-3">隐身用户</div>
+  <p class="text-xs opacity-50 mb-2">
+    列表中的用户消息对 Bot 完全不可见（不处理、不记录、不进入任何 pipeline / LLM）。
+    等同于用户自己发 <code>/invisible</code>。ID 用 composite 格式 <code>telegram:&lt;用户ID&gt;</code>，每行一个。
+    <span class="opacity-70">独立保存，立即生效（不随上方「保存配置」按钮）。</span>
+  </p>
+  <div class="cfg-field col-span-2">
+    <MonacoEditor
+      language="plaintext"
+      height={120}
+      value={invisibleText}
+      on:change={(e) => (invisibleText = e.detail.value)}
+    />
+  </div>
+  <div class="flex items-center gap-2 mt-2">
+    <button class="btn btn-xs btn-primary" disabled={invisibleLoading} on:click={saveInvisible}>
+      {#if invisibleLoading}<span class="loading loading-spinner loading-xs"></span>{:else}<i class="fa-solid fa-user-secret"></i>{/if}
+      保存隐身列表
+    </button>
+    {#if invisibleSaved}<span class="text-xs text-success"><i class="fa-solid fa-check"></i> 已保存并生效</span>{/if}
   </div>
 </div>

@@ -1960,6 +1960,18 @@ export class TelegramAdapter implements PlatformAdapter {
         return this.invisibleUsers.has(userId);
     }
 
+    /** 获取隐身用户列表（Dashboard 用） */
+    getInvisibleUsers(): string[] {
+        return [...this.invisibleUsers];
+    }
+
+    /** 覆盖设置隐身用户列表并持久化（Dashboard 用，立即生效） */
+    setInvisibleUsers(userIds: string[]): void {
+        this.invisibleUsers = new Set(userIds.map(s => String(s).trim()).filter(Boolean));
+        saveInvisibleUsers(this.invisibleUsers);
+        log.info("隐身用户列表已更新（Dashboard）", { count: this.invisibleUsers.size });
+    }
+
     /** 检查聊天是否被 mute（未过期） */
     isChatMuted(chatId: string): boolean {
         const expiry = this.mutedChats.get(chatId);
