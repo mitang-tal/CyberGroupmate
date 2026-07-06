@@ -421,6 +421,19 @@ export interface MetricsConfig {
     path?: string;
 }
 
+/** 聊天过滤配置：按 chatId 黑/白名单过滤入站消息 */
+export interface ChatFilterConfig {
+    /** 是否启用。默认 false */
+    enabled?: boolean;
+    /**
+     * blacklist（黑名单，默认）：列表内的 chatId 被丢弃，其余正常处理。
+     * whitelist（白名单）：仅列表内的 chatId 被处理，其余全部丢弃。
+     */
+    mode?: "blacklist" | "whitelist";
+    /** chatId 列表（composite 如 "telegram:-100..." 或 raw id 皆可匹配） */
+    chatIds?: string[];
+}
+
 /** Token 价格配置（每百万 token，USD） */
 export type TokenPricingEntry = NonNullable<LLMConfig["pricing"]>;
 
@@ -522,6 +535,8 @@ export interface AppConfig {
     envVars?: EnvironmentVariable[];
     /** Prometheus Metrics Exporter 配置 */
     metrics?: MetricsConfig;
+    /** 聊天过滤（按 chatId 黑/白名单过滤入站消息） */
+    chatFilter?: ChatFilterConfig;
     /** MCP Server 预配置列表（Sandbox 启动时自动连接） */
     mcpServers?: McpServerPreConfig[];
     /** Grounding（联网事实查证）配置 */
@@ -725,6 +740,7 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
         recordingPipeline: parseRecordingPipelineConfig(fileConfig),
         envVars: parseEnvVars(fileConfig),
         metrics: parseMetricsConfig(fileConfig),
+        chatFilter: parseChatFilterConfig(fileConfig),
         mcpServers: parseMcpServersConfig(fileConfig),
         grounding: parseGroundingConfig(fileConfig),
         rateLimiting: parseRateLimitingConfig(fileConfig),
@@ -848,6 +864,20 @@ function parseMetricsConfig(fileConfig: Record<string, unknown>): MetricsConfig 
         host: str(raw.host),
         port: raw.port != null ? num(raw.port, 9091) : undefined,
         path: str(raw.path),
+    };
+}
+
+function parseChatFilterConfig(fileConfig: Record<string, unknown>): ChatFilterConfig | undefined {
+    const raw = (fileConfig.chat_filter ?? fileConfig.chatFilter) as Record<string, unknown> | undefined;
+    if (!raw || typeof raw !== "object") return undefined;
+    const mode = str(raw.mode);
+    const idsRaw = raw.chat_ids ?? raw.chatIds;
+    return {
+        enabled: raw.enabled != null ? Boolean(raw.enabled) : undefined,
+        mode: mode === "whitelist" ? "whitelist" : mode === "blacklist" ? "blacklist" : undefined,
+        chatIds: Array.isArray(idsRaw)
+            ? idsRaw.map(v => String(v).trim()).filter(Boolean)
+            : undefined,
     };
 }
 
@@ -1674,6 +1704,25 @@ export function serializeConfigToObject(config: AppConfig): Record<string, unkno
         if (config.backgroundAgent.maxBudgetUsd != null) ba.max_budget_usd = config.backgroundAgent.maxBudgetUsd;
         if (config.backgroundAgent.extraArgs && config.backgroundAgent.extraArgs.length > 0) ba.extra_args = config.backgroundAgent.extraArgs;
         if (Object.keys(ba).length > 0) obj.background_agent = ba;
+    }
+
+    // metrics（此前遗漏：解析+启动都有，但序列化缺失，导致 dashboard 存一次配置就清空）
+    if (config.metrics) {
+        const m: Record<string, unknown> = {};
+        if (config.metrics.enabled != null) m.enabled = config.metrics.enabled;
+        if (config.metrics.host) m.host = config.metrics.host;
+        if (config.metrics.port != null) m.port = config.metrics.port;
+        if (config.metrics.path) m.path = config.metrics.path;
+        if (Object.keys(m).length > 0) obj.metrics = m;
+    }
+
+    // chat_filter
+    if (config.chatFilter) {
+        const cf: Record<string, unknown> = {};
+        if (config.chatFilter.enabled != null) cf.enabled = config.chatFilter.enabled;
+        if (config.chatFilter.mode) cf.mode = config.chatFilter.mode;
+        if (config.chatFilter.chatIds && config.chatFilter.chatIds.length > 0) cf.chat_ids = config.chatFilter.chatIds;
+        if (Object.keys(cf).length > 0) obj.chat_filter = cf;
     }
 
     return obj;

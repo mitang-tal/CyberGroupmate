@@ -22,6 +22,8 @@
   import GroundingTab from "./config/GroundingTab.svelte";
   import RateLimitingTab from "./config/RateLimitingTab.svelte";
   import BackgroundAgentTab from "./config/BackgroundAgentTab.svelte";
+  import MetricsTab from "./config/MetricsTab.svelte";
+  import ChatFilterTab from "./config/ChatFilterTab.svelte";
 
   let config = null;
   let originalConfig = null;
@@ -67,10 +69,12 @@
     { id: "grounding", label: "Grounding", icon: "fa-globe" },
     { id: "rateLimiting", label: "请求限速", icon: "fa-gauge-high" },
     { id: "backgroundAgent", label: "做梦系统", icon: "fa-moon" },
+    { id: "chatFilter", label: "聊天过滤", icon: "fa-filter" },
+    { id: "metrics", label: "Metrics", icon: "fa-chart-line" },
     { id: "envVars", label: "环境变量", icon: "fa-key" },
   ];
 
-  const RESTART_SECTIONS = new Set(["embedding", "privacy", "dashboard", "backgroundAgent"]);
+  const RESTART_SECTIONS = new Set(["embedding", "privacy", "dashboard", "backgroundAgent", "metrics"]);
   const RESTART_FIELDS = {
     telegram: ["mode", "botToken", "apiId", "apiHash", "phone"],
     discord: ["botToken"],
@@ -652,6 +656,10 @@
             <RateLimitingTab bind:config profileNames={Object.keys(config.llmProfiles ?? {})} />
           {:else if currentSection === "backgroundAgent"}
             <BackgroundAgentTab bind:config {pwFocus} {pwBlur} />
+          {:else if currentSection === "chatFilter"}
+            <ChatFilterTab bind:config />
+          {:else if currentSection === "metrics"}
+            <MetricsTab bind:config />
           {:else if currentSection === "grounding"}
             <GroundingTab bind:config {pwFocus} {pwBlur} />
           {:else if currentSection === "systemPrompts"}

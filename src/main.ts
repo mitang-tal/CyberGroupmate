@@ -694,6 +694,21 @@ async function main(): Promise<void> {
         // 接收所有消息类型事件（TelegramAdapter 使用 "nc.message"）
         if (eventType !== "nc.message") return;
 
+        // ─── 聊天过滤（chatFilter）：按 chatId 黑/白名单丢弃入站消息 ───
+        // 动态读取 loadConfig()（支持热重载，无需重启）。命中过滤则完全丢弃：
+        // 不落盘、不进 Observer/RecordingPipeline、不触发任何后续处理。
+        const chatFilter = loadConfig().chatFilter;
+        if (chatFilter?.enabled) {
+            const filterIds = chatFilter.chatIds ?? [];
+            const rawId = getRawId(chatId);
+            const listed = filterIds.some(id => id === chatId || id === rawId);
+            const dropped = (chatFilter.mode ?? "blacklist") === "whitelist" ? !listed : listed;
+            if (dropped) {
+                log.debug("chatFilter 丢弃入站消息", { chatId, mode: chatFilter.mode ?? "blacklist" });
+                return;
+            }
+        }
+
         // ─── 即时落盘：确保 message_log 实时可查 ───
         // RecordingPipeline 的 flush 是延迟触发的（50 条消息 OR 2 分钟静默），
         // 但 attend-handler 在每个 tick（~5s）就会通过 memory.getRecentMessages()
