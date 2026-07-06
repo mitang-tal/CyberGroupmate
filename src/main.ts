@@ -668,8 +668,11 @@ async function main(): Promise<void> {
 
             // 同步喂给 RecordingPipeline buffer，使 flush 时 LLM prompt 能看到 agent 消息
             // （与普通消息双路写入一致：即时落盘 DB + 喂给 buffer）
+            // 静默模式（quietMode）下跳过：recording pipeline 完全不参与，避免残留的
+            // agent 消息触发静默计时器 flush。
+            const agentQuietMode = !!memory.getGroupModel(getGroupModelKey(compositeChatId))?.quietMode;
             const agentSub = subagentManager.get(compositeChatId);
-            if (agentSub?.recordingPipeline) {
+            if (agentSub?.recordingPipeline && !agentQuietMode) {
                 const agentMsg: import("./pipeline/types.js").Message = {
                     id: messageId,
                     chatId: compositeChatId,
@@ -745,9 +748,16 @@ async function main(): Promise<void> {
             }
         }
 
+        // 静默模式（quietMode / mention-only）：普通群消息已即时落盘（上方 storeMessageBatch，
+        // 纯本地 SQLite，不调用任何 LLM），此处跳过 RecordingPipeline —— 不做话题聚类 / 记忆沉淀 /
+        // 信号发布，群消息默认不会被送往任何 LLM API。只有下方的直接提及路径（DM / @ / 触发词 /
+        // 回复 agent）才会唤醒 agent，届时 getRecentMessages() 从本地 message_log 取回最近上下文。
+        const quietMode = !!memory.getGroupModel(getGroupModelKey(chatId))?.quietMode;
+
         const sub = subagentManager.getOrCreate(chatId);
         // Per-group: Observer + RecordingPipeline 同时处理消息 (subagent.md §3.1)
-        sub.onMessage(event);
+        // 静默模式下 skipRecording=true：仅走 Observer（纯内存），跳过 RecordingPipeline。
+        sub.onMessage(event, { skipRecording: quietMode });
 
         // 紧急路径：DM / @mention / 文本提及 agent 名字 → 立即注入 Layer 0。
         const isDM = !!event.isDirectMessage;

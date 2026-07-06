@@ -292,6 +292,12 @@ export interface GroupModel {
     sensitiveReason?: string;
     /** 标记为敏感的时间 (ISO 8601)。 */
     sensitiveAt?: string | null;
+    /**
+     * 静默模式（mention-only）。为 true 时：普通群消息仍即时落盘到本地 message_log，
+     * 但不进入 recording pipeline、不触发任何 LLM 处理；只有被直接提及
+     * （触发词 / 回复 / @ / DM）时才唤醒并获取最近上下文。
+     */
+    quietMode?: boolean;
     /** 群组描述/定位 */
     description: string;
     /** 主要语言 */

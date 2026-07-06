@@ -435,6 +435,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
                 marked_sensitive INTEGER DEFAULT 0,
                 sensitive_reason TEXT,
                 sensitive_at TEXT,
+                quiet_mode INTEGER DEFAULT 0,
                 updated_at TEXT NOT NULL
             );
 
@@ -593,6 +594,9 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         try { this.db.exec(`ALTER TABLE group_models ADD COLUMN marked_sensitive INTEGER DEFAULT 0`); } catch { /* 列已存在 */ }
         try { this.db.exec(`ALTER TABLE group_models ADD COLUMN sensitive_reason TEXT`); } catch { /* 列已存在 */ }
         try { this.db.exec(`ALTER TABLE group_models ADD COLUMN sensitive_at TEXT`); } catch { /* 列已存在 */ }
+
+        // group_models 新增 quiet_mode 列（静默/mention-only 模式，兼容旧数据库）
+        try { this.db.exec(`ALTER TABLE group_models ADD COLUMN quiet_mode INTEGER DEFAULT 0`); } catch { /* 列已存在 */ }
 
         // person_identities 新增 username 列（兼容旧数据库）
         try { this.db.exec(`ALTER TABLE person_identities ADD COLUMN username TEXT`); } catch { /* 列已存在 */ }
@@ -1285,6 +1289,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             if (data.markedSensitive !== undefined) builder.set("marked_sensitive", data.markedSensitive ? 1 : 0);
             if (data.sensitiveReason !== undefined) builder.set("sensitive_reason", data.sensitiveReason);
             if (data.sensitiveAt !== undefined) builder.set("sensitive_at", data.sensitiveAt);
+            if (data.quietMode !== undefined) builder.set("quiet_mode", data.quietMode ? 1 : 0);
             builder.set("updated_at", ts);
             builder.where("chat_id", chatId);
 
@@ -1297,8 +1302,8 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
                     chat_id, chat_title, description, dominant_language, communication_norms,
                     active_members, avg_messages_per_day, peak_hours, agent_role,
                     engagement_level, recent_feedback, hot_topics, taboo_topics,
-                    last_reflected_at, is_direct_message, marked_sensitive, sensitive_reason, sensitive_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    last_reflected_at, is_direct_message, marked_sensitive, sensitive_reason, sensitive_at, quiet_mode, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             `).run(
                 chatId,
                 data.chatTitle ?? "",
@@ -1318,6 +1323,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
                 data.markedSensitive ? 1 : 0,
                 data.sensitiveReason ?? null,
                 data.sensitiveAt ?? null,
+                data.quietMode ? 1 : 0,
                 ts,
             );
             log.debug("upsertGroupModel: INSERT", { chatId, title: data.chatTitle ?? "" });
@@ -1338,6 +1344,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             markedSensitive: !!(row.marked_sensitive as number),
             sensitiveReason: (row.sensitive_reason as string) ?? undefined,
             sensitiveAt: (row.sensitive_at as string) ?? null,
+            quietMode: !!(row.quiet_mode as number),
             description: row.description as string,
             dominantLanguage: row.dominant_language as string,
             communicationNorms: fromJSON(row.communication_norms as string, []),
@@ -3268,6 +3275,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             markedSensitive: !!(row.marked_sensitive as number),
             sensitiveReason: (row.sensitive_reason as string) ?? undefined,
             sensitiveAt: (row.sensitive_at as string) ?? null,
+            quietMode: !!(row.quiet_mode as number),
             description: row.description as string,
             dominantLanguage: row.dominant_language as string,
             communicationNorms: fromJSON(row.communication_norms as string, []),

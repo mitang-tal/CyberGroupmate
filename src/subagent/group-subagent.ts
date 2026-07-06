@@ -133,13 +133,17 @@ export class GroupSubagent extends EventEmitter {
      * 接收消息：同时分发给 Observer 和 RecordingPipeline
      *
      * 替代 main.ts 中单独调用 observer.onMessage() + recordingPipeline.onMessage()
+     *
+     * @param opts.skipRecording 静默模式（quietMode）下为 true：仅走 Observer（纯内存，
+     *   不触发 LLM），跳过 RecordingPipeline（话题聚类 / 记忆沉淀 / 信号），使群消息
+     *   默认不会被发送到任何 LLM API。
      */
-    onMessage(event: NotificationEvent): void {
+    onMessage(event: NotificationEvent, opts?: { skipRecording?: boolean }): void {
         // 1. Observer: engagement 计算 + buffer
         this.observer.onMessage(event);
 
         // 2. RecordingPipeline: 话题聚类 + 记忆沉淀
-        if (this.recordingPipeline) {
+        if (this.recordingPipeline && !opts?.skipRecording) {
             const msg: Message = {
                 id: String(event.messageId ?? event.id ?? `msg_${Date.now()}`),
                 chatId: this.chatId,
