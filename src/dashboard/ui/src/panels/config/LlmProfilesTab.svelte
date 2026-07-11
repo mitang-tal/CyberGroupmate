@@ -104,7 +104,7 @@
           <label class="cfg-field"><span class="cfg-label">Max Context Tokens</span><input type="number" class="input input-xs input-bordered w-full" bind:value={p.maxContextTokens} placeholder="(默认)" /></label>
           <label class="cfg-field"><span class="cfg-label">Thinking Level</span>
             <select class="select select-xs select-bordered w-full" bind:value={p.thinkingLevel}>
-              <option value={undefined}>无</option><option value="none">none</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option>
+              <option value={undefined}>无</option><option value="none">none</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option>
             </select></label>
           <label class="cfg-check"><input type="checkbox" class="checkbox checkbox-xs" bind:checked={p.vision} /><span>Vision</span></label>
           <label class="cfg-check"><input
