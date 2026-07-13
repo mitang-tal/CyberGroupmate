@@ -1151,7 +1151,7 @@ async function main(): Promise<void> {
         getLlmConfigs: () => resolveComponentProfiles("meta", loadConfig()),
         maxTurns: 10,
         codeTimeout: 30_000,
-        llmTimeoutMs: resolveComponentTimeout("meta", loadConfig()) ?? 60_000,
+        getLlmTimeoutMs: () => resolveComponentTimeout("meta") ?? 60_000,
     }));
 
     log.info("MainAgentLoop 配置完成");
