@@ -49,6 +49,7 @@ export interface MetaSessionHandlerDeps {
     llmCaller?: MetaLLMCaller;
     maxTurns?: number;
     codeTimeout?: number;
+    getLlmTimeoutMs?: () => number | undefined;
     llmTimeoutMs?: number;
 }
 
@@ -83,7 +84,7 @@ export function createMetaSessionHandler(deps: MetaSessionHandlerDeps): MetaSess
                     maxTurns: deps.maxTurns,
                     codeTimeout: deps.codeTimeout,
                     llmCaller: deps.llmCaller,
-                    llmTimeoutMs: deps.llmTimeoutMs,
+                    llmTimeoutMs: deps.getLlmTimeoutMs?.() ?? deps.llmTimeoutMs,
                     contextManifest,
                     twoPassConfig: {
                         getPrefixMap: buildMetaApiPrefixMap,

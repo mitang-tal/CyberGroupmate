@@ -163,6 +163,46 @@ function createMemoryStub() {
 }
 
 describe("createMetaSessionHandler", () => {
+    it("resolves the meta llm timeout for each handler run", async () => {
+        const sandbox = new MetaSandbox({});
+        const timeoutValues = [11_000, 22_000];
+        const seenTimeouts: number[] = [];
+        const handler = createMetaSessionHandler({
+            getPersona: () => ({ name: "测试编排者", description: "验证 meta timeout 热更新" }),
+            globalState: {
+                getSessionDigests: () => [],
+                getMetaSessionHistory: () => [],
+                appendMetaSessionHistory: () => undefined,
+            },
+            memory: createMemoryStub() as any,
+            sandbox,
+            getLlmConfigs: () => [TEST_LLM_CONFIG],
+            getLlmTimeoutMs: () => timeoutValues.shift(),
+            llmCaller: async (messages, _configs, options): Promise<LLMResponse> => {
+                seenTimeouts.push(options?.timeoutMs ?? -1);
+                if (String(messages.at(-1)?.content ?? "").includes("MetaSandbox observation")) {
+                    return {
+                        content: "[SESSION_DIGEST]done[/SESSION_DIGEST]\n<end_turn>",
+                    };
+                }
+                return {
+                    content: [
+                        "先执行一下。",
+                        "",
+                        "```ts",
+                        "return 1;",
+                        "```",
+                    ].join("\n"),
+                };
+            },
+        });
+
+        await handler([createEntry()], []);
+        await handler([createEntry()], []);
+
+        assert.deepEqual(seenTimeouts, [11_000, 11_000, 22_000, 22_000]);
+    });
+
     it("uses ContextEngine sections and only replays deltas for messages/topics/profiles", async () => {
         const sandbox = new MetaSandbox({});
         const llmCalls: ChatMessage[][] = [];
