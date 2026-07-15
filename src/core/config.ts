@@ -388,6 +388,10 @@ export interface RecordingPipelineConfig {
     normalSilenceMs?: number;
     /** 加速静默触发时间（毫秒）。默认 30000 (30 sec) */
     eagerSilenceMs?: number;
+    /** 单次 flush 最多处理的消息数（超出留 buffer 下轮排空）。默认 120。锁死 cluster 输出体积防 decode 超时 */
+    maxFlushBatch?: number;
+    /** buffer 总量硬上限（超出丢最旧消息，防持续失败时无限膨胀＝死亡螺旋）。默认 1000 */
+    maxBufferSize?: number;
 }
 
 /** Dashboard 外部配置 */
@@ -1063,6 +1067,8 @@ function parseRecordingPipelineConfig(fileConfig: Record<string, unknown>): Reco
         eagerThreshold: raw.eager_threshold != null ? num(raw.eager_threshold, 15) : undefined,
         normalSilenceMs: raw.normal_silence_ms != null ? num(raw.normal_silence_ms, 120000) : undefined,
         eagerSilenceMs: raw.eager_silence_ms != null ? num(raw.eager_silence_ms, 30000) : undefined,
+        maxFlushBatch: raw.max_flush_batch != null ? num(raw.max_flush_batch, 120) : undefined,
+        maxBufferSize: raw.max_buffer_size != null ? num(raw.max_buffer_size, 1000) : undefined,
     };
 }
 
