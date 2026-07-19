@@ -77,7 +77,7 @@ export async function callOpenAIResponses(
         input,
         temperature,
         max_output_tokens: maxTokens,
-        ...(reasoningEffort ? { reasoning: { effort: reasoningEffort } } : {}),
+        ...(reasoningEffort ? { reasoning: { effort: reasoningEffort as ReasoningEffort } } : {}),
         ...(stop && stop.length > 0 ? { stop } : {}),
         ...(config.extraBody ?? {}),
     };
@@ -107,8 +107,11 @@ export async function callOpenAIResponses(
     };
 }
 
-function toReasoningEffort(value?: string): ReasoningEffort | undefined {
-    if (value === "low" || value === "medium" || value === "high") {
+// "xhigh" 未在 SDK 的 ReasoningEffort 联合类型里，但部分模型/网关支持，透传出去
+type ReasoningEffortExtended = ReasoningEffort | "xhigh";
+
+function toReasoningEffort(value?: string): ReasoningEffortExtended | undefined {
+    if (value === "low" || value === "medium" || value === "high" || value === "xhigh") {
         return value;
     }
     return undefined;
