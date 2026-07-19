@@ -77,6 +77,17 @@ const DEFAULT_MAX_BUFFER_SIZE = 1000;
 /** 本轮批次未排空时，下一次自动 flush 的短延迟（毫秒），用于尽快排空积压。 */
 const DRAIN_REARM_DELAY_MS = 3000;
 
+/**
+ * 把配置里的批次/缓冲上限夹到「有限正整数」，非法值（0/负数/小数/NaN/Infinity）回退默认。
+ * 防两个陷阱：maxFlushBatch=0 → slice(0,0) 空批 + 每 3s 空转排空；
+ * maxBufferSize=0 → slice(-0)===slice(0) 反而保留整个 buffer、封顶失效。
+ */
+function clampPositiveInt(value: number | undefined, fallback: number): number {
+    if (value == null) return fallback;
+    const n = Math.floor(value);
+    return Number.isFinite(n) && n >= 1 ? n : fallback;
+}
+
 
 
 /**
@@ -122,8 +133,8 @@ export class RecordingPipeline extends EventEmitter {
         this.eagerThreshold = pipelineConfig?.eagerThreshold ?? DEFAULT_EAGER_THRESHOLD;
         this.normalSilence = pipelineConfig?.normalSilenceMs ?? DEFAULT_NORMAL_SILENCE;
         this.eagerSilence = pipelineConfig?.eagerSilenceMs ?? DEFAULT_EAGER_SILENCE;
-        this.maxFlushBatch = pipelineConfig?.maxFlushBatch ?? DEFAULT_MAX_FLUSH_BATCH;
-        this.maxBufferSize = pipelineConfig?.maxBufferSize ?? DEFAULT_MAX_BUFFER_SIZE;
+        this.maxFlushBatch = clampPositiveInt(pipelineConfig?.maxFlushBatch, DEFAULT_MAX_FLUSH_BATCH);
+        this.maxBufferSize = clampPositiveInt(pipelineConfig?.maxBufferSize, DEFAULT_MAX_BUFFER_SIZE);
     }
 
     /**
@@ -230,6 +241,7 @@ export class RecordingPipeline extends EventEmitter {
         log.info("flush 开始", { messageCount: messages.length, remaining: this.buffer.length, clusterOnly });
         this.emit("flush:start", messages.length);
 
+        let hadError = false;
         try {
             // ─── Step 1: 话题聚类 ───
             const groupedByChat = this.groupByChat(messages);
@@ -396,6 +408,7 @@ export class RecordingPipeline extends EventEmitter {
                 this.emit("flush:complete", updatedTopics);
             }
         } catch (err) {
+            hadError = true;
             log.error("flush 失败", { error: err instanceof Error ? err.message : String(err) });
             this.emit("flush:error", err);
             // 把消息放回缓冲头部，避免丢失
@@ -411,11 +424,23 @@ export class RecordingPipeline extends EventEmitter {
             this.isFlushing = false;
             // 本轮批次上限有溢出（或回退的消息）→ 短延迟后继续排空，别干等下一条消息/静默定时器。
             // unref：这条排空定时器不该独自把进程吊住（长活进程无所谓，测试/退出时要能干净结束）。
-            if (!this.disposed && this.buffer.length >= this.minFlushSize) {
-                const drainTimer = setTimeout(() => this.triggerFlush(), DRAIN_REARM_DELAY_MS);
+            if (this.shouldRearmDrain(hadError)) {
+                const drainTimer = setTimeout(() => { void this.flush(); }, DRAIN_REARM_DELAY_MS);
                 drainTimer.unref?.();
             }
         }
+    }
+
+    /**
+     * flush 收尾时是否安排「排空定时器」继续处理积压。
+     * - 成功路径：只要 buffer 还有余量就排空——含 < minFlushSize 的尾巴（如批次上限切剩的 1–9 条），
+     *   否则这段尾巴会一直滞留到该群下次活跃/静默触发才落盘。
+     * - 失败路径：沿用 minFlushSize 阈值。持续失败（非 LLM 错误，如落盘异常）时若无脑排空，
+     *   会变成每 3s 对同一小批次热重试刷屏；保留阈值让小残留等更多消息再一起重试。
+     */
+    private shouldRearmDrain(hadError: boolean): boolean {
+        if (this.disposed || this.buffer.length === 0) return false;
+        return hadError ? this.buffer.length >= this.minFlushSize : true;
     }
 
     /**

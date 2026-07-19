@@ -85,4 +85,46 @@ describe("recording pipeline flush batching + safety floor", () => {
         assert.ok(result.assignments.every(a => a.topicId === "NEW_1"));
         assert.deepEqual(result.evolutions, []);
     });
+
+    it("clamps out-of-range maxFlushBatch/maxBufferSize (0/负/小数/Infinity) to safe values", () => {
+        // 非法值回退默认（maxFlushBatch=120 / maxBufferSize=1000）：
+        // 0 → slice(0,0) 空批 + 每 3s 空转；负/-0 → slice(-0)===slice(0) 保留整个 buffer、封顶失效
+        const bad = new RecordingPipeline(new TopicRegistry(), "Miu", "Miu", undefined, undefined, {
+            maxFlushBatch: 0,
+            maxBufferSize: -5,
+        });
+        assert.equal((bad as any).maxFlushBatch, 120);
+        assert.equal((bad as any).maxBufferSize, 1000);
+
+        // Infinity 也视为非法（等于不封顶＝重新引入死亡螺旋）→ 回退默认
+        const infinite = new RecordingPipeline(new TopicRegistry(), "Miu", "Miu", undefined, undefined, {
+            maxFlushBatch: Infinity,
+        });
+        assert.equal((infinite as any).maxFlushBatch, 120);
+
+        // 合法值原样透传，小数向下取整为整数（7.9 → 7）
+        const ok = new RecordingPipeline(new TopicRegistry(), "Miu", "Miu", undefined, undefined, {
+            maxFlushBatch: 7.9,
+            maxBufferSize: 42,
+        });
+        assert.equal((ok as any).maxFlushBatch, 7);
+        assert.equal((ok as any).maxBufferSize, 42);
+    });
+
+    it("re-arms drain for a sub-minFlushSize tail on success, but throttles it on error", () => {
+        const pipeline = new RecordingPipeline(new TopicRegistry(), "Miu", "Miu", undefined, undefined, {
+            minFlushSize: 10,
+        });
+        // 成功路径：批次上限切剩的 3 条尾巴（< minFlushSize 10）仍要排空，否则滞留到下次活跃/静默才落盘
+        (pipeline as any).buffer = makeMessages(3);
+        assert.equal((pipeline as any).shouldRearmDrain(false), true);
+        // 失败路径：同样 3 条不排空——避免对持续失败的小批次每 3s 热重试刷屏
+        assert.equal((pipeline as any).shouldRearmDrain(true), false);
+        // 失败路径：积压 >= minFlushSize 仍排空以追赶
+        (pipeline as any).buffer = makeMessages(10);
+        assert.equal((pipeline as any).shouldRearmDrain(true), true);
+        // buffer 空：任何路径都不排空
+        (pipeline as any).buffer = [];
+        assert.equal((pipeline as any).shouldRearmDrain(false), false);
+    });
 });
