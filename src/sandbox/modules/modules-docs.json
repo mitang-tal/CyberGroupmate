@@ -1,0 +1,723 @@
+[
+  {
+    "name": "cron",
+    "description": "shared/cron.d.ts — 定时任务管理模块类型定义 通过 Host 侧 GlobalState 持久化 cron 任务。 触发时以自然语言任务描述唤醒 agent，由 agent 自主决策执行。",
+    "methods": [
+      {
+        "name": "add",
+        "brief": "添加持久化定时任务。触发时以自然语言任务描述唤醒 agent，agent 在当时的上下文中自主决定如何执行。 ⚠️ taskDescription 必须是详细的自然语言描述，不是代码。 写清楚：要做什么、给谁发、发什么内容、从哪里获取信息等。 agent 会在每次触发时收到这段描述作为新任务。 限制：最短间隔 1 小时，每个群最多 10 个 cron 任务。 一次性定时任务请使用 runtime.remind",
+        "fullDoc": "```typescript\nadd(name: string, cronExpr: string, taskDescription: string): Promise<{\n        id: string;\n        items: Array<{\n            id: string;\n            type: \"reminder\" | \"cron\";\n            description: string;\n            /** Unix epoch milliseconds. */\n            triggerAt?: number;\n            cronExpr?: string;\n            taskDescription?: string;\n            /** Unix epoch milliseconds. */\n            createdAt: number;\n            triggered?: boolean;\n        }>;\n    }>\n```\n\n\n添加持久化定时任务。触发时以自然语言任务描述唤醒 agent，agent 在当时的上下文中自主决定如何执行。\n\n⚠️ taskDescription 必须是详细的自然语言描述，不是代码。\n写清楚：要做什么、给谁发、发什么内容、从哪里获取信息等。\nagent 会在每次触发时收到这段描述作为新任务。\n\n限制：最短间隔 1 小时，每个群最多 10 个 cron 任务。\n\n一次性定时任务请使用 runtime.remind\n\n**参数：**\n- `name`: 任务名称（用于显示和管理）\n- `cronExpr`: cron 表达式（最短间隔 1 小时），如 \"0 9 * * *\"（每天 9:00）\n- `taskDescription`: 触发时的自然语言任务描述\n- **返回值**: 创建的任务信息\n\n**示例：**\n```typescript\n// 每天早上 9 点发送早安\nawait cron.add(\"每日早安\", \"0 8 * * *\",\n  \"给群里发一条早安消息，可以根据当天日期说点应景的话\");\n```\n\n```typescript\n// 工作日早 9 点播报新闻\nawait cron.add(\"新闻播报\", \"0 9 * * 1-5\",\n  \"用 tavily 搜索今日科技新闻，整理成简短的播报发送到群里\");\n```"
+      },
+      {
+        "name": "remove",
+        "brief": "移除定时任务",
+        "fullDoc": "```typescript\nremove(id: string): Promise<void>\n```\n\n\n移除定时任务\n\n**参数：**\n- `id`: 任务 ID（由 add 返回）\n\n**示例：**\n```typescript\nawait cron.remove(\"some-task-id\");\n```"
+      },
+      {
+        "name": "list",
+        "brief": "列出当前 chat 的所有定时任务",
+        "fullDoc": "```typescript\nlist(): Promise<Array<{\n        id: string;\n        name: string;\n        cronExpr: string;\n    }>>\n```\n\n\n列出当前 chat 的所有定时任务\n\n**示例：**\n```typescript\nconst tasks = await cron.list();\nfor (const t of tasks) {\n  console.log(`${t.name} (${t.cronExpr})`);\n}\n```"
+      }
+    ]
+  },
+  {
+    "name": "discord",
+    "description": "discord.d.ts — Discord 平台 API 系统注入的 Discord host proxy 接口。 提供给 Agent 在 sandbox 执行时作为 TypeScript 强类型上下文参考。 平台连接与消息监听由宿主侧 DiscordAdapter 管理。",
+    "methods": [
+      {
+        "name": "send",
+        "brief": "Discord.js 原生 TextBasedChannel.send(options) 风格入口。 channelId 由 CyberGroupmate 用来定位频道；options 保持 discord.js MessageCreateOptions 形状。 旧 sendText/sendMedia wrapper 只保留兼容，不再扩展新 Discord 参数。",
+        "fullDoc": "```typescript\nsend(channelId: string, options: DiscordNativeSendOptions): Promise<DiscordMessageAck>\n```\n\n\nDiscord.js 原生 TextBasedChannel.send(options) 风格入口。\nchannelId 由 CyberGroupmate 用来定位频道；options 保持 discord.js MessageCreateOptions 形状。\n旧 sendText/sendMedia wrapper 只保留兼容，不再扩展新 Discord 参数。\n\n**示例：**\n```typescript\nawait discord.send(channelId, { content: \"你好\", reply: { messageReference: \"1234567890\" } });\n```\n\n```typescript\nawait discord.send(channelId, { content: \"带附件\", files: [{ attachment: \"Downloads/a.png\", name: \"a.png\" }] });\n```"
+      },
+      {
+        "name": "createMessage",
+        "brief": "Discord REST create message 风格别名，参数同 discord.send(channelId, options)。",
+        "fullDoc": "```typescript\ncreateMessage(channelId: string, options: DiscordNativeSendOptions): Promise<DiscordMessageAck>\n```\n\n\nDiscord REST create message 风格别名，参数同 discord.send(channelId, options)。"
+      },
+      {
+        "name": "sendText",
+        "brief": "发送文本消息到指定频道。兼容 wrapper，冻结为兜底用法；新参数优先用 discord.send。",
+        "fullDoc": "```typescript\nsendText(channelId: string, text: string, opts?: { replyTo?: string }): Promise<DiscordMessageAck>\n```\n\n\n发送文本消息到指定频道。兼容 wrapper，冻结为兜底用法；新参数优先用 discord.send。\n\n**参数：**\n- `channelId`: 目标频道 ID（由 sandbox 上下文自动填入当前频道）\n- `text`: 消息内容\n- `opts`: 可选参数\n\n**示例：**\n```typescript\n// sendText(channelId, \"你好！\")\n```\n\n```typescript\n// sendText(channelId, \"回复你的问题\", { replyTo: \"1234567890\" })\n```"
+      },
+      {
+        "name": "sendMedia",
+        "brief": "发送媒体消息（附件）到指定频道。兼容 wrapper，冻结为兜底用法；新参数优先用 discord.send。 支持 URL 和本地文件路径（支持绝对路径或基于 cwd 工作区的相对路径）。",
+        "fullDoc": "```typescript\nsendMedia(channelId: string, media: string | { type?: \"photo\" | \"video\" | \"document\" | \"audio\" | \"auto\"; url?: string; file?: string; caption?: string; fileName?: string }, opts?: { replyTo?: string; caption?: string }): Promise<DiscordMessageAck>\n```\n\n\n发送媒体消息（附件）到指定频道。兼容 wrapper，冻结为兜底用法；新参数优先用 discord.send。\n支持 URL 和本地文件路径（支持绝对路径或基于 cwd 工作区的相对路径）。\n\n**参数：**\n- `channelId`: 目标频道 ID\n- `media`: 媒体对象或路径字符串，支持 URL、本地文件路径、data URL 或文件内容\n- `opts`: 可选参数\n\n**示例：**\n```typescript\n// sendMedia(channelId, { url: \"https://example.com/image.png\", caption: \"看看这张图\" })\n```\n\n```typescript\n// sendMedia(channelId, { file: \"screenshot.png\", caption: \"本地截图\" }) // 自动基于 process.cwd() 解析\n```\n\n```typescript\n// sendMedia(channelId, \"screenshot.png\")\n```"
+      },
+      {
+        "name": "sendReaction",
+        "brief": "对指定消息添加表情反应。支持 Unicode emoji、自定义 emoji ID、name:id 或 Discord emoji mention 格式。",
+        "fullDoc": "```typescript\nsendReaction(channelId: string, messageId: string, emoji: string): Promise<void>\n```\n\n\n对指定消息添加表情反应。支持 Unicode emoji、自定义 emoji ID、name:id 或 Discord emoji mention 格式。\n\n**参数：**\n- `channelId`: 目标频道 ID（由 sandbox 上下文自动填入当前频道）\n- `messageId`: 目标消息 ID\n- `emoji`: 表情字符串\n\n**示例：**\n```typescript\n// sendReaction(channelId, \"1234567890123456789\", \"😄\")\n```"
+      },
+      {
+        "name": "sendTyping",
+        "brief": "在频道中显示 \"正在输入...\" 状态。",
+        "fullDoc": "```typescript\nsendTyping(channelId: string): Promise<void>\n```\n\n\n在频道中显示 \"正在输入...\" 状态。\n\n**参数：**\n- `channelId`: 目标频道 ID"
+      }
+    ],
+    "typeDefs": "type DiscordNativeSendOptions = string | {\n    content?: string;\n    tts?: boolean;\n    nonce?: string | number;\n    enforceNonce?: boolean;\n    reply?: { messageReference: string; failIfNotExists?: boolean };\n    files?: Array<string | { attachment?: string; file?: string; data?: string; url?: string; name?: string; fileName?: string; [key: string]: unknown }>;\n    embeds?: unknown[];\n    components?: unknown[];\n    allowedMentions?: unknown;\n    stickers?: readonly string[];\n    flags?: unknown;\n    poll?: unknown;\n    [key: string]: unknown;\n};\n\ntype DiscordMessageAck = { id: string; text: string; channelId: string; guildId?: string; timestamp: number; };"
+  },
+  {
+    "name": "dispatch",
+    "description": "dispatch.d.ts — Subagent 跨聊天会话派发 API 任何需要在其他聊天执行操作的场景都必须通过 dispatch 派发，由目标聊天的 Subagent 执行。 绝对禁止用平台 API（sendText / sendMedia 等）直接向非当前聊天发送消息。 派发后目标 Subagent 会收到同一套 quote 解析后的任务上下文。",
+    "methods": [
+      {
+        "name": "taskToGroup",
+        "brief": "向指定聊天派发一个任务，由目标聊天的 Subagent 在其绑定的聊天中执行。 这是跨聊天操作的唯一正确方式。绝对禁止用平台 API 直接向其他聊天发送消息。 chatId 必须使用 composite chatId，例如 \"telegram:-1001234567890\"。 当前 Subagent 不能用 dispatch 给自己派任务；当前聊天内行动直接调用平台 API。 目标任务完成后，结果会作为内部通知发回发起方 Subagent；全局 session digest 也会记录 source -> target -> result。",
+        "fullDoc": "```typescript\ntaskToGroup(chatId: string, taskSpec: DispatchTaskSpec): Promise<DispatchTaskResult>\n```\n\n\n向指定聊天派发一个任务，由目标聊天的 Subagent 在其绑定的聊天中执行。\n\n这是跨聊天操作的唯一正确方式。绝对禁止用平台 API 直接向其他聊天发送消息。\nchatId 必须使用 composite chatId，例如 \"telegram:-1001234567890\"。\n当前 Subagent 不能用 dispatch 给自己派任务；当前聊天内行动直接调用平台 API。\n目标任务完成后，结果会作为内部通知发回发起方 Subagent；全局 session digest 也会记录 source -> target -> result。\n\n**参数：**\n- `chatId`: 目标 composite chatId。\n- `taskSpec`: 任务方向、语气、quote、技能和跟踪信息。\n- **返回值**: 派发任务 ID，以及可选的 trackingKey / reminderId。\n\n**示例：**\n```typescript\nconst task = await dispatch.taskToGroup(\"telegram:-1001111111111\", {\n  contentDirection: \"把当前群的问题带到目标群请他们确认，保留来源边界\",\n  toneGuidance: \"简短、礼貌，不要泄露不必要的上下文\",\n  quotes: [\"@telegram:-1002222222222[100-106]\", \"@output[0]\"],\n  tracking: {\n    content: \"等待目标群确认后回到当前群同步\",\n    remindAfterMinutes: 15,\n    callback: \"检查目标群是否已回复；如有结论，再派回来源群。\"\n  }\n});\nconsole.log(task.taskId);\n```"
+      },
+      {
+        "name": "getTask",
+        "brief": "查询已派发任务的状态与执行结果；不存在时返回 null。",
+        "fullDoc": "```typescript\ngetTask(taskId: string): Promise<DispatchedTaskStatus | null>\n```\n\n\n查询已派发任务的状态与执行结果；不存在时返回 null。"
+      },
+      {
+        "name": "listTasks",
+        "brief": "列出已派发任务，可按 chatId/status 分页过滤。",
+        "fullDoc": "```typescript\nlistTasks(options?: { chatId?: string; status?: string; limit?: number; offset?: number }): Promise<{\n        tasks: DispatchedTaskStatus[];\n        total: number;\n        hasMore: boolean;\n    }>\n```\n\n\n列出已派发任务，可按 chatId/status 分页过滤。"
+      }
+    ],
+    "typeDefs": "interface DispatchTrackingSpec {\n    /** 默认 dispatch:<taskId>。 */\n    key?: string;\n    /** 待跟进内容。 */\n    content: string;\n    /** 若设置，则自动注册一次性唤醒给 Meta 做后续检查。 */\n    remindAfterMinutes?: number;\n    /** reminder 唤醒后给 Meta 的明确动作。 */\n    callback?: string;\n    /** 附带结构化数据。 */\n    data?: unknown;\n}\n\ninterface DispatchTaskSpec {\n    /** 必填：行动方向，告诉目标 Subagent 往哪个方向回复或互动。 */\n    contentDirection: string;\n    /** 语气指导，如轻松、正式、简短等。 */\n    toneGuidance?: string;\n    /** 建议用于召回可发送贴纸的 emoji 候选，如 [\"😂\", \"🤣\", \"😅\"]。 */\n    suggestedEmojis?: string[];\n    /**\n     * 需要随任务携带的 quote 引用。也可以直接写在 contentDirection / toneGuidance 中。\n     *\n     * 框架会解析内部 quote：\n     * - @telegram:-100123[10-20] / @discord:guild:channel[10-20] / @onebot:group:123[10-20]\n     * - @telegram:-100123 / @discord:guild:channel / @onebot:group:123\n     * - @person[张三] 或 @person[张三 in telegram:-100123]\n     * - @history[关键词] / @topic[topicId]\n     * - @output[0]（Subagent 侧会展开为本 session 之前的执行结果 literal quote）\n     * - @[workspace/xxx.md]\n     *\n     * 其他 @[...] 会作为 literal string 传递，不抓取、不清洗、不联网。\n     */\n    quotes?: string[];\n    /** 需要目标 Subagent 额外加载的 Skill 模块名。基础模块不需要重复填写。 */\n    useSkills?: string[];\n    /** 派发后自动记录待跟进 todo / remind。 */\n    tracking?: DispatchTrackingSpec;\n}\n\ninterface DispatchTaskResult {\n    taskId: string;\n    trackingKey?: string;\n    reminderId?: string;\n}\n\ninterface DispatchedTaskStatus {\n    taskId: string;\n    chatId: string;\n    sourceType?: \"meta\" | \"subagent\";\n    sourceChatId?: string;\n    sourceTaskId?: string;\n    contentDirection: string;\n    toneGuidance?: string;\n    quotes?: string[];\n    quoteWarnings?: string[];\n    status: \"PENDING\" | \"RUNNING\" | \"COMPLETED\" | \"ERROR\" | \"SKIPPED\" | \"TIMEOUT\";\n    /** Unix epoch milliseconds. */\n    createdAt: number;\n    /** Unix epoch milliseconds. */\n    updatedAt: number;\n    /** Unix epoch milliseconds. */\n    completedAt?: number;\n    sessionId?: string;\n    summary?: string;\n    sentMessages?: Array<{ messageId?: string; text: string; timestamp: number }>;\n    error?: string;\n}"
+  },
+  {
+    "name": "fs",
+    "description": "filesystem.d.ts — 文件系统操作模块类型定义 所有路径操作限定在 workspace/ 目录下。 支持相对路径（相对于 workspace/）和绝对路径。",
+    "methods": [
+      {
+        "name": "readFile",
+        "brief": "读取文件内容。",
+        "fullDoc": "```typescript\nreadFile(path: string, options?: {\n        /** 起始行号（1-based） */\n        startLine?: number;\n        /** 结束行号（1-based，含） */\n        endLine?: number;\n        /** 是否在返回结果中附带行号前缀 */\n        withLineNumbers?: boolean;\n    }): string\n```\n\n\n读取文件内容。\n\n**参数：**\n- `path`: 文件路径（相对于 workspace/ 或绝对路径）\n- **返回值**: 文件内容字符串（UTF-8）\n\n**示例：**\n```typescript\nconst content = fs.readFile(\"skills/myskill/index.ts\");\nconsole.log(content);\n```"
+      },
+      {
+        "name": "writeFile",
+        "brief": "写入文件。如果目标目录不存在会自动创建。",
+        "fullDoc": "```typescript\nwriteFile(path: string, content: string): void\n```\n\n\n写入文件。如果目标目录不存在会自动创建。\n\n**参数：**\n- `path`: 文件路径\n- `content`: 文件内容\n\n**示例：**\n```typescript\nfs.writeFile(\"notes/todo.md\", \"# TODO\\n- 完成作业\");\n```\n\n```typescript\n// 创建新的 TS Skill\nfs.writeFile(\"skills/weather/index.ts\", `\n  import { fetch } from \"node-fetch\";\n  export const weather = {\n    current: async (city: string) => { ... }\n  };\n`);\n```"
+      },
+      {
+        "name": "writeFileBinary",
+        "brief": "以二进制模式写入文件（base64 字符串 → 二进制字节）。 **保存 Telegram 下载媒体时必须用这个方法**，不能用 writeFile()。 `telegram.downloadMedia()` / `telegram.downloadAsBuffer()` 返回的 `data.buffer` 是 base64 字符串； 若用 `fs.writeFile(path, data.buffer)` 写入，会把 base64 文本当 UTF-8 存储，导致图片/文件损坏。",
+        "fullDoc": "```typescript\nwriteFileBinary(path: string, base64: string): void\n```\n\n\n以二进制模式写入文件（base64 字符串 → 二进制字节）。\n\n**保存 Telegram 下载媒体时必须用这个方法**，不能用 writeFile()。\n`telegram.downloadMedia()` / `telegram.downloadAsBuffer()` 返回的 `data.buffer` 是 base64 字符串；\n若用 `fs.writeFile(path, data.buffer)` 写入，会把 base64 文本当 UTF-8 存储，导致图片/文件损坏。\n\n**参数：**\n- `path`: 文件路径（自动创建父目录）\n- `base64`: base64 编码的文件内容（即 `data.buffer`）\n\n**示例：**\n```typescript\n// ✅ 正确：保存 Telegram 下载的图片\nconst data = await telegram.downloadMedia(msg.mediaInfo.fileId, chatId, msg.id, msg.mediaInfo.uniqueFileId);\nfs.writeFileBinary(\"workspace/Downloads/photo.jpg\", data.buffer);\n```\n\n```typescript\n// ❌ 错误：writeFile 写入 base64 字符串，文件会损坏\n// fs.writeFile(\"workspace/Downloads/photo.jpg\", data.buffer);\n```"
+      },
+      {
+        "name": "appendFile",
+        "brief": "追加写入文件。文件不存在时会自动创建。",
+        "fullDoc": "```typescript\nappendFile(path: string, content: string): void\n```\n\n\n追加写入文件。文件不存在时会自动创建。\n\n**参数：**\n- `path`: 文件路径\n- `content`: 追加的内容\n\n**示例：**\n```typescript\nfs.appendFile(\"logs/activity.log\", `${Date.now()} 执行了任务\\n`);\n```"
+      },
+      {
+        "name": "replace",
+        "brief": "按字符串查找并替换文件内容，类似 sed。 默认仅替换第一个匹配；传 all=true 可全量替换。",
+        "fullDoc": "```typescript\nreplace(path: string, search: string, replacement: string, options?: {\n        all?: boolean;\n    }): { ok: true; count: number }\n```\n\n\n按字符串查找并替换文件内容，类似 sed。\n默认仅替换第一个匹配；传 all=true 可全量替换。"
+      },
+      {
+        "name": "patch",
+        "brief": "对文件应用 unified diff patch。 适合 agent 在读取带行号内容后做小范围修改。",
+        "fullDoc": "```typescript\npatch(path: string, diff: string): { ok: true }\n```\n\n\n对文件应用 unified diff patch。\n适合 agent 在读取带行号内容后做小范围修改。"
+      },
+      {
+        "name": "readdir",
+        "brief": "列出目录下的文件和子目录名。",
+        "fullDoc": "```typescript\nreaddir(path: string): string[]\n```\n\n\n列出目录下的文件和子目录名。\n\n**参数：**\n- `path`: 目录路径\n- **返回值**: 文件名数组\n\n**示例：**\n```typescript\nconst files = fs.readdir(\"skills\");\nconsole.log(\"已安装的 Skills:\", files);\n```"
+      },
+      {
+        "name": "exists",
+        "brief": "检查文件或目录是否存在。",
+        "fullDoc": "```typescript\nexists(path: string): boolean\n```\n\n\n检查文件或目录是否存在。\n\n**参数：**\n- `path`: 路径\n- **返回值**: 是否存在"
+      },
+      {
+        "name": "unlink",
+        "brief": "删除文件。",
+        "fullDoc": "```typescript\nunlink(path: string): void\n```\n\n\n删除文件。\n\n**参数：**\n- `path`: 文件路径"
+      },
+      {
+        "name": "mkdir",
+        "brief": "创建目录（递归创建，类似 mkdir -p）。",
+        "fullDoc": "```typescript\nmkdir(path: string): void\n```\n\n\n创建目录（递归创建，类似 mkdir -p）。\n\n**参数：**\n- `path`: 目录路径"
+      },
+      {
+        "name": "stat",
+        "brief": "获取文件或目录的状态信息。",
+        "fullDoc": "```typescript\nstat(path: string): {\n        /** 文件大小（字节） */\n        size: number;\n        /** 是否是目录 */\n        isDirectory: boolean;\n        /** 是否是文件 */\n        isFile: boolean;\n        /** 最后修改时间，Unix epoch milliseconds */\n        mtime: number;\n    }\n```\n\n\n获取文件或目录的状态信息。\n\n**参数：**\n- `path`: 路径\n- **返回值**: 状态对象\n\n**示例：**\n```typescript\nconst info = fs.stat(\"skills/tavily/index.ts\");\nconsole.log(`文件大小: ${info.size} bytes, 最后修改: ${info.mtime}`);\n```"
+      }
+    ]
+  },
+  {
+    "name": "todo",
+    "description": "shared/todo.d.ts — 不只是代办，可以当你的记事本用。 用于持久化当前群的待办、规则和长期约定（比如群规、话语风格、被教导的/发现的事实性记忆）。 数据按群隔离，可选设置到期时间。“定期、到期提醒”类请使用 remind 或者 cron 模块。 未传 dueAt 时默认 30 天后过期；每次 upsert 都会刷新默认过期时间。永久规则必须显式设置 forever: true。",
+    "methods": [
+      {
+        "name": "list",
+        "brief": "列出当前群的 todo。",
+        "fullDoc": "```typescript\nlist(options?: { includeExpired?: boolean }): Promise<TodoItem[]>\n```\n\n\n列出当前群的 todo。\n\n**参数：**\n- `options.includeExpired`: 设为 true 时包含已过期条目\n\n**示例：**\n```typescript\nconst items = await todo.list();\n```"
+      },
+      {
+        "name": "get",
+        "brief": "获取单个 todo。",
+        "fullDoc": "```typescript\nget(key: string): Promise<TodoItem | null>\n```\n\n\n获取单个 todo。\n\n**示例：**\n```typescript\nconst rule = await todo.get(\"群规\");\n```"
+      },
+      {
+        "name": "upsert",
+        "brief": "新增或更新 todo。",
+        "fullDoc": "```typescript\nupsert(key: string, content: string, options?: { dueAt?: number | null; forever?: boolean }): Promise<TodoItem>\n```\n\n\n新增或更新 todo。\n\n**参数：**\n- `key`: 逻辑键，同群内唯一\n- `content`: 内容\n- `options.dueAt`: 可选到期时间，Unix epoch milliseconds；不传则默认 30 天后过期\n- `options.forever`: 显式设置为 true 时永久保留\n\n**示例：**\n```typescript\nawait todo.upsert(\"周五提醒\", \"提醒大家周五 8 点开黑\", {\n  dueAt: 1777046400000,\n}); // 有到期时间，一般是阶段性的安排/规则。\n\nawait todo.upsert(\"大A昵称\", \"大A指的是Arc\", { forever: true }); // 永久事实性记忆/规则\n```"
+      },
+      {
+        "name": "remove",
+        "brief": "删除 todo。",
+        "fullDoc": "```typescript\nremove(key: string): Promise<void>\n```\n\n\n删除 todo。\n\n**示例：**\n```typescript\nawait todo.remove(\"过期安排\");\n```"
+      }
+    ],
+    "typeDefs": "interface TodoItem {\n    key: string;\n    content: string;\n    /** Unix epoch milliseconds. */\n    dueAt: number | null;\n    /** Unix epoch milliseconds. */\n    createdAt: number;\n    /** Unix epoch milliseconds. */\n    updatedAt: number;\n    expired: boolean;\n}"
+  },
+  {
+    "name": "mcp",
+    "description": "mcp-bridge.d.ts — MCP Server 连接器类型定义 连接外部 MCP (Model Context Protocol) Server，自动发现并代理其工具。 支持 stdio 和 Streamable HTTP 两种传输。",
+    "methods": [
+      {
+        "name": "connect",
+        "brief": "安装并连接一个 MCP Server。 根据配置使用 stdio 或 Streamable HTTP 建立连接，自动发现所有 tools。 连接信息会在宿主进程中全局持久化，所有 sandbox / subagent 共享， 直到显式调用 disconnect()。",
+        "fullDoc": "```typescript\nconnect(config: {\n        /** 显示名称，也用作 tool 命名空间 */\n        name: string;\n        /** 服务器用途描述，会展示给主 Agent 的模块名册 */\n        description?: string;\n        /** 传输方式。省略时：有 url 则视为 streamable-http，否则视为 stdio */\n        transport?: \"stdio\" | \"streamable-http\";\n        /** stdio 启动命令 */\n        command?: string;\n        /** stdio 命令参数 */\n        args?: string[];\n        /** stdio 环境变量（如 API keys） */\n        env?: Record<string, string>;\n        /** Streamable HTTP endpoint */\n        url?: string;\n        /** Streamable HTTP 附加请求头（如 Authorization） */\n        headers?: Record<string, string>;\n    }): Promise<{\n        name: string;\n        tools: Array<{ name: string; description: string }>;\n        /** 调用指定 tool */\n        call(toolName: string, args?: Record<string, unknown>): Promise<unknown>;\n    }>\n```\n\n\n安装并连接一个 MCP Server。\n根据配置使用 stdio 或 Streamable HTTP 建立连接，自动发现所有 tools。\n连接信息会在宿主进程中全局持久化，所有 sandbox / subagent 共享，\n直到显式调用 disconnect()。\n\n**参数：**\n- `config`: Server 配置\n- **返回值**: 包含 tools 列表和 call 方法的代理对象\n\n**示例：**\n```typescript\n// 连接 GitHub MCP Server\nconst github = await mcp.connect({\n  name: \"github\",\n  transport: \"streamable-http\",\n  url: \"https://example.com/mcp\",\n  headers: { Authorization: \"Bearer xxx\" }\n});\nconsole.log(\"可用工具:\", github.tools);\n\n// 调用 tool\nconst repos = await github.call(\"search_repositories\", { query: \"mcp typescript\" });\nconsole.log(repos);\n```"
+      },
+      {
+        "name": "disconnect",
+        "brief": "断开全局连接并清理 MCP Server 子进程",
+        "fullDoc": "```typescript\ndisconnect(name: string): Promise<void>\n```\n\n\n断开全局连接并清理 MCP Server 子进程\n\n**参数：**\n- `name`: 连接时指定的 name"
+      },
+      {
+        "name": "list",
+        "brief": "列出所有全局已连接的 MCP Servers 及其工具",
+        "fullDoc": "```typescript\nlist(): Array<{\n        name: string;\n        description?: string;\n        transport: \"stdio\" | \"streamable-http\";\n        url?: string;\n        tools: string[];\n        running: boolean;\n    }>\n```\n\n\n列出所有全局已连接的 MCP Servers 及其工具\n\n**示例：**\n```typescript\nconst servers = mcp.list();\nfor (const s of servers) {\n  console.log(`${s.name}: ${s.tools.join(\", \")} (running: ${s.running})`);\n}\n```"
+      },
+      {
+        "name": "call",
+        "brief": "直接调用指定 server 的 tool（无需先调用 connect 返回的代理对象）",
+        "fullDoc": "```typescript\ncall(serverName: string, toolName: string, args?: Record<string, unknown>): Promise<unknown>\n```\n\n\n直接调用指定 server 的 tool（无需先调用 connect 返回的代理对象）\n\n**参数：**\n- `serverName`: MCP Server 名称\n- `toolName`: 工具名称\n- `args`: 工具参数"
+      }
+    ]
+  },
+  {
+    "name": "memory",
+    "description": "modules/memory.d.ts — 记忆检索模块类型定义",
+    "methods": [
+      {
+        "name": "searchFacts",
+        "brief": "searchFacts(query, options?)",
+        "fullDoc": "```typescript\nsearchFacts(query: string, options?: {\n        subject?: string;\n        categories?: string[];\n        limit?: number;\n    }): Promise<Array<{\n        factId: string;\n        subject: string;\n        category: string;\n        content: string;\n        confidence: number;\n        sourceChatId?: string | null;\n        sourceChatTitle?: string | null;\n        sourceTopicId?: string | null;\n        sourceTopicLabel?: string | null;\n        sourceMessageIds?: string[];\n        sourceInteractionIds?: string[];\n        observedAt?: number | null;\n        visibility?: \"private\" | \"contextual\" | \"public\";\n        sensitivity?: \"low\" | \"medium\" | \"high\";\n        updatedAt: number;\n    }>>\n```"
+      },
+      {
+        "name": "searchTopics",
+        "brief": "searchTopics(query, options?)",
+        "fullDoc": "```typescript\nsearchTopics(query: string, options?: {\n        chatId?: string;\n        after?: number;\n        before?: number;\n        limit?: number;\n    }): Promise<Array<{\n        topicId: string;\n        chatId: string;\n        label: string;\n        summary: string;\n        keywords: string[];\n        participants: string[];\n        startedAt: number;\n        endedAt: number | null;\n        callbackPotential: number;\n    }>>\n```"
+      },
+      {
+        "name": "searchMessages",
+        "brief": "searchMessages(query, options?)",
+        "fullDoc": "```typescript\nsearchMessages(query: string, options?: {\n        chatId?: string;\n        userId?: string;\n        after?: number;\n        before?: number;\n        limit?: number;\n    }): Promise<Array<{\n        messageId: string;\n        chatId: string;\n        userId: string;\n        displayName: string;\n        content: string;\n        timestamp: number;\n    }>>\n```"
+      },
+      {
+        "name": "getUserProfile",
+        "brief": "getUserProfile(userId, chatId?)",
+        "fullDoc": "```typescript\ngetUserProfile(userId: string, chatId?: string): Promise<{\n        identity: {\n            userId: string;\n            displayName: string;\n            username?: string;\n            aliases: string[];\n        } | null;\n        globalProfile: {\n            traits: string[];\n            interests: string[];\n            communicationStyle: string;\n            relationToAgent: string;\n            stablePatterns: string[];\n            agentPolicyHints: string[];\n            followupCandidates: string[];\n            sourceChatIds: string[];\n            confidence: number;\n        } | null;\n        groupProfile: {\n            dunbarTier: number;\n            affinityScore: number;\n            traits: string[];\n            interests: string[];\n            communicationStyle: string;\n            relationToAgent: string;\n            recentEpisodes: Array<{\n                date: string;\n                type: string;\n                summary: string;\n                topicLabel?: string;\n                evidence?: string[];\n                agentOutcome?: string;\n                confidence?: number;\n            }>;\n            mergedMemory: Array<{\n                periodStart: string;\n                periodEnd: string;\n                granularity: string;\n                relationshipTrend: string;\n                highlights: string[];\n                stablePatterns?: string[];\n                agentPolicyHints?: string[];\n                followupCandidates?: string[];\n            }>;\n        } | null;\n        recentFacts: Array<{\n            factId: string;\n            category: string;\n            content: string;\n            sourceChatId?: string | null;\n            sourceChatTitle?: string | null;\n            sourceTopicLabel?: string | null;\n            observedAt?: number | null;\n            visibility?: \"private\" | \"contextual\" | \"public\";\n            sensitivity?: \"low\" | \"medium\" | \"high\";\n        }>;\n    }>\n```"
+      },
+      {
+        "name": "getRecentInteractions",
+        "brief": "getRecentInteractions(chatId?, userId?, limit?)",
+        "fullDoc": "```typescript\ngetRecentInteractions(chatId?: string, userId?: string, limit?: number): Promise<Array<{\n        timestamp: number;\n        chatId: string;\n        chatLabel?: string;\n        userId: string;\n        displayName?: string;\n        userLabel?: string;\n        type: string;\n        summary: string;\n        sentiment: string;\n        significance: number;\n    }>>\n```"
+      },
+      {
+        "name": "resolvePerson",
+        "brief": "resolvePerson(query, options?)",
+        "fullDoc": "```typescript\nresolvePerson(query: string, options?: {\n        chatId?: string;\n        limit?: number;\n    }): Promise<{\n        matches: MemoryPersonMatch[];\n    }>\n```"
+      },
+      {
+        "name": "getPersonDossier",
+        "brief": "getPersonDossier(queryOrUserId, options?)",
+        "fullDoc": "```typescript\ngetPersonDossier(queryOrUserId: string, options?: {\n        chatId?: string;\n        /** 默认 3，最大 10。 */\n        limit?: number;\n        factsLimit?: number;\n        interactionsLimit?: number;\n        topicsLimit?: number;\n        messagesLimit?: number;\n        groupProfilesLimit?: number;\n    }): Promise<{\n        dossiers: Array<{\n            match: MemoryPersonMatch;\n            groupProfiles: Array<{\n                userId: string;\n                chatId: string;\n                chatTitle?: string;\n                isDirectMessage?: boolean;\n                dunbarTier: number;\n                affinityScore: number;\n                traits: string[];\n                interests: string[];\n                communicationStyle: string;\n                relationToAgent: string;\n                messageCount: number;\n                lastSeenAt: number;\n            }>;\n            facts: Array<{\n                id: string;\n                subject: string;\n                category: string;\n                content: string;\n                confidence: number;\n                sourceChatId?: string | null;\n                sourceChatTitle?: string | null;\n                sourceTopicLabel?: string | null;\n                observedAt?: number | null;\n                visibility?: \"private\" | \"contextual\" | \"public\";\n                sensitivity?: \"low\" | \"medium\" | \"high\";\n                updatedAt: number;\n            }>;\n            recentInteractions: Array<{\n                timestamp: number;\n                chatId: string;\n                userId: string;\n                type: string;\n                summary: string;\n                sentiment: string;\n                significance: number;\n            }>;\n            recentTopics: Array<{\n                topicId: string;\n                chatId: string;\n                label: string;\n                summary: string;\n                keywords: string[];\n                participants: string[];\n                startedAt: number;\n                endedAt: number | null;\n                callbackPotential: number;\n            }>;\n            recentMessages: Array<{\n                messageId: string;\n                chatId: string;\n                userId: string;\n                displayName: string;\n                content: string;\n                timestamp: number;\n            }>;\n        }>;\n    }>\n```"
+      },
+      {
+        "name": "semanticSearch",
+        "brief": "semanticSearch(query, options?)",
+        "fullDoc": "```typescript\nsemanticSearch(query: string, options?: {\n        scope?: \"facts\" | \"topics\" | \"all\";\n        limit?: number;\n    }): Promise<Array<{\n        type: \"fact\" | \"topic\";\n        content: string;\n        score: number;\n    }>>\n```"
+      }
+    ],
+    "typeDefs": "type MemoryPersonMatchType =\n    | \"exact_user_id\"\n    | \"exact_display_name\"\n    | \"exact_alias\"\n    | \"exact_username\"\n    | \"partial_display_name\"\n    | \"partial_alias\"\n    | \"partial_username\"\n    | \"fact_subject\"\n    | \"topic_participant\";\n\ninterface MemoryPersonMatch {\n    identity: {\n        userId: string;\n        displayName: string;\n        username?: string;\n        aliases: string[];\n        totalMessageCount: number;\n        lastSeenAt: number;\n        firstSeenAt: number;\n        updatedAt: number;\n    };\n    profile: {\n        identity: {\n            userId: string;\n            displayName: string;\n            username?: string;\n            aliases: string[];\n        } | null;\n        globalProfile: {\n            traits: string[];\n            interests: string[];\n            communicationStyle: string;\n            relationToAgent: string;\n            stablePatterns: string[];\n            agentPolicyHints: string[];\n            followupCandidates: string[];\n            sourceChatIds: string[];\n            confidence: number;\n        } | null;\n        groupProfile: unknown | null;\n        recentFacts: Array<{\n            factId: string;\n            category: string;\n            content: string;\n            sourceChatId?: string | null;\n            sourceChatTitle?: string | null;\n            sourceTopicLabel?: string | null;\n            observedAt?: number | null;\n            visibility?: \"private\" | \"contextual\" | \"public\";\n            sensitivity?: \"low\" | \"medium\" | \"high\";\n        }>;\n    };\n    matchType: MemoryPersonMatchType;\n    score: number;\n    reasons: string[];\n}\n\ninterface MemoryModule {\n    searchFacts(query: string, options?: {\n        subject?: string;\n        categories?: string[];\n        limit?: number;\n    }): Promise<Array<{\n        factId: string;\n        subject: string;\n        category: string;\n        content: string;\n        confidence: number;\n        sourceChatId?: string | null;\n        sourceChatTitle?: string | null;\n        sourceTopicId?: string | null;\n        sourceTopicLabel?: string | null;\n        sourceMessageIds?: string[];\n        sourceInteractionIds?: string[];\n        observedAt?: number | null;\n        visibility?: \"private\" | \"contextual\" | \"public\";\n        sensitivity?: \"low\" | \"medium\" | \"high\";\n        updatedAt: number;\n    }>>;\n\n    searchTopics(query: string, options?: {\n        chatId?: string;\n        after?: number;\n        before?: number;\n        limit?: number;\n    }): Promise<Array<{\n        topicId: string;\n        chatId: string;\n        label: string;\n        summary: string;\n        keywords: string[];\n        participants: string[];\n        startedAt: number;\n        endedAt: number | null;\n        callbackPotential: number;\n    }>>;\n\n    searchMessages(query: string, options?: {\n        chatId?: string;\n        userId?: string;\n        after?: number;\n        before?: number;\n        limit?: number;\n    }): Promise<Array<{\n        messageId: string;\n        chatId: string;\n        userId: string;\n        displayName: string;\n        content: string;\n        timestamp: number;\n    }>>;\n\n    getUserProfile(userId: string, chatId?: string): Promise<{\n        identity: {\n            userId: string;\n            displayName: string;\n            username?: string;\n            aliases: string[];\n        } | null;\n        globalProfile: {\n            traits: string[];\n            interests: string[];\n            communicationStyle: string;\n            relationToAgent: string;\n            stablePatterns: string[];\n            agentPolicyHints: string[];\n            followupCandidates: string[];\n            sourceChatIds: string[];\n            confidence: number;\n        } | null;\n        groupProfile: {\n            dunbarTier: number;\n            affinityScore: number;\n            traits: string[];\n            interests: string[];\n            communicationStyle: string;\n            relationToAgent: string;\n            recentEpisodes: Array<{\n                date: string;\n                type: string;\n                summary: string;\n                topicLabel?: string;\n                evidence?: string[];\n                agentOutcome?: string;\n                confidence?: number;\n            }>;\n            mergedMemory: Array<{\n                periodStart: string;\n                periodEnd: string;\n                granularity: string;\n                relationshipTrend: string;\n                highlights: string[];\n                stablePatterns?: string[];\n                agentPolicyHints?: string[];\n                followupCandidates?: string[];\n            }>;\n        } | null;\n        recentFacts: Array<{\n            factId: string;\n            category: string;\n            content: string;\n            sourceChatId?: string | null;\n            sourceChatTitle?: string | null;\n            sourceTopicLabel?: string | null;\n            observedAt?: number | null;\n            visibility?: \"private\" | \"contextual\" | \"public\";\n            sensitivity?: \"low\" | \"medium\" | \"high\";\n        }>;\n    }>;\n\n    getRecentInteractions(chatId?: string, userId?: string, limit?: number): Promise<Array<{\n        timestamp: number;\n        chatId: string;\n        chatLabel?: string;\n        userId: string;\n        displayName?: string;\n        userLabel?: string;\n        type: string;\n        summary: string;\n        sentiment: string;\n        significance: number;\n    }>>;\n\n    resolvePerson(query: string, options?: {\n        chatId?: string;\n        limit?: number;\n    }): Promise<{\n        matches: MemoryPersonMatch[];\n    }>;\n\n    getPersonDossier(queryOrUserId: string, options?: {\n        chatId?: string;\n        /** 默认 3，最大 10。 */\n        limit?: number;\n        factsLimit?: number;\n        interactionsLimit?: number;\n        topicsLimit?: number;\n        messagesLimit?: number;\n        groupProfilesLimit?: number;\n    }): Promise<{\n        dossiers: Array<{\n            match: MemoryPersonMatch;\n            groupProfiles: Array<{\n                userId: string;\n                chatId: string;\n                chatTitle?: string;\n                isDirectMessage?: boolean;\n                dunbarTier: number;\n                affinityScore: number;\n                traits: string[];\n                interests: string[];\n                communicationStyle: string;\n                relationToAgent: string;\n                messageCount: number;\n                lastSeenAt: number;\n            }>;\n            facts: Array<{\n                id: string;\n                subject: string;\n                category: string;\n                content: string;\n                confidence: number;\n                sourceChatId?: string | null;\n                sourceChatTitle?: string | null;\n                sourceTopicLabel?: string | null;\n                observedAt?: number | null;\n                visibility?: \"private\" | \"contextual\" | \"public\";\n                sensitivity?: \"low\" | \"medium\" | \"high\";\n                updatedAt: number;\n            }>;\n            recentInteractions: Array<{\n                timestamp: number;\n                chatId: string;\n                userId: string;\n                type: string;\n                summary: string;\n                sentiment: string;\n                significance: number;\n            }>;\n            recentTopics: Array<{\n                topicId: string;\n                chatId: string;\n                label: string;\n                summary: string;\n                keywords: string[];\n                participants: string[];\n                startedAt: number;\n                endedAt: number | null;\n                callbackPotential: number;\n            }>;\n            recentMessages: Array<{\n                messageId: string;\n                chatId: string;\n                userId: string;\n                displayName: string;\n                content: string;\n                timestamp: number;\n            }>;\n        }>;\n    }>;\n\n    semanticSearch(query: string, options?: {\n        scope?: \"facts\" | \"topics\" | \"all\";\n        limit?: number;\n    }): Promise<Array<{\n        type: \"fact\" | \"topic\";\n        content: string;\n        score: number;\n    }>>;\n}"
+  },
+  {
+    "name": "onebot",
+    "description": "onebot.d.ts — QQ / OneBot 平台 API 系统注入的 OneBot host proxy 接口。 也会以 `qq` 别名暴露给 sandbox。",
+    "methods": [
+      {
+        "name": "useMessages",
+        "brief": "加载 OneBot/NapCat 消息指南。用于消息检索、历史消息、已读、转发、合并转发和消息表情点赞等成组能力；调用本方法只披露指南。",
+        "fullDoc": "```typescript\nuseMessages(): Promise<string>\n```\n\n\n加载 OneBot/NapCat 消息指南。用于消息检索、历史消息、已读、转发、合并转发和消息表情点赞等成组能力；调用本方法只披露指南。"
+      },
+      {
+        "name": "useGroupAdministration",
+        "brief": "加载 OneBot/NapCat 群管理指南。用于群资料、成员列表、禁言、踢人、管理员、公告、精华消息和群待办等成组能力；调用本方法只披露指南。",
+        "fullDoc": "```typescript\nuseGroupAdministration(): Promise<string>\n```\n\n\n加载 OneBot/NapCat 群管理指南。用于群资料、成员列表、禁言、踢人、管理员、公告、精华消息和群待办等成组能力；调用本方法只披露指南。"
+      },
+      {
+        "name": "useFiles",
+        "brief": "加载 OneBot/NapCat 文件指南。用于图片/语音/文件解析、群文件系统、文件 URL 和跨机器媒体处理注意事项；调用本方法只披露指南。",
+        "fullDoc": "```typescript\nuseFiles(): Promise<string>\n```\n\n\n加载 OneBot/NapCat 文件指南。用于图片/语音/文件解析、群文件系统、文件 URL 和跨机器媒体处理注意事项；调用本方法只披露指南。"
+      },
+      {
+        "name": "useUsersAndProfile",
+        "brief": "加载 OneBot/NapCat 用户与资料指南。用于好友列表、陌生人资料、最近会话、点赞、好友请求和账号资料等成组能力；调用本方法只披露指南。",
+        "fullDoc": "```typescript\nuseUsersAndProfile(): Promise<string>\n```\n\n\n加载 OneBot/NapCat 用户与资料指南。用于好友列表、陌生人资料、最近会话、点赞、好友请求和账号资料等成组能力；调用本方法只披露指南。"
+      },
+      {
+        "name": "useSystemUtilities",
+        "brief": "加载 OneBot/NapCat 工具指南。用于版本/状态探测、发送能力检查、OCR、URL 安全检查、频道资料和 AI 语音等低频能力；调用本方法只披露指南。",
+        "fullDoc": "```typescript\nuseSystemUtilities(): Promise<string>\n```\n\n\n加载 OneBot/NapCat 工具指南。用于版本/状态探测、发送能力检查、OCR、URL 安全检查、频道资料和 AI 语音等低频能力；调用本方法只披露指南。"
+      },
+      {
+        "name": "getMessage",
+        "brief": "根据 OneBot 消息 ID 获取消息详情。",
+        "fullDoc": "```typescript\ngetMessage(messageId: string | number): Promise<OneBotRawMessage>\n```\n\n\n根据 OneBot 消息 ID 获取消息详情。\n\n**示例：**\n```typescript\nconst msg = await onebot.getMessage(794582600);\n```"
+      },
+      {
+        "name": "callApi",
+        "brief": "调用 OneBot/NapCat 原生 action，参数保持平台原始 params 对象。 这是新增能力的首选入口；旧 sendText/sendMedia wrapper 只保留兼容，不再扩展新平台参数。",
+        "fullDoc": "```typescript\ncallApi(action: string, params?: OneBotNativeParams): Promise<unknown>\n```\n\n\n调用 OneBot/NapCat 原生 action，参数保持平台原始 params 对象。\n这是新增能力的首选入口；旧 sendText/sendMedia wrapper 只保留兼容，不再扩展新平台参数。\n\n**示例：**\n```typescript\nawait onebot.callApi(\"send_group_msg\", {\n  group_id: 979200391,\n  message: [\n    { type: \"at\", data: { qq: \"123456\" } },\n    { type: \"text\", data: { text: \" 来看这个\" } },\n  ],\n});\n```"
+      },
+      {
+        "name": "send_group_msg",
+        "brief": "OneBot 原生 send_group_msg(params)。参数名和行为保持 OneBot/NapCat 原样。",
+        "fullDoc": "```typescript\nsend_group_msg(params: { group_id: string | number; message: OneBotMessage; [key: string]: unknown }): Promise<OneBotMessageAck | null>\n```\n\n\nOneBot 原生 send_group_msg(params)。参数名和行为保持 OneBot/NapCat 原样。\n\n**示例：**\n```typescript\nawait onebot.send_group_msg({\n  group_id: 979200391,\n  message: [{ type: \"text\", data: { text: \"你好\" } }],\n});\n```"
+      },
+      {
+        "name": "send_private_msg",
+        "brief": "OneBot 原生 send_private_msg(params)。参数名和行为保持 OneBot/NapCat 原样。",
+        "fullDoc": "```typescript\nsend_private_msg(params: { user_id: string | number; message: OneBotMessage; [key: string]: unknown }): Promise<OneBotMessageAck | null>\n```\n\n\nOneBot 原生 send_private_msg(params)。参数名和行为保持 OneBot/NapCat 原样。\n\n**示例：**\n```typescript\nawait onebot.send_private_msg({ user_id: 123456, message: \"你好\" });\n```"
+      },
+      {
+        "name": "send_msg",
+        "brief": "OneBot 原生 send_msg(params)，可用 message_type/group_id/user_id 选择目标。",
+        "fullDoc": "```typescript\nsend_msg(params: { message_type?: \"group\" | \"private\" | string; group_id?: string | number; user_id?: string | number; message: OneBotMessage; [key: string]: unknown }): Promise<OneBotMessageAck | null>\n```\n\n\nOneBot 原生 send_msg(params)，可用 message_type/group_id/user_id 选择目标。\n\n**示例：**\n```typescript\nawait onebot.send_msg({ message_type: \"group\", group_id: 979200391, message: \"你好\" });\n```"
+      },
+      {
+        "name": "delete_msg",
+        "brief": "OneBot 原生 delete_msg(params)。",
+        "fullDoc": "```typescript\ndelete_msg(params: { message_id: string | number; [key: string]: unknown }): Promise<unknown>\n```\n\n\nOneBot 原生 delete_msg(params)。\n\n**示例：**\n```typescript\nawait onebot.delete_msg({ message_id: 123456 });\n```"
+      },
+      {
+        "name": "get_msg",
+        "brief": "OneBot 原生 get_msg(params)。",
+        "fullDoc": "```typescript\nget_msg(params: { message_id: string | number; [key: string]: unknown }): Promise<OneBotRawMessage>\n```\n\n\nOneBot 原生 get_msg(params)。\n\n**示例：**\n```typescript\nconst msg = await onebot.get_msg({ message_id: 123456 });\n```"
+      },
+      {
+        "name": "mention",
+        "brief": "构造 OneBot 标准 @ 消息段。只构造 segment，不会发送。兼容辅助函数，冻结为兜底用法。",
+        "fullDoc": "```typescript\nmention(userId: string | number): OneBotMessageSegment\n```\n\n\n构造 OneBot 标准 @ 消息段。只构造 segment，不会发送。兼容辅助函数，冻结为兜底用法。\n\n**示例：**\n```typescript\nawait onebot.sendMessage(chatId, [onebot.mention(\"123456\"), { type: \"text\", data: { text: \" 你好\" } }]);\n```"
+      },
+      {
+        "name": "sendMessage",
+        "brief": "发送 OneBot 标准消息。message 可以是 CQ 字符串或消息段数组。兼容辅助函数，冻结为兜底用法。 用于文本、@、回复、图片、语音、视频、文件、表情等混合消息。",
+        "fullDoc": "```typescript\nsendMessage(chatId: string | number, message: OneBotMessage, opts?: OneBotSendMessageOptions): Promise<OneBotMessageAck | null>\n```\n\n\n发送 OneBot 标准消息。message 可以是 CQ 字符串或消息段数组。兼容辅助函数，冻结为兜底用法。\n用于文本、@、回复、图片、语音、视频、文件、表情等混合消息。\n\n**示例：**\n```typescript\nawait onebot.sendMessage(chatId, [\n  { type: \"at\", data: { qq: \"123456\" } },\n  { type: \"text\", data: { text: \" 来看这个\" } },\n]);\n```"
+      },
+      {
+        "name": "sendAt",
+        "brief": "在群聊里 @ 指定 QQ 用户并追加文本。兼容辅助函数，冻结为兜底用法。 userId 支持裸 QQ 号、onebot:<qq>、onebot:private:<qq>、\"all\"、数组或逗号分隔字符串。",
+        "fullDoc": "```typescript\nsendAt(chatId: string | number, userId: string | number | Array<string | number>, text?: string, opts?: { replyTo?: string | number }): Promise<OneBotMessageAck | null>\n```\n\n\n在群聊里 @ 指定 QQ 用户并追加文本。兼容辅助函数，冻结为兜底用法。\nuserId 支持裸 QQ 号、onebot:<qq>、onebot:private:<qq>、\"all\"、数组或逗号分隔字符串。\n\n**示例：**\n```typescript\nawait onebot.sendAt(chatId, \"123456\", \"辛苦看下这个\");\nawait onebot.sendAt(chatId, [\"123456\", \"778899\"], \"村里发金条了\");\n```"
+      },
+      {
+        "name": "sendText",
+        "brief": "发送文本消息。兼容 wrapper，冻结为兜底用法；新参数优先用 send_group_msg/send_private_msg/callApi。",
+        "fullDoc": "```typescript\nsendText(chatId: string | number, text: string, opts?: OneBotSendMessageOptions): Promise<OneBotMessageAck | null>\n```\n\n\n发送文本消息。兼容 wrapper，冻结为兜底用法；新参数优先用 send_group_msg/send_private_msg/callApi。\n\n**示例：**\n```typescript\nawait onebot.sendText(chatId, \"你好\");\n```"
+      },
+      {
+        "name": "sendMedia",
+        "brief": "发送媒体消息。兼容 wrapper，冻结为兜底用法；新参数优先用 OneBot 原生 action。 支持本地文件路径或 URL。当 `type` 为 `audio` / `voice` 时，QQ/NapCat 不支持 `replyTo`，该参数会被忽略。",
+        "fullDoc": "```typescript\nsendMedia(chatId: string | number, media: string | OneBotMediaPayload, opts?: { replyTo?: string | number; caption?: string }): Promise<OneBotMessageAck | null>\n```\n\n\n发送媒体消息。兼容 wrapper，冻结为兜底用法；新参数优先用 OneBot 原生 action。\n支持本地文件路径或 URL。当 `type` 为 `audio` / `voice` 时，QQ/NapCat 不支持 `replyTo`，该参数会被忽略。\n\n**示例：**\n```typescript\nawait onebot.sendMedia(chatId, { type: \"image\", file: \"Downloads/a.png\", caption: \"图\" });\n```"
+      },
+      {
+        "name": "sendFile",
+        "brief": "发送文件。兼容 wrapper，冻结为兜底用法；新参数优先用 OneBot 原生 action。",
+        "fullDoc": "```typescript\nsendFile(chatId: string | number, filePath: string, opts?: { replyTo?: string | number; caption?: string; fileName?: string }): Promise<OneBotMessageAck | null>\n```\n\n\n发送文件。兼容 wrapper，冻结为兜底用法；新参数优先用 OneBot 原生 action。\n\n**示例：**\n```typescript\nawait onebot.sendFile(chatId, \"Downloads/report.pdf\", { caption: \"日报\" });\n```"
+      },
+      {
+        "name": "sendSticker",
+        "brief": "发送贴纸或图片表情。兼容 wrapper，冻结为兜底用法；新参数优先用 OneBot 原生 action。",
+        "fullDoc": "```typescript\nsendSticker(chatId: string | number, sticker: string | Record<string, unknown>, opts?: { replyTo?: string | number; caption?: string }): Promise<OneBotMessageAck | null>\n```\n\n\n发送贴纸或图片表情。兼容 wrapper，冻结为兜底用法；新参数优先用 OneBot 原生 action。\n\n**示例：**\n```typescript\nawait onebot.sendSticker(chatId, \"Downloads/sticker.png\");\n```"
+      },
+      {
+        "name": "sendFace",
+        "brief": "发送 QQ 系统表情（CQ face）。兼容 wrapper，冻结为兜底用法；新参数优先用 OneBot 原生 action。",
+        "fullDoc": "```typescript\nsendFace(chatId: string | number, faceId: string | number, opts?: { replyTo?: string | number; text?: string }): Promise<OneBotMessageAck | null>\n```\n\n\n发送 QQ 系统表情（CQ face）。兼容 wrapper，冻结为兜底用法；新参数优先用 OneBot 原生 action。\n\n**示例：**\n```typescript\nawait onebot.sendFace(chatId, 21);\n```"
+      },
+      {
+        "name": "sendTyping",
+        "brief": "OneBot 无 typing 指示，此方法为 no-op。",
+        "fullDoc": "```typescript\nsendTyping(chatId: string | number): Promise<void>\n```\n\n\nOneBot 无 typing 指示，此方法为 no-op。"
+      },
+      {
+        "name": "deleteMessages",
+        "brief": "撤回消息。",
+        "fullDoc": "```typescript\ndeleteMessages(chatId: string | number, messageIds: Array<string | number>): Promise<void>\n```\n\n\n撤回消息。\n\n**示例：**\n```typescript\nawait onebot.deleteMessages(chatId, [messageId]);\n```"
+      },
+      {
+        "name": "downloadMedia",
+        "brief": "下载 QQ 媒体到 CyberGroupmate 本机 workspace/Downloads/。 mediaRef 可以是图片/媒体 file、URL、base64/data URL，也可以直接传 OneBot 消息 ID； 传消息 ID 时会通过 NapCat get_msg 解析消息里的图片/媒体段。",
+        "fullDoc": "```typescript\ndownloadMedia(mediaRef: string | number): Promise<string>\n```\n\n\n下载 QQ 媒体到 CyberGroupmate 本机 workspace/Downloads/。\nmediaRef 可以是图片/媒体 file、URL、base64/data URL，也可以直接传 OneBot 消息 ID；\n传消息 ID 时会通过 NapCat get_msg 解析消息里的图片/媒体段。\n\n**示例：**\n```typescript\nconst localPath = await onebot.downloadMedia(794582600);\n```"
+      }
+    ],
+    "typeDefs": "interface OneBotMessageAck {\n    message_id?: unknown;\n    id?: unknown;\n    chatId?: string | number;\n    group_id?: string | number;\n    user_id?: string | number;\n}\n\ninterface OneBotMediaPayload {\n    type?: string;\n    file?: string;\n    url?: string;\n    caption?: string;\n    fileName?: string;\n}\n\ninterface OneBotRawMessage {\n    message_id?: string | number;\n    real_id?: string | number;\n    time?: number;\n    message_type?: \"private\" | \"group\" | string;\n    sender?: Record<string, unknown>;\n    message?: unknown;\n    raw_message?: string;\n    /** 解析后的 OneBot 消息段数组。 */\n    messageSegments?: OneBotMessageSegment[];\n    /** 从 text/at/face/mface 等段提取的人类可读文本。 */\n    text?: string;\n    /** 消息里出现的 @ 对象，含 \"all\" 和当前 bot 被 @ 的标记。 */\n    mentions?: Array<{\n        userId: string;\n        rawUserId: string;\n        displayName?: string;\n        isAll?: boolean;\n        isSelf?: boolean;\n    }>;\n    /** 是否 @ 了当前 bot 或 @ 全体成员。 */\n    mentionsAgent?: boolean;\n    replyToMessageId?: string;\n    mediaInfo?: Record<string, unknown>;\n    [key: string]: unknown;\n}\n\ninterface OneBotMessageSegment {\n    type: string;\n    data?: Record<string, unknown>;\n}\n\ntype OneBotMessage = string | OneBotMessageSegment[];\n\ninterface OneBotSendMessageOptions {\n    /** 回复指定消息 ID。会在消息段数组前自动插入 OneBot reply 段。 */\n    replyTo?: string | number;\n    /** 发送前自动插入一个或多个 @ 段。支持 QQ 号、\"all\"、onebot:<qq>、onebot:private:<qq>、数组或逗号分隔字符串。 */\n    mentions?: Array<string | number> | string | number;\n}\n\ntype OneBotNativeParams = Record<string, unknown>;"
+  },
+  {
+    "name": "runtime",
+    "description": "shared/runtime.d.ts — 系统级能力",
+    "methods": [
+      {
+        "name": "notify",
+        "brief": "推送事件到通知中心",
+        "fullDoc": "```typescript\nnotify(event: { type: string; [key: string]: unknown }): void\n```\n\n\n推送事件到通知中心"
+      },
+      {
+        "name": "input",
+        "brief": "请求host用户输入",
+        "fullDoc": "```typescript\ninput(prompt: string): Promise<string>\n```\n\n\n请求host用户输入"
+      },
+      {
+        "name": "print",
+        "brief": "直接打印到host",
+        "fullDoc": "```typescript\nprint(msg: string): void\n```\n\n\n直接打印到host"
+      },
+      {
+        "name": "spawn",
+        "brief": "启动一个命名后台任务",
+        "fullDoc": "```typescript\nspawn(name: string, fn: (signal: AbortSignal) => Promise<void>): void\n```\n\n\n启动一个命名后台任务"
+      },
+      {
+        "name": "spawnPersistent",
+        "brief": "启动持久化后台任务（Worker 重启后自动恢复）。 代码以字符串形式存储，触发时在 sandbox 中执行。 代码中可通过 `signal` 变量访问 AbortSignal。",
+        "fullDoc": "```typescript\nspawnPersistent(name: string, code: string): void\n```\n\n\n启动持久化后台任务（Worker 重启后自动恢复）。\n代码以字符串形式存储，触发时在 sandbox 中执行。\n代码中可通过 `signal` 变量访问 AbortSignal。\n\n**参数：**\n- `name`: 任务名称（唯一标识，同名会替换）\n- `code`: JavaScript 代码字符串\n\n**示例：**\n```typescript\nruntime.spawnPersistent(\"monitor\", `\n  while (!signal.aborted) {\n    console.log(\"heartbeat at \" + Date.now());\n    await new Promise(r => setTimeout(r, 60000));\n  }\n`);\n```"
+      },
+      {
+        "name": "kill",
+        "brief": "停止一个后台任务（同时清除持久化记录）",
+        "fullDoc": "```typescript\nkill(name: string): void\n```\n\n\n停止一个后台任务（同时清除持久化记录）"
+      },
+      {
+        "name": "ps",
+        "brief": "列出后台任务",
+        "fullDoc": "```typescript\nps(): string[]\n```\n\n\n列出后台任务"
+      },
+      {
+        "name": "home",
+        "brief": "返回当前 sandbox 的 home 目录路径（per-chat 隔离）",
+        "fullDoc": "```typescript\nhome(): string\n```\n\n\n返回当前 sandbox 的 home 目录路径（per-chat 隔离）"
+      },
+      {
+        "name": "workspace",
+        "brief": "返回 workspace 根目录路径",
+        "fullDoc": "```typescript\nworkspace(): string\n```\n\n\n返回 workspace 根目录路径"
+      },
+      {
+        "name": "env.list",
+        "brief": "列出所有受管环境变量",
+        "fullDoc": "```typescript\nlist(): Promise<Array<{ key: string; value: string; scope: \"both\" | \"host\" | \"sandbox\" }>>\n```\n\n\n列出所有受管环境变量"
+      },
+      {
+        "name": "env.get",
+        "brief": "查询单个环境变量，不存在返回 null",
+        "fullDoc": "```typescript\nget(key: string): Promise<{ key: string; value: string; scope: \"both\" | \"host\" | \"sandbox\" } | null>\n```\n\n\n查询单个环境变量，不存在返回 null"
+      },
+      {
+        "name": "env.set",
+        "brief": "新增或覆盖环境变量。",
+        "fullDoc": "```typescript\nset(key: string, value: string, scope?: \"both\" | \"host\" | \"sandbox\"): Promise<{ ok: true; key: string; value: string; scope: \"both\" | \"host\" | \"sandbox\" }>\n```\n\n\n新增或覆盖环境变量。\n\n**参数：**\n- `scope`: both(默认)/host/sandbox"
+      },
+      {
+        "name": "env.delete",
+        "brief": "删除环境变量（不存在时安全返回）",
+        "fullDoc": "```typescript\ndelete(key: string): Promise<{ ok: true; deleted: boolean }>\n```\n\n\n删除环境变量（不存在时安全返回）"
+      },
+      {
+        "name": "remind",
+        "brief": "设置一次性定时提醒（自然语言）。到期后 agent 将被唤醒并收到 description 作为新任务。重复定时提醒请用 cron ⚠️ description 必须是详细的自然语言描述，不是代码。 写清楚：要做什么、给谁发、发什么内容、如何获取信息等。 限制：最短 1 分钟，最长 365 天，每个群最多 10 个活跃提醒。",
+        "fullDoc": "```typescript\nremind(description: string, delayMinutes: number): Promise<{\n        reminderId: string;\n        triggerAt: string;\n        items: Array<{\n            id: string;\n            type: \"reminder\" | \"cron\";\n            description: string;\n            /** Unix epoch milliseconds. */\n            triggerAt?: number;\n            cronExpr?: string;\n            taskDescription?: string;\n            /** Unix epoch milliseconds. */\n            createdAt: number;\n            triggered?: boolean;\n        }>;\n    }>\n```\n\n\n设置一次性定时提醒（自然语言）。到期后 agent 将被唤醒并收到 description 作为新任务。重复定时提醒请用 cron\n\n⚠️ description 必须是详细的自然语言描述，不是代码。\n写清楚：要做什么、给谁发、发什么内容、如何获取信息等。\n\n限制：最短 1 分钟，最长 365 天，每个群最多 10 个活跃提醒。\n\n**参数：**\n- `description`: 详细的自然语言任务描述\n- `delayMinutes`: 延迟分钟数（1 ~ 525600，即 365 天）\n- **返回值**: { reminderId, triggerAt }\n\n**示例：**\n```typescript\n// 3 分钟后提醒\nawait runtime.remind(\"提醒群友该起床了，用活泼的语气叫他\", 3);\n```\n\n```typescript\n// 1 小时后提醒\nawait runtime.remind(\"用 tavily 搜索刚才讨论的那个开源项目的最新版本，然后把结果发到群里\", 60);\n```"
+      },
+      {
+        "name": "elevate",
+        "brief": "将当前任务升级给 Meta Agent 处理，并立即入队一次跨群 callback attention。 用于当前 subagent 视角无法完成的跨群/跨人/全局编排任务：例如需要查别的群、协调多个群、让 Meta 重新分派给其他群、或当前群写权限不足。 request 必须写成详细自然语言，说明当前群、已经查到什么、卡在哪里、希望 Meta 做什么。",
+        "fullDoc": "```typescript\nelevate(request: string, options?: {\n        urgency?: \"normal\" | \"high\";\n        data?: unknown;\n    }): Promise<{ ok: true; id: string; enqueuedAt: number }>\n```\n\n\n将当前任务升级给 Meta Agent 处理，并立即入队一次跨群 callback attention。\n\n用于当前 subagent 视角无法完成的跨群/跨人/全局编排任务：例如需要查别的群、协调多个群、让 Meta 重新分派给其他群、或当前群写权限不足。\nrequest 必须写成详细自然语言，说明当前群、已经查到什么、卡在哪里、希望 Meta 做什么。\n\n**参数：**\n- `request`: 给 Meta Agent 的明确任务说明\n- `options`: urgency=high 会提高本次唤醒优先级；data 可附带结构化上下文\n- **返回值**: { ok, id, enqueuedAt }，enqueuedAt 为 Unix epoch milliseconds\n\n**示例：**\n```typescript\nawait runtime.elevate(\"当前群有人问 D 群上周 API 网关结论。请 Meta 查 D 群历史，把结论派回本群。\", {\n  urgency: \"high\",\n  data: { sourceTask: ctx.taskId, targetTopic: \"API 网关\" }\n});\n```"
+      },
+      {
+        "name": "extendSteps",
+        "brief": "增加当前 CodeAct session 的可用轮次。 仅对当前 session（本轮任务）生效，不会持久化到下次任务。 在本轮代码中调用后，从下一轮开始生效。",
+        "fullDoc": "```typescript\nextendSteps(steps?: number): { ok: true; extendedBy: number; totalExtended: number }\n```\n\n\n增加当前 CodeAct session 的可用轮次。\n\n仅对当前 session（本轮任务）生效，不会持久化到下次任务。\n在本轮代码中调用后，从下一轮开始生效。\n\n**参数：**\n- `steps`: 要增加的轮次数，必须为正整数\n- **返回值**: 当前累计增加值"
+      },
+      {
+        "name": "modifyTimeout",
+        "brief": "修改当前 CodeAct session 后续代码执行超时（毫秒）。 仅对当前 session（本轮任务）生效，不会持久化到下次任务。 在本轮代码中调用后，从下一段代码执行开始生效。",
+        "fullDoc": "```typescript\nmodifyTimeout(timeoutMs: number): { ok: true; timeoutMs: number }\n```\n\n\n修改当前 CodeAct session 后续代码执行超时（毫秒）。\n\n仅对当前 session（本轮任务）生效，不会持久化到下次任务。\n在本轮代码中调用后，从下一段代码执行开始生效。\n\n**参数：**\n- `timeoutMs`: 新超时（毫秒），1000 ~ 600000\n- **返回值**: 已应用的超时值"
+      }
+    ]
+  },
+  {
+    "name": "shell",
+    "description": "shell.d.ts — 终端 Tab 管理模块 提供类似 tmux/terminal tabs 的多终端管理能力。 主终端 \"default\" 是所有 ```bash``` 代码块的执行目标。 当主终端被长时间运行的服务阻塞时，可以将其 detach 到后台并获得全新主终端。",
+    "methods": [
+      {
+        "name": "listTabs",
+        "brief": "列出所有存活的终端 Tab 及其状态。",
+        "fullDoc": "```typescript\nlistTabs(): Promise<Array<{\n        id: string;\n        state: \"idle\" | \"busy\";\n        recentOutput: string;\n    }>>\n```\n\n\n列出所有存活的终端 Tab 及其状态。\n\n**参数：**\n- **返回值**: 每个 tab 的 id、状态和最近输出预览\n\n**示例：**\n```typescript\nconst tabs = await shell.listTabs();\n// [{ id: \"default\", state: \"idle\", recentOutput: \"...\" },\n//  { id: \"web-server\", state: \"busy\", recentOutput: \"Listening on :3000\" }]\n```"
+      },
+      {
+        "name": "detach",
+        "brief": "分离当前主终端到后台，并立刻获得一个全新的 default 终端。 当主终端被长时间运行的命令（如 `npm run dev`）阻塞时： 1. 当前 default 终端被重命名为 newTabId 并移入后台 2. 系统自动创建全新的 default 终端 3. 后续 ```bash``` 代码块将在新终端中执行",
+        "fullDoc": "```typescript\ndetach(newTabId: string): Promise<void>\n```\n\n\n分离当前主终端到后台，并立刻获得一个全新的 default 终端。\n\n当主终端被长时间运行的命令（如 `npm run dev`）阻塞时：\n1. 当前 default 终端被重命名为 newTabId 并移入后台\n2. 系统自动创建全新的 default 终端\n3. 后续 ```bash``` 代码块将在新终端中执行\n\n**参数：**\n- `newTabId`: 后台标签名（如 \"web-server\"、\"db\"）\n\n**示例：**\n```typescript\n// 启动 dev server（会超时，但进程仍在运行）\n// ```bash\n// npm run dev\n// ```\n// 收到 [⚠ Command timed out]\n\n// 将被阻塞的终端移到后台，释放主通道\nawait shell.detach(\"dev-server\");\n\n// 现在可以继续在新的 default 终端工作\n```"
+      },
+      {
+        "name": "read",
+        "brief": "读取指定终端的输出历史。 用于排查超时命令的残留输出，或查看后台服务日志。 默认读取 default 终端，可指定 tabId 读取后台终端。",
+        "fullDoc": "```typescript\nread(tabId?: string, lines?: number): Promise<string>\n```\n\n\n读取指定终端的输出历史。\n\n用于排查超时命令的残留输出，或查看后台服务日志。\n默认读取 default 终端，可指定 tabId 读取后台终端。\n\n**参数：**\n- `tabId`: 终端标签 ID（默认 \"default\"）\n- `lines`: 返回最近 N 行（默认 50）\n\n**示例：**\n```typescript\n// 查看 dev-server 的运行日志\nconst logs = await shell.read(\"dev-server\", 20);\nconsole.log(logs);\n```"
+      },
+      {
+        "name": "runBackground",
+        "brief": "短命令用 ```bash``` 阻塞拿输出；长任务才用本方法后台启动。立即返回 tabId，完成或超时时自动唤醒；不会 kill 进程。",
+        "fullDoc": "```typescript\nrunBackground(\n        command: string,\n        opts?: { tabId?: string; idleTimeout?: number; maxDuration?: number },\n    ): Promise<{ tabId: string }>\n```\n\n\n短命令用 ```bash``` 阻塞拿输出；长任务才用本方法后台启动。立即返回 tabId，完成或超时时自动唤醒；不会 kill 进程。\n\n**参数：**\n- `command`: 要在后台运行的命令\n- `opts.tabId`: 后台终端名（省略则自动命名 bg-N；不可为 \"default\"）\n- `opts.idleTimeout`: 多久无输出判定空闲并唤醒，毫秒（默认 120000；传 0 关闭）\n- `opts.maxDuration`: 运行硬上限并唤醒，毫秒（默认 1800000=30 分钟；传 0 关闭）\n- **返回值**: 立即返回 { tabId }，命令已在后台启动\n\n**示例：**\n```typescript\nconst { tabId } = await shell.runBackground(\"npm run build\", { idleTimeout: 60000, maxDuration: 1800000 });\n```"
+      },
+      {
+        "name": "sendInput",
+        "brief": "向指定终端注入按键输入。 用于应对交互式 CLI 的确认提示（如 \"Is this ok? (y/N)\"）。 也可发送 Ctrl+C（\"\\x03\"）来优雅地中断进程。",
+        "fullDoc": "```typescript\nsendInput(input: string, tabId?: string): Promise<void>\n```\n\n\n向指定终端注入按键输入。\n\n用于应对交互式 CLI 的确认提示（如 \"Is this ok? (y/N)\"）。\n也可发送 Ctrl+C（\"\\x03\"）来优雅地中断进程。\n\n**参数：**\n- `input`: 要发送的文本（如 \"y\\n\"、\"\\x03\"）\n- `tabId`: 目标终端（默认 \"default\"）\n\n**示例：**\n```typescript\n// 对交互提示输入 y\nawait shell.sendInput(\"y\\n\");\n```\n\n```typescript\n// 向后台服务发送 Ctrl+C 停止它\nawait shell.sendInput(\"\\x03\", \"dev-server\");\n```"
+      },
+      {
+        "name": "kill",
+        "brief": "销毁指定终端中的所有进程并回收该 tab。 如果销毁的是 default 终端，会自动创建新的 default。",
+        "fullDoc": "```typescript\nkill(tabId?: string): Promise<void>\n```\n\n\n销毁指定终端中的所有进程并回收该 tab。\n如果销毁的是 default 终端，会自动创建新的 default。\n\n**参数：**\n- `tabId`: 要销毁的终端（默认 \"default\"）\n\n**示例：**\n```typescript\n// 强制结束并回收一个后台终端\nawait shell.kill(\"dev-server\");\n\n// 重置卡死的主终端\nawait shell.kill();\n```"
+      },
+      {
+        "name": "cwd",
+        "brief": "获取当前主终端的工作目录。",
+        "fullDoc": "```typescript\ncwd(): Promise<string>\n```\n\n\n获取当前主终端的工作目录。"
+      }
+    ]
+  },
+  {
+    "name": "skills",
+    "description": "shared/skills.d.ts — Skills 高层能力 + 管理接口",
+    "methods": [
+      {
+        "name": "install",
+        "brief": "安装或创建一个新 Skill。支持SKILL.md 型（多数场景）和TS Skills（复杂能力场景） 两种方式完成文件后，都需要调用 skills.reload() 生效。",
+        "fullDoc": "```typescript\ninstall(name: string): string\n```\n\n\n安装或创建一个新 Skill。支持SKILL.md 型（多数场景）和TS Skills（复杂能力场景）\n两种方式完成文件后，都需要调用 skills.reload() 生效。\n\n**参数：**\n- `name`: 拟创建的 Skill 名称\n- **返回值**: 按规范创建 skill 的操作说明文档"
+      },
+      {
+        "name": "list",
+        "brief": "列出当前已加载的 Skills 元数据。 `bindingName` 用于调用注入的全局变量，`path` 用于通过 fs 读取该 skill 的文件。",
+        "fullDoc": "```typescript\nlist(): SkillListEntry[]\n```\n\n\n列出当前已加载的 Skills 元数据。\n`bindingName` 用于调用注入的全局变量，`path` 用于通过 fs 读取该 skill 的文件。\n\n**参数：**\n- **返回值**: 如 [{ id: \"find-ero\", name: \"find-ero\", bindingName: \"find_ero\", path: \"skills/find-ero\", kind: \"agent\", hasSkillMd: true, hasDts: false }]"
+      },
+      {
+        "name": "reload",
+        "brief": "热重载所有 Skills。在 workspace/skills/ 下创建/修改文件后调用。",
+        "fullDoc": "```typescript\nreload(): Promise<SkillListEntry[]>\n```\n\n\n热重载所有 Skills。在 workspace/skills/ 下创建/修改文件后调用。\n\n**参数：**\n- **返回值**: 重载后的 Skills 元数据列表\n\n**示例：**\n```typescript\n// 创建 Skill 后重载\nfs.writeFile(\"skills/myapi/index.ts\", code);\nfs.writeFile(\"skills/myapi/myapi.d.ts\", typeDefs);\nconst loaded = await skills.reload();\nconsole.log(\"已加载:\", loaded.map(skill => `${skill.bindingName} -> ${skill.path}`));\n```"
+      },
+      {
+        "name": "npmInstall",
+        "brief": "安装 npm 包到 workspace/skills/ 目录",
+        "fullDoc": "```typescript\nnpmInstall(packages: string[]): Promise<string>\n```\n\n\n安装 npm 包到 workspace/skills/ 目录\n\n**参数：**\n- `packages`: 包名列表，如 [\"axios\", \"cheerio@1.0.0\"]\n- **返回值**: 安装输出\n\n**示例：**\n```typescript\nawait skills.npmInstall([\"cheerio\", \"node-fetch\"]);\n```"
+      }
+    ],
+    "typeDefs": "interface SkillListEntry {\n    /** workspace/skills 下的真实目录名。读写文件请使用 path/id，不要猜 bindingName。 */\n    id: string;\n    /** SKILL.md frontmatter name 或目录名，用于展示。 */\n    name: string;\n    /** Sandbox 中注入的 JS 变量名，例如 find_ero。调用 Skill API 用它。 */\n    bindingName: string;\n    /** Agent 在 sandbox fs 中访问该 skill 的相对路径，例如 skills/find-ero。 */\n    path: string;\n    /** Skill 类型：agent 为 SKILL.md-only，code 为 index.ts/js 代码型。 */\n    kind: \"agent\" | \"code\";\n    /** 是否存在 SKILL.md 指南。 */\n    hasSkillMd: boolean;\n    /** 是否存在 .d.ts 类型声明。 */\n    hasDts: boolean;\n}"
+  },
+  {
+    "name": "telegram",
+    "description": "telegram.d.ts — Telegram 平台 API 这是系统注入的 Telegram host proxy 的接口子集。 提供给 Agent 在 sandbox 执行时作为 TypeScript 强类型上下文参考。 平台连接与消息监听由宿主侧官方 adapter 管理。",
+    "methods": [
+      {
+        "name": "useInlineBot",
+        "brief": "加载 inline bot 使用指南。用于像 Telegram 客户端输入 `@bot query` 一样查询 inline bot 并发送某个结果；调用本方法只披露指南，不会执行实际发送。",
+        "fullDoc": "```typescript\nuseInlineBot(): Promise<string>\n```\n\n\n加载 inline bot 使用指南。用于像 Telegram 客户端输入 `@bot query` 一样查询 inline bot 并发送某个结果；调用本方法只披露指南，不会执行实际发送。"
+      },
+      {
+        "name": "useStories",
+        "brief": "加载 Stories 使用指南。用于读取、发布、编辑、删除、置顶 Story，以及查看互动和观看者；调用本方法只披露指南，不会执行实际 Story 操作。",
+        "fullDoc": "```typescript\nuseStories(): Promise<string>\n```\n\n\n加载 Stories 使用指南。用于读取、发布、编辑、删除、置顶 Story，以及查看互动和观看者；调用本方法只披露指南，不会执行实际 Story 操作。"
+      },
+      {
+        "name": "usePolls",
+        "brief": "加载投票流程指南。用于创建投票/测验、读取投票结果等成组流程；调用本方法只披露相关 API，不会发起投票。",
+        "fullDoc": "```typescript\nusePolls(): Promise<string>\n```\n\n\n加载投票流程指南。用于创建投票/测验、读取投票结果等成组流程；调用本方法只披露相关 API，不会发起投票。"
+      },
+      {
+        "name": "usePeerResolution",
+        "brief": "加载 peer 解析指南。用于处理 PEER_ID_INVALID、access hash 缺失、裸数字 user id 无法发送等问题；调用本方法只披露排障流程。",
+        "fullDoc": "```typescript\nusePeerResolution(): Promise<string>\n```\n\n\n加载 peer 解析指南。用于处理 PEER_ID_INVALID、access hash 缺失、裸数字 user id 无法发送等问题；调用本方法只披露排障流程。"
+      },
+      {
+        "name": "useMessageSearch",
+        "brief": "加载历史消息检索指南。用于主动爬楼、搜索视野外上下文或流式遍历历史；调用本方法只披露检索 API 和使用流程。",
+        "fullDoc": "```typescript\nuseMessageSearch(): Promise<string>\n```\n\n\n加载历史消息检索指南。用于主动爬楼、搜索视野外上下文或流式遍历历史；调用本方法只披露检索 API 和使用流程。"
+      },
+      {
+        "name": "useAccountProfile",
+        "brief": "加载账号资料指南。用于修改 bio、姓名、用户名、头像、生日、emoji status、close friends 等个人资料；调用本方法只披露指南，不直接修改账号。",
+        "fullDoc": "```typescript\nuseAccountProfile(): Promise<string>\n```\n\n\n加载账号资料指南。用于修改 bio、姓名、用户名、头像、生日、emoji status、close friends 等个人资料；调用本方法只披露指南，不直接修改账号。"
+      },
+      {
+        "name": "useAdvancedMessages",
+        "brief": "加载高级消息指南。用于复制、评论、引用、定时消息、网页预览、reaction 用户和消息关联查询等成组能力；调用本方法只披露指南。",
+        "fullDoc": "```typescript\nuseAdvancedMessages(): Promise<string>\n```\n\n\n加载高级消息指南。用于复制、评论、引用、定时消息、网页预览、reaction 用户和消息关联查询等成组能力；调用本方法只披露指南。"
+      },
+      {
+        "name": "useChatAdministration",
+        "brief": "加载群组/频道管理指南。用于建群建频道、成员权限、管理员、标题描述头像、慢速模式和内容保护等管理操作；调用本方法只披露指南。",
+        "fullDoc": "```typescript\nuseChatAdministration(): Promise<string>\n```\n\n\n加载群组/频道管理指南。用于建群建频道、成员权限、管理员、标题描述头像、慢速模式和内容保护等管理操作；调用本方法只披露指南。"
+      },
+      {
+        "name": "useInvites",
+        "brief": "加载邀请链接与入群请求指南。用于创建/编辑/撤销邀请链接、查看邀请成员、处理 join request 或预览邀请链接；调用本方法只披露指南。",
+        "fullDoc": "```typescript\nuseInvites(): Promise<string>\n```\n\n\n加载邀请链接与入群请求指南。用于创建/编辑/撤销邀请链接、查看邀请成员、处理 join request 或预览邀请链接；调用本方法只披露指南。"
+      },
+      {
+        "name": "useForumTopics",
+        "brief": "加载论坛话题指南。用于确认群是否开启 Forum、列出话题或定位 topic id；调用本方法只披露相关 API。",
+        "fullDoc": "```typescript\nuseForumTopics(): Promise<string>\n```\n\n\n加载论坛话题指南。用于确认群是否开启 Forum、列出话题或定位 topic id；调用本方法只披露相关 API。"
+      },
+      {
+        "name": "useMediaDownload",
+        "brief": "加载媒体下载指南。包含：1) 用 fs.writeFileBinary() 正确保存 base64 buffer 的方法；2) GIF/短视频抽帧分析时避免 60s 超时的策略（默认 4-6 帧、复用已有文件、先发进度）。遇到 downloadMedia 或 GIF 分析相关问题时调用。",
+        "fullDoc": "```typescript\nuseMediaDownload(): Promise<string>\n```\n\n\n加载媒体下载指南。包含：1) 用 fs.writeFileBinary() 正确保存 base64 buffer 的方法；2) GIF/短视频抽帧分析时避免 60s 超时的策略（默认 4-6 帧、复用已有文件、先发进度）。遇到 downloadMedia 或 GIF 分析相关问题时调用。"
+      },
+      {
+        "name": "sendText",
+        "brief": "mtcute 原生 sendText(chatId, text, params?)。text 支持 string 或 { text, entities }，params 保留 mtcute CommonSendParams 及新增字段。",
+        "fullDoc": "```typescript\nsendText(chatId: number | string, text: TelegramInputText, params?: TelegramSendTextParams): Promise<{ id: number; text: string; date: Date; chat: { id: number; title?: string; username?: string; type: \"private\" | \"group\" | \"supergroup\" | \"channel\"; }; sender: { id: number; displayName?: string; title?: string; username?: string; }; isMention: boolean; replyToMessage?: { id: number } | null; media?: unknown; mediaInfo?: { type: \"photo\" | \"sticker\" | \"video\" | \"document\" | \"animation\" | \"audio\" | \"other\"; rawType?: string; fileId?: string; uniqueFileId?: string; emoji?: string; mimeType?: string; fileName?: string; width?: number; height?: number; fileSize?: number; filePath?: string; downloadStatus?: \"downloaded\" | \"cached\" | \"too_large\" | \"failed\"; downloadError?: string; }; }>\n```\n\n\nmtcute 原生 sendText(chatId, text, params?)。text 支持 string 或 { text, entities }，params 保留 mtcute CommonSendParams 及新增字段。"
+      },
+      {
+        "name": "sendMedia",
+        "brief": "发送媒体消息。支持 URL 和本地文件路径（支持绝对路径或基于 cwd 工作区的相对路径）。",
+        "fullDoc": "```typescript\nsendMedia(chatId: number | string, media: string | { type?: string; file?: string; media?: unknown; caption?: TelegramInputText; fileName?: string; [key: string]: unknown }, params?: TelegramSendMediaParams): Promise<{ id: number; text: string; date: Date; chat: { id: number; title?: string; username?: string; type: \"private\" | \"group\" | \"supergroup\" | \"channel\"; }; sender: { id: number; displayName?: string; title?: string; username?: string; }; isMention: boolean; replyToMessage?: { id: number } | null; media?: unknown; mediaInfo?: { type: \"photo\" | \"sticker\" | \"video\" | \"document\" | \"animation\" | \"audio\" | \"other\"; rawType?: string; fileId?: string; uniqueFileId?: string; emoji?: string; mimeType?: string; fileName?: string; width?: number; height?: number; fileSize?: number; filePath?: string; downloadStatus?: \"downloaded\" | \"cached\" | \"too_large\" | \"failed\"; downloadError?: string; }; }>\n```\n\n\n发送媒体消息。支持 URL 和本地文件路径（支持绝对路径或基于 cwd 工作区的相对路径）。\n\n**示例：**\n```typescript\n// sendMedia(chatId, { type: 'photo', file: 'https://example.com/img.jpg', caption: '看看这个' })\n```\n\n```typescript\n// sendMedia(chatId, { type: 'photo', file: 'ip_skk_moe.png' }) // 自动基于 process.cwd() 解析\n```"
+      },
+      {
+        "name": "sendFile",
+        "brief": "发送磁盘文件到聊天。支持绝对路径或基于 cwd 的相对路径。host 侧读取文件并上传。始终作为文件/文档发送。",
+        "fullDoc": "```typescript\nsendFile(chatId: number | string, filePath: string, opts?: { replyTo?: number; caption?: string; fileName?: string; mimeType?: string }): Promise<{ id: number; text: string; date: Date; chat: { id: number; title?: string; username?: string; type: \"private\" | \"group\" | \"supergroup\" | \"channel\"; }; sender: { id: number; displayName?: string; title?: string; username?: string; }; isMention: boolean; replyToMessage?: { id: number } | null; media?: unknown; mediaInfo?: { type: \"photo\" | \"sticker\" | \"video\" | \"document\" | \"animation\" | \"audio\" | \"other\"; rawType?: string; fileId?: string; uniqueFileId?: string; emoji?: string; mimeType?: string; fileName?: string; width?: number; height?: number; fileSize?: number; filePath?: string; downloadStatus?: \"downloaded\" | \"cached\" | \"too_large\" | \"failed\"; downloadError?: string; }; }>\n```\n\n\n发送磁盘文件到聊天。支持绝对路径或基于 cwd 的相对路径。host 侧读取文件并上传。始终作为文件/文档发送。"
+      },
+      {
+        "name": "sendSticker",
+        "brief": "发送贴纸。通过 uniqueFileId 引用本地已缓存的贴纸文件。",
+        "fullDoc": "```typescript\nsendSticker(chatId: number | string, uniqueFileId: string, opts?: { replyTo?: number }): Promise<{ id: number; text: string; date: Date; chat: { id: number; title?: string; username?: string; type: \"private\" | \"group\" | \"supergroup\" | \"channel\"; }; sender: { id: number; displayName?: string; title?: string; username?: string; }; isMention: boolean; replyToMessage?: { id: number } | null; media?: unknown; mediaInfo?: { type: \"photo\" | \"sticker\" | \"video\" | \"document\" | \"animation\" | \"audio\" | \"other\"; rawType?: string; fileId?: string; uniqueFileId?: string; emoji?: string; mimeType?: string; fileName?: string; width?: number; height?: number; fileSize?: number; filePath?: string; downloadStatus?: \"downloaded\" | \"cached\" | \"too_large\" | \"failed\"; downloadError?: string; }; }>\n```\n\n\n发送贴纸。通过 uniqueFileId 引用本地已缓存的贴纸文件。\n\n**示例：**\n```typescript\n// sendSticker(chatId, 'AgADAgATxxxxxx')\n```"
+      },
+      {
+        "name": "sendMediaGroup",
+        "brief": "发送媒体相册（多张图片/视频合并为一组）。 第一个媒体项的 caption 将作为整组的文案。",
+        "fullDoc": "```typescript\nsendMediaGroup(chatId: number | string, medias: Array<{ type: 'photo' | 'video' | 'document' | 'audio'; file: string; caption?: string; fileName?: string }>, opts?: { replyTo?: number; silent?: boolean; }): Promise<Array<{ id: number; text: string; date: Date; chat: { id: number; title?: string; username?: string; type: \"private\" | \"group\" | \"supergroup\" | \"channel\"; }; sender: { id: number; displayName?: string; title?: string; username?: string; }; isMention: boolean; replyToMessage?: { id: number } | null; media?: unknown; mediaInfo?: { type: \"photo\" | \"sticker\" | \"video\" | \"document\" | \"animation\" | \"audio\" | \"other\"; rawType?: string; fileId?: string; uniqueFileId?: string; emoji?: string; mimeType?: string; fileName?: string; width?: number; height?: number; fileSize?: number; filePath?: string; downloadStatus?: \"downloaded\" | \"cached\" | \"too_large\" | \"failed\"; downloadError?: string; }; }>>\n```\n\n\n发送媒体相册（多张图片/视频合并为一组）。\n第一个媒体项的 caption 将作为整组的文案。\n\n**示例：**\n```typescript\n// sendMediaGroup(chatId, [\n  { type: 'photo', file: 'https://example.com/1.jpg', caption: '相册标题' },\n  { type: 'photo', file: 'https://example.com/2.jpg' },\n])\n```"
+      },
+      {
+        "name": "forwardMessage",
+        "brief": "转发一条或多条已有消息到目标聊天，用于复读、搬运或保留原消息来源。 支持隐藏原作者/原 caption；目标聊天放第一个参数，便于遵守绑定聊天写限制。",
+        "fullDoc": "```typescript\nforwardMessage(toChatId: number | string, fromChatId: number | string, messageIds: number | number[], opts?: { silent?: boolean; schedule?: Date | number | string; clearDraft?: boolean; noAuthor?: boolean; noCaption?: boolean; forbidForwards?: boolean; toThreadId?: number; sendAs?: number | string; videoTimestamp?: number; }): Promise<TelegramMessage | TelegramMessage[]>\n```\n\n\n转发一条或多条已有消息到目标聊天，用于复读、搬运或保留原消息来源。\n支持隐藏原作者/原 caption；目标聊天放第一个参数，便于遵守绑定聊天写限制。\n\n**参数：**\n- `toChatId`: 目标聊天 ID、username、\"me\" 或 \"self\"\n- `fromChatId`: 原消息所在聊天 ID、username、\"me\" 或 \"self\"\n- `messageIds`: 要转发的消息 ID；数组最多 100 条\n\n**示例：**\n```typescript\n// const sent = await telegram.forwardMessage(chatId, chatId, msg.id);\n```\n\n```typescript\n// await telegram.forwardMessage(targetChatId, sourceChatId, [101, 102], { silent: true, noAuthor: true });\n```"
+      },
+      {
+        "name": "sendReaction",
+        "brief": "对消息发送表情表态。传 null 以撤销表态。",
+        "fullDoc": "```typescript\nsendReaction(chatId: number | string, messageId: number, emoji: string | null): Promise<void>\n```\n\n\n对消息发送表情表态。传 null 以撤销表态。\n\n**示例：**\n```typescript\n// sendReaction(chatId, msgId, '👍')\n```\n\n```typescript\n// sendReaction(chatId, msgId, null) // 撤销\n```"
+      },
+      {
+        "name": "editMessage",
+        "brief": "编辑已发送的消息文本。",
+        "fullDoc": "```typescript\neditMessage(chatId: number | string, messageId: number, text: string): Promise<{ id: number; text: string; date: Date; chat: { id: number; title?: string; username?: string; type: \"private\" | \"group\" | \"supergroup\" | \"channel\"; }; sender: { id: number; displayName?: string; title?: string; username?: string; }; isMention: boolean; replyToMessage?: { id: number } | null; media?: unknown; mediaInfo?: { type: \"photo\" | \"sticker\" | \"video\" | \"document\" | \"animation\" | \"audio\" | \"other\"; rawType?: string; fileId?: string; uniqueFileId?: string; emoji?: string; mimeType?: string; fileName?: string; width?: number; height?: number; fileSize?: number; filePath?: string; downloadStatus?: \"downloaded\" | \"cached\" | \"too_large\" | \"failed\"; downloadError?: string; }; }>\n```\n\n\n编辑已发送的消息文本。\n\n**示例：**\n```typescript\n// editMessage(chatId, msgId, '已更正：新文本内容')\n```"
+      },
+      {
+        "name": "deleteMessages",
+        "brief": "删除一条或多条消息。",
+        "fullDoc": "```typescript\ndeleteMessages(chatId: number | string, messageIds: number[]): Promise<void>\n```\n\n\n删除一条或多条消息。\n\n**示例：**\n```typescript\n// deleteMessages(chatId, [msgId1, msgId2])\n```"
+      },
+      {
+        "name": "pinMessage",
+        "brief": "置顶一条消息",
+        "fullDoc": "```typescript\npinMessage(chatId: number | string, messageId: number, opts?: { silent?: boolean }): Promise<void>\n```\n\n\n置顶一条消息"
+      },
+      {
+        "name": "unpinMessage",
+        "brief": "取消置顶一条消息",
+        "fullDoc": "```typescript\nunpinMessage(chatId: number | string, messageId: number): Promise<void>\n```\n\n\n取消置顶一条消息"
+      },
+      {
+        "name": "getMe",
+        "brief": "获取当前登录机器人的基础信息",
+        "fullDoc": "```typescript\ngetMe(): Promise<{ id: number; displayName?: string; title?: string; username?: string; firstName: string; lastName?: string; isBot: boolean; }>\n```\n\n\n获取当前登录机器人的基础信息"
+      },
+      {
+        "name": "getChat",
+        "brief": "精确获取指定会话的基础信息",
+        "fullDoc": "```typescript\ngetChat(chatId: number | string): Promise<{ id: number; title?: string; username?: string; type: \"private\" | \"group\" | \"supergroup\" | \"channel\"; }>\n```\n\n\n精确获取指定会话的基础信息"
+      },
+      {
+        "name": "getUser",
+        "brief": "精确获取指定用户的基础信息",
+        "fullDoc": "```typescript\ngetUser(userId: number | string): Promise<{ id: number; displayName?: string; title?: string; username?: string; firstName: string; lastName?: string; isBot: boolean; }>\n```\n\n\n精确获取指定用户的基础信息"
+      },
+      {
+        "name": "getFullUser",
+        "brief": "获取用户的完整资料（包含个人简介 bio 等）。",
+        "fullDoc": "```typescript\ngetFullUser(userId: number | string): Promise<{ id: number; displayName?: string; title?: string; username?: string; firstName: string; lastName?: string; isBot: boolean; bio?: string; commonChatsCount?: number; }>\n```\n\n\n获取用户的完整资料（包含个人简介 bio 等）。\n\n**示例：**\n```typescript\n// const full = await telegram.getFullUser(userId); console.log(full.bio);\n```"
+      },
+      {
+        "name": "getFullChat",
+        "brief": "获取群组/频道的完整资料（包含群描述 about、成员数等）。",
+        "fullDoc": "```typescript\ngetFullChat(chatId: number | string): Promise<{ id: number; title?: string; username?: string; type: \"private\" | \"group\" | \"supergroup\" | \"channel\"; about?: string; membersCount?: number; onlineCount?: number; isForum?: boolean; }>\n```\n\n\n获取群组/频道的完整资料（包含群描述 about、成员数等）。\n\n**示例：**\n```typescript\n// const full = await telegram.getFullChat(chatId); console.log(full.about, full.isForum);\n```"
+      },
+      {
+        "name": "getChatMembers",
+        "brief": "分页拉取群组成员列表",
+        "fullDoc": "```typescript\ngetChatMembers(chatId: number | string, opts?: { limit?: number }): Promise<Array<{ id: number; displayName?: string; title?: string; username?: string; }>>\n```\n\n\n分页拉取群组成员列表"
+      },
+      {
+        "name": "getMessages",
+        "brief": "按消息 ID 精确获取一条或多条消息。（在别人回复或者提及某消息但是你看不见的时候，善用该函数爬楼获取上下文）",
+        "fullDoc": "```typescript\ngetMessages(chatId: number | string, messageIds: number[]): Promise<Array<{ id: number; text: string; date: Date; chat: { id: number; title?: string; username?: string; type: \"private\" | \"group\" | \"supergroup\" | \"channel\"; }; sender: { id: number; displayName?: string; title?: string; username?: string; }; isMention: boolean; replyToMessage?: { id: number } | null; media?: unknown; mediaInfo?: { type: \"photo\" | \"sticker\" | \"video\" | \"document\" | \"animation\" | \"audio\" | \"other\"; rawType?: string; fileId?: string; uniqueFileId?: string; emoji?: string; mimeType?: string; fileName?: string; width?: number; height?: number; fileSize?: number; filePath?: string; downloadStatus?: \"downloaded\" | \"cached\" | \"too_large\" | \"failed\"; downloadError?: string; }; } | null>>\n```\n\n\n按消息 ID 精确获取一条或多条消息。（在别人回复或者提及某消息但是你看不见的时候，善用该函数爬楼获取上下文）\n\n**示例：**\n```typescript\n// const msgs = await telegram.getMessages(chatId, [100, 101, 102]);\n```"
+      },
+      {
+        "name": "getMessageReactions",
+        "brief": "主动拉取某条消息的表态（Reaction）汇总数据。",
+        "fullDoc": "```typescript\ngetMessageReactions(chatId: number | string, messageIds: number[]): Promise<Array<{ emoji: string; count: number; }>>\n```\n\n\n主动拉取某条消息的表态（Reaction）汇总数据。\n\n**示例：**\n```typescript\n// const reactions = await telegram.getMessageReactions(chatId, [msgId]);\n```"
+      },
+      {
+        "name": "downloadMedia",
+        "brief": "下载媒体文件的二进制数据。返回 base64 编码的 buffer 和文件大小。 优先传入 msg.mediaInfo.fileId，不要把整个 msg.mediaInfo 当作 location 传入；也可以直接传 mtcute 返回的 Photo/FileLocation 等带 __mtcuteRef 的对象。",
+        "fullDoc": "```typescript\ndownloadMedia(location: string | TelegramMtcuteRef | Record<string, unknown>, chatId?: number | string, messageId?: number, uniqueFileId?: string): Promise<{ buffer: string; size: number; }>\n```\n\n\n下载媒体文件的二进制数据。返回 base64 编码的 buffer 和文件大小。\n优先传入 msg.mediaInfo.fileId，不要把整个 msg.mediaInfo 当作 location 传入；也可以直接传 mtcute 返回的 Photo/FileLocation 等带 __mtcuteRef 的对象。\n\n⚠️ **保存到磁盘必须用 `fs.writeFileBinary()`，不能用 `fs.writeFile()`。**\n`data.buffer` 是 base64 字符串；`fs.writeFile` 会把它当 UTF-8 文本写入导致文件损坏。\n\n**参数：**\n- `location`: TDLib/Bot API 兼容 file_id、mtcute FileDownloadLocation、或带 __mtcuteRef 的 mtcute 对象。通常使用 msg.mediaInfo.fileId。\n- `chatId`: 可选，用于 file reference 过期时自动 refetch\n- `messageId`: 可选，同上\n- `uniqueFileId`: 可选，用于缓存命中\n\n**示例：**\n```typescript\n// ✅ 正确：下载并保存为可用的图片文件\nconst msg = messages[0];\nif (msg.mediaInfo?.fileId) {\n  const data = await telegram.downloadMedia(msg.mediaInfo.fileId, chatId, msg.id, msg.mediaInfo.uniqueFileId);\n  fs.writeFileBinary(\"workspace/Downloads/photo.jpg\", data.buffer);\n  // 之后可以 vision.see(\"workspace/Downloads/photo.jpg\") 或 sendMedia(chatId, { type: 'photo', file: 'workspace/Downloads/photo.jpg' })\n}\n```\n\n```typescript\n// ❌ 错误：writeFile 写入 base64 字符串，文件损坏\n// fs.writeFile(\"photo.jpg\", data.buffer);\n```\n\n```typescript\n// 错误：await telegram.downloadMedia(msg.mediaInfo)\n// 正确：await telegram.downloadMedia(msg.mediaInfo.fileId, msg.chat.id, msg.id, msg.mediaInfo.uniqueFileId)\n```"
+      },
+      {
+        "name": "downloadAsBuffer",
+        "brief": "mtcute 原生 downloadAsBuffer 透传。返回值在 sandbox 中表示为 base64 buffer。 ⚠️ **重要**：此方法对 `location` 类型容错较低。 - ✅ 接受：fileId 字符串、带 `__mtcuteRef` 的 mtcute 原生对象（如 `getProfilePhotos` 返回的 photo 对象） - ❌ 不接受：`msg.mediaInfo`（普通 plain object，没有 `__mtcuteRef`）——会报 \"Unknown object undefined\" 大多数场景建议优先用 `downloadMedia`（容错更好），仅在需要 mtcute 原生对象时用此方法。",
+        "fullDoc": "```typescript\ndownloadAsBuffer(location: string | TelegramMtcuteRef, params?: { fileSize?: number; partSize?: number; dcId?: number; offset?: number; limit?: number }): Promise<{ buffer: string; size: number; }>\n```\n\n\nmtcute 原生 downloadAsBuffer 透传。返回值在 sandbox 中表示为 base64 buffer。\n\n⚠️ **重要**：此方法对 `location` 类型容错较低。\n- ✅ 接受：fileId 字符串、带 `__mtcuteRef` 的 mtcute 原生对象（如 `getProfilePhotos` 返回的 photo 对象）\n- ❌ 不接受：`msg.mediaInfo`（普通 plain object，没有 `__mtcuteRef`）——会报 \"Unknown object undefined\"\n\n大多数场景建议优先用 `downloadMedia`（容错更好），仅在需要 mtcute 原生对象时用此方法。\n\n**示例：**\n```typescript\n// ✅ 下载用户头像（getProfilePhotos 返回 mtcute 原生对象，可直接传入）\nconst [photo] = await telegram.getProfilePhotos(userId, { limit: 1 });\nconst data = await telegram.downloadAsBuffer(photo);\n```\n\n```typescript\n// ❌ 不要传 mediaInfo（会报错）\n// const data = await telegram.downloadAsBuffer(msg.mediaInfo); // Error!\n// ✅ 改用 downloadMedia，或先取 fileId 字符串\nconst data = await telegram.downloadMedia(msg.mediaInfo.fileId, chatId, msg.id, msg.mediaInfo.uniqueFileId);\n```"
+      },
+      {
+        "name": "joinChat",
+        "brief": "加入一个群聊或频道",
+        "fullDoc": "```typescript\njoinChat(chatId: number | string): Promise<void>\n```\n\n\n加入一个群聊或频道"
+      },
+      {
+        "name": "leaveChat",
+        "brief": "退出一个群聊或频道",
+        "fullDoc": "```typescript\nleaveChat(chatId: number | string): Promise<void>\n```\n\n\n退出一个群聊或频道"
+      },
+      {
+        "name": "readHistory",
+        "brief": "将指定会话的所有未读消息标记为已读",
+        "fullDoc": "```typescript\nreadHistory(chatId: number | string): Promise<void>\n```\n\n\n将指定会话的所有未读消息标记为已读"
+      },
+      {
+        "name": "sendTyping",
+        "brief": "触发短暂的 `Typing` 正在输入反馈状态",
+        "fullDoc": "```typescript\nsendTyping(chatId: number | string): Promise<void>\n```\n\n\n触发短暂的 `Typing` 正在输入反馈状态"
+      }
+    ],
+    "typeDefs": "type TelegramMessage = {\n    id: number;\n    text: string;\n    date: Date;\n    chat: { id: number; title?: string; username?: string; type: \"private\" | \"group\" | \"supergroup\" | \"channel\"; };\n    sender: { id: number; displayName?: string; title?: string; username?: string; } | null;\n    isMention: boolean;\n    replyToMessage?: { id: number } | null;\n    media?: unknown;\n    mediaInfo?: {\n        type: \"photo\" | \"sticker\" | \"video\" | \"document\" | \"animation\" | \"audio\" | \"other\";\n        rawType?: string;\n        fileId?: string;\n        uniqueFileId?: string;\n        emoji?: string;\n        mimeType?: string;\n        fileName?: string;\n        width?: number;\n        height?: number;\n        fileSize?: number;\n        filePath?: string;\n        downloadStatus?: \"downloaded\" | \"cached\" | \"too_large\" | \"failed\";\n        downloadError?: string;\n    };\n    forwardFrom?: string;\n    forwardFromUrl?: string;\n};\n\ntype TelegramMtcuteRef = {\n    /** Host-side mtcute object reference. Pass this object back to telegram mtcute methods to preserve native object identity. */\n    __mtcuteRef: string;\n    __mtcuteType?: string;\n    [key: string]: unknown;\n};\n\ntype TelegramInputText = string | {\n    text: string;\n    entities?: Array<Record<string, unknown>>;\n};\n\ninterface TelegramCommonSendParams {\n    replyTo?: number | TelegramMessage | TelegramMtcuteRef;\n    replyToTodoItem?: number;\n    replyToPollOption?: Uint8Array;\n    toMonoforumPeer?: number | string | TelegramMtcuteRef;\n    mustReply?: boolean;\n    commentTo?: number | TelegramMessage | TelegramMtcuteRef;\n    replyToStory?: number;\n    quote?: TelegramInputText;\n    quoteOffset?: number;\n    silent?: boolean;\n    schedule?: Date | number | \"online\";\n    clearDraft?: boolean;\n    forbidForwards?: boolean;\n    sendAs?: number | string | TelegramMtcuteRef;\n    quickReply?: number | string;\n    shouldDispatch?: true;\n    businessConnectionId?: string;\n    allowPaidFloodskip?: boolean;\n    allowPaidMessages?: string | number | Record<string, unknown>;\n    effect?: string | number | Record<string, unknown>;\n    abortSignal?: AbortSignal;\n    [key: string]: unknown;\n}\n\ntype TelegramSendTextParams = TelegramCommonSendParams & {\n    randomId?: string | number | Record<string, unknown>;\n    replyMarkup?: unknown;\n    disableWebPreview?: boolean;\n    invertMedia?: boolean;\n};\n\ntype TelegramSendMediaParams = TelegramCommonSendParams & {\n    randomId?: string | number | Record<string, unknown>;\n    replyMarkup?: unknown;\n    invert?: boolean;\n    caption?: TelegramInputText;\n    progressCallback?: (uploaded: number, total: number) => void;\n};"
+  },
+  {
+    "name": "vision",
+    "description": "modules/vision.d.ts — Vision 视觉模块类型定义 提供图片识别能力，让 Agent 可以\"看到\"图片并理解其内容。 图片路径限定在 workspace/ 目录下。 vision: VisionModule — 全局可用",
+    "methods": [
+      {
+        "name": "see",
+        "brief": "看图：读取一张或多张图片文件，返回每张图片的文字描述。 使用 Vision LLM 分析图片内容，支持 JPEG、PNG、WebP 等常见格式。",
+        "fullDoc": "```typescript\nsee(...imagePaths: string[]): Promise<string[]>\n```\n\n\n看图：读取一张或多张图片文件，返回每张图片的文字描述。\n使用 Vision LLM 分析图片内容，支持 JPEG、PNG、WebP 等常见格式。\n\n**参数：**\n- `imagePaths`: 图片文件路径（支持绝对路径或相对于 workspace/ 的相对路径），可传入多个参数\n- **返回值**: 每张图片的详细文字描述数组（与输入路径一一对应）\n\n**示例：**\n```typescript\n// 查看单张图片\nconst [desc] = await vision.see(\"screenshots/page.png\");\nconsole.log(desc);\n```\n\n```typescript\n// 同时查看多张图片\nconst descriptions = await vision.see(\"img1.jpg\", \"img2.png\", \"data/chart.png\");\ndescriptions.forEach((d, i) => console.log(`图片${i+1}: ${d}`));\n```"
+      }
+    ],
+    "typeDefs": "interface VisionModule {\n    /**\n     * 看图：读取一张或多张图片文件，返回每张图片的文字描述。\n     * 使用 Vision LLM 分析图片内容，支持 JPEG、PNG、WebP 等常见格式。\n     *\n     * @param imagePaths - 图片文件路径（支持绝对路径或相对于 workspace/ 的相对路径），可传入多个参数\n     * @returns 每张图片的详细文字描述数组（与输入路径一一对应）\n     *\n     * @example\n     * // 查看单张图片\n     * const [desc] = await vision.see(\"screenshots/page.png\");\n     * console.log(desc);\n     *\n     * @example\n     * // 同时查看多张图片\n     * const descriptions = await vision.see(\"img1.jpg\", \"img2.png\", \"data/chart.png\");\n     * descriptions.forEach((d, i) => console.log(`图片${i+1}: ${d}`));\n     */\n    see(...imagePaths: string[]): Promise<string[]>;\n}"
+  }
+]

@@ -1,0 +1,25 @@
+/**
+ * phase6/index.ts — Pipeline 统一导出
+ *
+ * 提供 Pipeline 所有组件的集中导入入口。
+ */
+
+// ─── 类型 ───
+export type {
+    Message,
+    TopicState,
+    Topic,
+
+    TriageDecision,
+    ExitSignalType,
+    ExitSignal,
+    ExitStyle,
+    QuickTriageOptions,
+    QuickTriageResult,
+    TopicClusteringResult,
+    TopicSummaryTriageResult,
+} from "./types.js";
+
+// ─── 核心组件 ───
+export { TopicRegistry, type RestorableTopic } from "./topic-registry.js";
+export { RecordingPipeline } from "./recording-pipeline.js";

@@ -1,0 +1,826 @@
+/**
+ * sandbox-worker.ts — Sandbox Worker 进程
+ *
+ * 运行在子进程中，通过 stdin/stdout JSON 行协议与 Host 通信。
+ * 维护持久化的 ctx 命名空间，执行 agent 写的 TypeScript/JavaScript 代码。
+ *
+ * IPC 协议：
+ * - Host → Worker: execute, input_response, host_call_result
+ * - Worker → Host: result, notify, input_request, print, host_call
+ */
+
+import { createInterface } from "node:readline";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { dirname } from "node:path";
+import { installCapabilityRegistry, setDuplicateMessageBlocking, setPlatform, setBannedWords } from "./capability-registry.js";
+import { BackgroundManager } from "./background-manager.js";
+import { createPromiseTracker } from "./promise-tracker.js";
+import { filesystem } from "./modules/filesystem/index.js";
+import { mcpBridge, setMcpListSnapshot, setMcpProxyCallbacks } from "./modules/mcp-bridge/index.js";
+import { cronModule, setCronCallbacks } from "./modules/cron/index.js";
+import { todoModule, setTodoCallbacks } from "./modules/kv/index.js";
+import { visionModule, setVisionCallbacks } from "./modules/vision/index.js";
+import { memoryModule, setMemoryCallbacks } from "./modules/memory/index.js";
+import { dispatchModule, setDispatchCallbacks, type SandboxQuoteOutput } from "./modules/dispatch/index.js";
+import { setSkillManagerCallbacks } from "./modules/skills/index.js";
+import { setRuntimeCallbacks } from "./modules/runtime/index.js";
+import { installShell, setShellCallbacks } from "./modules/shell/index.js";
+import { getSkillListEntries, loadAllSkills, reloadAllSkills, installDepsRuntime, type LoadedSkill } from "./skill-loader.js";
+import { NOTEBOOK_RESERVED_NAMES, transformNotebookCode } from "./notebook-scope.js";
+import { configureLogger } from "../core/logger.js";
+
+// ─── 全局 Skills 缓存（Worker 启动时加载一次） ───
+let loadedSkills: LoadedSkill[] = [];
+
+const outputLedger: SandboxQuoteOutput[] = [];
+let outputLedgerCounter = 0;
+const MAX_OUTPUT_LEDGER_ITEMS = 50;
+
+
+
+// ─── 暴露 setPlatform 到全局，供 host 通过 sandbox.execute 调用 ───
+(globalThis as Record<string, unknown>).__setPlatform = setPlatform;
+(globalThis as Record<string, unknown>).__setDuplicateMessageBlocking = setDuplicateMessageBlocking;
+(globalThis as Record<string, unknown>).__setBannedWords = setBannedWords;
+
+// ─── 顶层安全网：防止未捕获的异常导致 worker 进程崩溃 ───
+
+process.on("unhandledRejection", (reason) => {
+    const msg = reason instanceof Error ? reason.stack ?? reason.message : String(reason);
+    process.stderr.write(`[sandbox-worker] Unhandled rejection: ${msg}\n`);
+});
+
+process.on("uncaughtException", (err) => {
+    process.stderr.write(`[sandbox-worker] Uncaught exception: ${err.stack ?? err.message}\n`);
+});
+
+// ─── IPC 消息类型 ───
+
+/** Host → Worker: 执行代码 */
+interface ExecuteMessage {
+    type: "execute";
+    id: string;
+    code: string;
+    /** Optional CodeAct session/task scope for LLM-friendly notebook variables. */
+    scopeId?: string;
+}
+
+/** Host → Worker: 清理一个 task-scoped notebook namespace */
+interface ResetScopeMessage {
+    type: "reset_scope";
+    id: string;
+    scopeId: string;
+}
+
+
+/** Host → Worker: 用户输入响应 */
+interface InputResponseMessage {
+    type: "input_response";
+    id: string;
+    value: string;
+}
+
+/** Host → Worker: host call 返回值 */
+interface HostCallResultMessage {
+    type: "host_call_result";
+    id: string;
+    ok: boolean;
+    value?: unknown;
+    error?: string;
+    method?: string;
+    stack?: string;
+}
+
+/** Worker → Host: 代码执行结果 */
+interface ResultMessage {
+    type: "result";
+    id: string;
+    output: string;
+    error: boolean;
+    extendSteps?: number;
+    timeoutMs?: number;
+}
+
+/** Worker → Host: 后台任务推送事件 */
+interface NotifyMessage {
+    type: "notify";
+    event: Record<string, unknown>;
+}
+
+/** Worker → Host: 请求用户输入 */
+interface InputRequestMessage {
+    type: "input_request";
+    id: string;
+    prompt: string;
+}
+
+/** Worker → Host: 直接打印到 CLI */
+interface PrintMessage {
+    type: "print";
+    message: string;
+}
+
+/** Worker → Host: 请求 Host 端执行方法 */
+interface HostCallMessage {
+    type: "host_call";
+    id: string;
+    method: string;
+    args: unknown[];
+}
+
+type IncomingMessage = ExecuteMessage | ResetScopeMessage | InputResponseMessage | HostCallResultMessage;
+type OutgoingMessage = ResultMessage | NotifyMessage | InputRequestMessage | PrintMessage | HostCallMessage;
+
+// ─── Task-scoped notebook state ───
+
+interface NotebookScopeState {
+    values: Record<string, unknown>;
+    functionSources: Record<string, string>;
+    lastUsedAt: number;
+}
+
+const notebookScopes = new Map<string, NotebookScopeState>();
+const MAX_NOTEBOOK_SCOPE_BYTES = Number(process.env.SANDBOX_NOTEBOOK_SCOPE_MAX_BYTES ?? 2 * 1024 * 1024);
+const NOTEBOOK_PRUNE_TARGET_BYTES = Math.floor(MAX_NOTEBOOK_SCOPE_BYTES * 0.75);
+
+function getNotebookScope(scopeId: string): NotebookScopeState {
+    let scope = notebookScopes.get(scopeId);
+    if (!scope) {
+        scope = {
+            values: Object.create(null) as Record<string, unknown>,
+            functionSources: Object.create(null) as Record<string, string>,
+            lastUsedAt: Date.now(),
+        };
+        notebookScopes.set(scopeId, scope);
+    }
+    scope.lastUsedAt = Date.now();
+    return scope;
+}
+
+function resetNotebookScope(scopeId: string): void {
+    notebookScopes.delete(scopeId);
+}
+
+function hasOwn(obj: Record<string, unknown>, key: string): boolean {
+    return Object.prototype.hasOwnProperty.call(obj, key);
+}
+
+function assertNotebookNameAllowed(name: string, runtimeBindings?: Record<string, unknown>): void {
+    if (NOTEBOOK_RESERVED_NAMES.has(name) || (runtimeBindings && hasOwn(runtimeBindings, name))) {
+        throw new Error(`"${name}" 是 sandbox 保留 API 名，不能作为顶层变量名使用。`);
+    }
+}
+
+function createNotebookWithObject(
+    scope: NotebookScopeState,
+    runtimeBindings: Record<string, unknown>,
+): object {
+    return new Proxy(scope.values, {
+        has(target, key) {
+            if (key === Symbol.unscopables) return false;
+            if (typeof key !== "string") return key in target;
+            return hasOwn(runtimeBindings, key) || hasOwn(target, key);
+        },
+        get(target, key) {
+            if (key === Symbol.unscopables) return undefined;
+            if (typeof key === "string" && hasOwn(runtimeBindings, key)) {
+                return runtimeBindings[key];
+            }
+            return Reflect.get(target, key);
+        },
+        set(target, key, value) {
+            if (typeof key === "string") {
+                assertNotebookNameAllowed(key, runtimeBindings);
+                target[key] = value;
+                delete scope.functionSources[key];
+                return true;
+            }
+            return Reflect.set(target, key, value);
+        },
+        deleteProperty(target, key) {
+            if (typeof key === "string") {
+                delete scope.functionSources[key];
+            }
+            return Reflect.deleteProperty(target, key);
+        },
+    });
+}
+
+function buildRuntimeBindings(names: string[], values: unknown[]): Record<string, unknown> {
+    const bindings: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+    for (let i = 0; i < names.length; i++) {
+        bindings[names[i]] = values[i];
+    }
+    return bindings;
+}
+
+function rehydrateNotebookFunctions(
+    scope: NotebookScopeState,
+    runtimeBindings: Record<string, unknown>,
+    notebookWith: object,
+    outputLines: string[],
+): void {
+    const runtimeNames = Object.keys(runtimeBindings);
+    const runtimeValues = runtimeNames.map((name) => runtimeBindings[name]);
+    for (const [name, source] of Object.entries(scope.functionSources)) {
+        try {
+            const revive = new Function(
+                ...runtimeNames,
+                "__notebookWith",
+                `with (__notebookWith) { return (${source}); }`,
+            );
+            scope.values[name] = revive(...runtimeValues, notebookWith);
+        } catch (err) {
+            delete scope.values[name];
+            delete scope.functionSources[name];
+            outputLines.push(`[Notebook scope] 无法恢复函数 ${name}，已从本 task 作用域移除: ${err instanceof Error ? err.message : String(err)}`);
+        }
+    }
+}
+
+function estimateNotebookValueSize(value: unknown): number {
+    if (typeof value === "string") return value.length * 2;
+    if (typeof value === "number" || typeof value === "boolean" || value == null) return 16;
+    if (typeof value === "bigint") return value.toString().length;
+    if (typeof value === "function" || typeof value === "symbol") return 0;
+    if (value instanceof ArrayBuffer) return value.byteLength;
+    if (ArrayBuffer.isView(value)) return value.byteLength;
+
+    const seen = new WeakSet<object>();
+    try {
+        const json = JSON.stringify(value, (_key, child) => {
+            if (typeof child === "function" || typeof child === "symbol") return undefined;
+            if (typeof child === "bigint") return child.toString();
+            if (typeof child === "object" && child !== null) {
+                if (seen.has(child)) return "[Circular]";
+                seen.add(child);
+            }
+            return child;
+        });
+        return json ? json.length * 2 : 0;
+    } catch {
+        return 1024;
+    }
+}
+
+function enforceNotebookScopeLimit(scope: NotebookScopeState): string | null {
+    const entries = Object.entries(scope.values)
+        .map(([name, value]) => ({
+            name,
+            size: estimateNotebookValueSize(value) + (scope.functionSources[name]?.length ?? 0),
+        }))
+        .sort((a, b) => b.size - a.size);
+    let total = entries.reduce((sum, entry) => sum + entry.size, 0);
+    if (total <= MAX_NOTEBOOK_SCOPE_BYTES) return null;
+
+    const removed: string[] = [];
+    for (const entry of entries) {
+        if (total <= NOTEBOOK_PRUNE_TARGET_BYTES) break;
+        delete scope.values[entry.name];
+        delete scope.functionSources[entry.name];
+        total -= entry.size;
+        removed.push(entry.name);
+    }
+
+    if (removed.length === 0) return null;
+    return `[Notebook scope] 本 task 作用域超过 ${MAX_NOTEBOOK_SCOPE_BYTES} bytes，已移除较大的临时变量: ${removed.join(", ")}`;
+}
+
+// ─── 全局上下文（跨 turn 持久化） ───
+
+const ctx: Record<string, unknown> = {};
+
+/** ctx 持久化路径（由 Host 通过环境变量传入） */
+const CTX_PERSIST_PATH = process.env.SANDBOX_CTX_PATH || "";
+
+/** 上次保存的 ctx JSON（用于 diff-check 避免无意义写入） */
+let lastSavedCtxJson = "{}";
+
+/** throttle 定时器 */
+let ctxSaveTimer: ReturnType<typeof setTimeout> | null = null;
+const CTX_SAVE_THROTTLE_MS = 3000;
+
+/**
+ * 从磁盘加载 ctx 快照（Worker 启动时调用）
+ */
+function loadCtxFromDisk(): void {
+    if (!CTX_PERSIST_PATH) return;
+    try {
+        if (existsSync(CTX_PERSIST_PATH)) {
+            const raw = readFileSync(CTX_PERSIST_PATH, "utf-8");
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                Object.assign(ctx, parsed);
+                lastSavedCtxJson = raw;
+            }
+        }
+    } catch (err) {
+        process.stderr.write(`[sandbox-worker] ctx 加载失败: ${err}\n`);
+    }
+}
+
+/**
+ * 序列化 ctx（跳过 function/symbol/circular 等不可序列化值）
+ */
+function safeStringifyCtx(): string {
+    try {
+        return JSON.stringify(ctx, (_key, value) => {
+            if (typeof value === "function" || typeof value === "symbol") return undefined;
+            if (typeof value === "bigint") return value.toString();
+            return value;
+        }, 2);
+    } catch {
+        // circular reference fallback
+        const seen = new WeakSet();
+        return JSON.stringify(ctx, (_key, value) => {
+            if (typeof value === "function" || typeof value === "symbol") return undefined;
+            if (typeof value === "bigint") return value.toString();
+            if (typeof value === "object" && value !== null) {
+                if (seen.has(value)) return "[Circular]";
+                seen.add(value);
+            }
+            return value;
+        }, 2);
+    }
+}
+
+/**
+ * throttled 保存 ctx 到磁盘
+ */
+function scheduleCtxSave(): void {
+    if (!CTX_PERSIST_PATH) return;
+    if (ctxSaveTimer) return; // 已有等待中的保存
+    ctxSaveTimer = setTimeout(() => {
+        ctxSaveTimer = null;
+        try {
+            const json = safeStringifyCtx();
+            if (json === lastSavedCtxJson) return; // 无变化
+            const dir = dirname(CTX_PERSIST_PATH);
+            if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+            writeFileSync(CTX_PERSIST_PATH, json, "utf-8");
+            lastSavedCtxJson = json;
+        } catch (err) {
+            process.stderr.write(`[sandbox-worker] ctx 保存失败: ${err}\n`);
+        }
+    }, CTX_SAVE_THROTTLE_MS);
+}
+
+// ─── IPC 通信 ───
+
+function sendToHost(msg: OutgoingMessage): void {
+    process.stdout.write(JSON.stringify(msg) + "\n");
+}
+
+function notifyHost(event: Record<string, unknown>): void {
+    sendToHost({ type: "notify", event });
+}
+
+/**
+ * 直接打印消息到 Host CLI（不被 console.log 捕获）
+ */
+function printToHost(message: string): void {
+    sendToHost({ type: "print", message });
+}
+
+// ─── 输入请求管理 ───
+
+/** 等待中的 input 请求 */
+const pendingInputs = new Map<string, (value: string) => void>();
+let inputCounter = 0;
+let hostCallCounter = 0;
+const pendingHostCalls = new Map<string, {
+    resolve: (value: unknown) => void;
+    reject: (error: Error) => void;
+}>();
+
+/**
+ * 向 Host 请求用户输入（阻塞当前代码执行直到用户响应）
+ *
+ * @param prompt - 显示给用户的提示文本
+ * @returns 用户输入的文本
+ */
+function requestInput(prompt: string): Promise<string> {
+    return new Promise((resolve) => {
+        const id = `input_${++inputCounter}`;
+        pendingInputs.set(id, resolve);
+        sendToHost({ type: "input_request", id, prompt });
+    });
+}
+
+function callHost(method: string, args: unknown[] = []): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+        const id = `host_${++hostCallCounter}`;
+        pendingHostCalls.set(id, { resolve, reject });
+        sendToHost({ type: "host_call", id, method, args });
+    });
+}
+
+function buildHostCallError(msg: HostCallResultMessage): Error {
+    const method = msg.method ?? "unknown";
+    const message = msg.error ?? "Unknown host call error";
+    const err = new Error(`[host_call:${method}] ${message}`);
+    if (msg.stack) {
+        err.stack = `${err.name}: ${err.message}\n--- Host stack ---\n${msg.stack}`;
+    }
+    return err;
+}
+
+function getExecutionOutput(index: number): SandboxQuoteOutput | null {
+    const found = outputLedger.find((item) => item.index === index);
+    return found ? { ...found } : null;
+}
+
+function recordExecutionOutput(output: string, error: boolean): void {
+    outputLedger.push({
+        index: outputLedgerCounter++,
+        output,
+        error,
+        timestamp: new Date().toISOString(),
+        source: "subagent",
+    });
+    while (outputLedger.length > MAX_OUTPUT_LEDGER_ITEMS) {
+        outputLedger.shift();
+    }
+}
+
+// ─── 后台任务管理（通过 BackgroundManager 统一管理） ───
+
+/** 持久化任务存储路径 */
+const PERSISTENT_TASKS_PATH = CTX_PERSIST_PATH
+    ? CTX_PERSIST_PATH.replace(/ctx\.json$/, "persistent-tasks.json")
+    : "";
+
+const bgManager = new BackgroundManager({
+    notifyCallback: notifyHost,
+    printCallback: printToHost,
+    persistPath: PERSISTENT_TASKS_PATH,
+});
+
+/** 返回当前 sandbox 的 home 目录路径（统一为 workspace 根目录） */
+function getHome(): string {
+    return process.cwd();
+}
+
+/** 返回 workspace 根目录路径 */
+function getWorkspace(): string {
+    return process.cwd();
+}
+
+
+
+// ─── 代码执行 ───
+
+async function executeCode(id: string, code: string, scopeId?: string): Promise<void> {
+    const outputLines: string[] = [];
+    const executionControl: { extendSteps: number; timeoutMs?: number } = { extendSteps: 0 };
+    let activeNotebookScope: NotebookScopeState | null = null;
+    let activeExecGuard = "";
+    const execGuardId = `exec_${id}`;
+
+    const originalConsole = {
+        log: console.log,
+        warn: console.warn,
+        error: console.error,
+        info: console.info,
+    };
+
+    const captureLog = (...args: unknown[]) => {
+        const line = args
+            .map((a) =>
+                typeof a === "string" ? a : JSON.stringify(a, null, 2) ?? String(a)
+            )
+            .join(" ");
+        outputLines.push(line);
+    };
+
+    console.log = captureLog;
+    console.warn = captureLog;
+    console.error = captureLog;
+    console.info = captureLog;
+
+    try {
+        // ─── 执行守卫：防止 dangling async 在 executeCode 结束后继续调用 host API ───
+        // LLM 生成的 unawaited async 函数可能包含 setTimeout 等异步延迟，
+        // 导致 tracker.flush() 无法等到所有 sendText 调用。这些"逃逸"的调用
+        // 会在 executeCode 返回后继续执行，产生不受追踪的副作用（如重复发消息）。
+        // 通过 execGuardId 标记当前执行，结束后使旧 guard 失效，阻止逃逸调用。
+        activeExecGuard = execGuardId;
+
+        const guardedCallHost = (method: string, args?: unknown[]) => {
+            if (activeExecGuard !== execGuardId) {
+                // 逃逸调用：当前 executeCode 已结束，拒绝 host call
+                printToHost(`[⚠ 逃逸调用已拦截] ${method} — 代码执行已结束，该调用来自未被 await 的异步函数`);
+                return Promise.reject(new Error(
+                    `Stale async call blocked: ${method}. 代码执行已结束，请确保所有异步函数都使用 await 调用。`
+                ));
+            }
+            return callHost(method, args);
+        };
+
+        const guardedNotifyHost = (event: Record<string, unknown>) => {
+            if (activeExecGuard !== execGuardId) return; // 静默丢弃逃逸 notify
+            notifyHost(event);
+        };
+
+        const { runtime, skills, telegram, discord, onebot } = installCapabilityRegistry({
+            ctx,
+            emitOutput: (line) => {
+                outputLines.push(line);
+            },
+            notifyHost: guardedNotifyHost,
+            requestInput,
+            printToHost,
+            spawnTask: (name, fn) => bgManager.spawn(name, fn),
+            killTask: (name) => bgManager.killTask(name),
+            listTasks: () => bgManager.listNames(),
+            callHost: guardedCallHost,
+        }) as {
+            runtime: unknown;
+            skills: unknown;
+            telegram: unknown;
+            discord: unknown;
+            onebot: unknown;
+        };
+
+        // 用 PromiseTracker 包装注入的 API，追踪所有返回的 Promise
+        const tracker = createPromiseTracker();
+        const rt = tracker.wrap(runtime as Record<string, unknown>);
+        const sk = tracker.wrap(skills as Record<string, unknown>);
+        const scene = undefined;
+
+        // 当前 execute 调用内的临时控制能力（由 session-runner 在 turn 结束后消费）
+        const runtimeApi = rt as Record<string, unknown>;
+        runtimeApi.extendSteps = (steps: number = 1) => {
+            if (!Number.isInteger(steps) || steps <= 0) {
+                throw new Error("runtime.extendSteps(steps) 要求 steps 为正整数");
+            }
+            if (steps > 100) {
+                throw new Error("runtime.extendSteps(steps) 单次最大 100");
+            }
+            executionControl.extendSteps += steps;
+            return { ok: true as const, extendedBy: steps, totalExtended: executionControl.extendSteps };
+        };
+        runtimeApi.modifyTimeout = (timeoutMs: number) => {
+            if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 600000) {
+                throw new Error("runtime.modifyTimeout(timeoutMs) 要求 1000~600000 毫秒");
+            }
+            executionControl.timeoutMs = timeoutMs;
+            return { ok: true as const, timeoutMs };
+        };
+
+        // 包装平台 API（互斥：telegram / discord / onebot 只有一个是有值的）
+        const tg = telegram ? tracker.wrap(telegram as Record<string, unknown>) : undefined;
+        const dc = discord ? tracker.wrap(discord as Record<string, unknown>) : undefined;
+        const ob = onebot ? tracker.wrap(onebot as Record<string, unknown>) : undefined;
+
+        setMcpListSnapshot(await guardedCallHost("mcp.list", []) as Array<{
+            name: string;
+            transport: "stdio" | "streamable-http";
+            url?: string;
+            tools: string[];
+            running: boolean;
+        }>);
+
+        // ─── 动态注入 TS Skills ───
+        const skillArgNames: string[] = [];
+        const skillArgValues: unknown[] = [];
+        for (const skill of loadedSkills) {
+            skillArgNames.push(skill.bindingName);
+            // wrap skill exports 以追踪未 await 的 Promise
+            const wrapped = tracker.wrap(skill.exports as Record<string, unknown>);
+            skillArgValues.push(wrapped);
+        }
+
+
+        // 构造参数列表：固定参数 + 平台 API + 动态 Skill 参数
+        // ctx 保留为纯用户 state bag（LLM 可跨 turn 存取任意属性）
+        const sh = installShell();
+        const fixedArgNames = ["ctx", "runtime", "scene", "skills", "fs", "mcp", "cron", "todo", "vision", "memory", "dispatch", "shell", "telegram", "discord", "onebot", "qq"];
+        const fixedArgValues = [ctx, rt, scene, sk, filesystem, mcpBridge, tracker.wrap(cronModule as unknown as Record<string, unknown>), tracker.wrap(todoModule as unknown as Record<string, unknown>), tracker.wrap(visionModule as unknown as Record<string, unknown>), tracker.wrap(memoryModule as unknown as Record<string, unknown>), tracker.wrap(dispatchModule as unknown as Record<string, unknown>), sh, tg, dc, ob, ob];
+        const allArgNames = [...fixedArgNames, ...skillArgNames];
+        const allArgValues = [...fixedArgValues, ...skillArgValues];
+
+        let functionArgNames = allArgNames;
+        let functionArgValues = allArgValues;
+        let executableCode = code;
+
+        if (scopeId) {
+            const transformed = transformNotebookCode(code);
+            if (transformed.errors.length > 0) {
+                throw new Error(`[Notebook scope] ${transformed.errors.join(" ")}`);
+            }
+
+            activeNotebookScope = getNotebookScope(scopeId);
+            const runtimeBindings = buildRuntimeBindings(allArgNames, allArgValues);
+            const notebookWith = createNotebookWithObject(activeNotebookScope, runtimeBindings);
+            rehydrateNotebookFunctions(activeNotebookScope, runtimeBindings, notebookWith, outputLines);
+
+            const notebookAssign = (name: string, value: unknown): unknown => {
+                assertNotebookNameAllowed(name, runtimeBindings);
+                activeNotebookScope!.values[name] = value;
+                delete activeNotebookScope!.functionSources[name];
+                return value;
+            };
+            const notebookDefine = (name: string, value: unknown, source: string): unknown => {
+                assertNotebookNameAllowed(name, runtimeBindings);
+                activeNotebookScope!.values[name] = value;
+                activeNotebookScope!.functionSources[name] = source;
+                return value;
+            };
+
+            functionArgNames = [
+                ...allArgNames,
+                "__notebookScope",
+                "__notebookWith",
+                "__notebookAssign",
+                "__notebookDefine",
+            ];
+            functionArgValues = [
+                ...allArgValues,
+                activeNotebookScope.values,
+                notebookWith,
+                notebookAssign,
+                notebookDefine,
+            ];
+            executableCode = `with (__notebookWith) {\n${transformed.code}\n}`;
+        }
+
+        const asyncFn = new Function(
+            ...functionArgNames,
+            `return (async () => { ${executableCode} })()`
+        );
+
+        await asyncFn(...functionArgValues);
+
+        // 兜底：等待所有未被 await 的 API 调用完成
+        const { warning } = await tracker.flush();
+        if (warning) outputLines.push(warning);
+
+        const notebookWarning = activeNotebookScope ? enforceNotebookScopeLimit(activeNotebookScope) : null;
+        if (notebookWarning) outputLines.push(notebookWarning);
+
+        const output = outputLines.join("\n");
+        recordExecutionOutput(output, false);
+        sendToHost({
+            type: "result",
+            id,
+            output,
+            error: false,
+            ...(executionControl.extendSteps > 0 ? { extendSteps: executionControl.extendSteps } : {}),
+            ...(executionControl.timeoutMs != null ? { timeoutMs: executionControl.timeoutMs } : {}),
+        });
+
+        // ctx 持久化：每次成功执行后检查并调度保存
+        scheduleCtxSave();
+    } catch (err: unknown) {
+
+        const errorMsg =
+            err instanceof Error
+                ? `${err.name}: ${err.message}\n${err.stack ?? ""}`
+                : String(err);
+
+        outputLines.push(errorMsg);
+
+        const notebookWarning = activeNotebookScope ? enforceNotebookScopeLimit(activeNotebookScope) : null;
+        if (notebookWarning) outputLines.push(notebookWarning);
+
+        const output = outputLines.join("\n");
+        recordExecutionOutput(output, true);
+        sendToHost({
+            type: "result",
+            id,
+            output,
+            error: true,
+            ...(executionControl.extendSteps > 0 ? { extendSteps: executionControl.extendSteps } : {}),
+            ...(executionControl.timeoutMs != null ? { timeoutMs: executionControl.timeoutMs } : {}),
+        });
+    } finally {
+        // 使执行守卫失效：此后任何逃逸的 async 调用将被 guardedCallHost 拦截。
+        activeExecGuard = "";
+        console.log = originalConsole.log;
+        console.warn = originalConsole.warn;
+        console.error = originalConsole.error;
+        console.info = originalConsole.info;
+    }
+}
+
+
+// ─── 主循环 ───
+
+const rl = createInterface({
+    input: process.stdin,
+    terminal: false,
+});
+
+rl.on("line", async (line: string) => {
+    try {
+        const msg: IncomingMessage = JSON.parse(line);
+
+        if (msg.type === "execute") {
+            await executeCode(msg.id, msg.code, msg.scopeId);
+        } else if (msg.type === "reset_scope") {
+            resetNotebookScope(msg.scopeId);
+            sendToHost({
+                type: "result",
+                id: msg.id,
+                output: "",
+                error: false,
+            });
+        } else if (msg.type === "input_response") {
+            // 用户输入响应 — 唤醒等待中的 runtime.input()
+            const resolver = pendingInputs.get(msg.id);
+            if (resolver) {
+                pendingInputs.delete(msg.id);
+                resolver(msg.value);
+            }
+        } else if (msg.type === "host_call_result") {
+            const pending = pendingHostCalls.get(msg.id);
+            if (pending) {
+                pendingHostCalls.delete(msg.id);
+                if (msg.ok) {
+                    pending.resolve(msg.value);
+                } else {
+                    pending.reject(buildHostCallError(msg));
+                }
+            }
+        }
+    } catch (err: unknown) {
+        const errorMsg =
+            err instanceof Error ? err.message : String(err);
+        sendToHost({
+            type: "result",
+            id: "unknown",
+            output: `IPC parse error: ${errorMsg}`,
+            error: true,
+        });
+    }
+});
+
+// ─── Worker 初始化 ───
+
+async function initWorker(): Promise<void> {
+    // Worker 的 stdout 是 IPC 通道，把所有 logger 输出重定向到 printToHost
+    configureLogger({ sink: (line) => printToHost(line) });
+
+    // 从磁盘恢复 ctx（在 Skills 加载之前，因为 Skills 可能依赖 ctx 状态）
+    loadCtxFromDisk();
+
+    // 加载用户 TS Skills（失败不阻断启动）
+    try {
+        loadedSkills = await loadAllSkills();
+    } catch (err) {
+        process.stderr.write(`[sandbox-worker] TS Skills 加载失败: ${err}\n`);
+        loadedSkills = [];
+    }
+
+
+    // 注入 Skill 管理回调（让 skills.list/reload/npmInstall 可用）
+    setSkillManagerCallbacks({
+        listSkills: () => getSkillListEntries(loadedSkills),
+        reloadSkills: async () => {
+            loadedSkills = await reloadAllSkills();
+            return getSkillListEntries(loadedSkills);
+        },
+        npmInstall: async (packages: string[]) => installDepsRuntime(packages),
+    });
+
+    // 注入 Cron/Todo 回调（通过 callHost 代理到 Host）
+    setCronCallbacks({ callHost });
+    setTodoCallbacks({ callHost });
+    setVisionCallbacks({ callHost });
+    setMemoryCallbacks({ callHost });
+    setDispatchCallbacks({ callHost, getOutput: getExecutionOutput });
+
+    // 注入 Runtime 扩展回调（spawnPersistent, home, workspace, callHost）
+    setRuntimeCallbacks({
+        spawnPersistent: (name, code) => bgManager.spawnPersistent(name, code),
+        getHome,
+        getWorkspace,
+        callHost,
+    });
+
+    // 注入 Shell 回调（通过 callHost 代理到 Host PTY 管理器）
+    setShellCallbacks({ callHost });
+
+    // 恢复持久化后台任务
+    bgManager.restorePersistentTasks();
+
+    // MCP 改为 Host 全局管理；worker 仅保留代理层
+    setMcpProxyCallbacks({ callHost });
+
+    // 发送 ready 信号
+    sendToHost({
+        type: "result",
+        id: "__ready__",
+        output: `worker ready (${loadedSkills.length} skills loaded${CTX_PERSIST_PATH ? ", ctx persisted" : ""})`,
+        error: false,
+    });
+}
+
+// 裸调用 async initWorker 会丢失 rejection；若 init 中途抛错，ready 信号不发 → host 卡满超时。
+// 改为捕获并退出，让 host 立即感知 worker 死亡而非等超时。
+void initWorker().catch((err: unknown) => {
+    const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    process.stderr.write(`[sandbox-worker] initWorker 失败: ${msg}\n`);
+    process.exit(1);
+});

@@ -1,0 +1,149 @@
+/**
+ * shared/runtime.d.ts — 系统级能力
+ */
+
+declare const runtime: {
+    /** 推送事件到通知中心 */
+    notify(event: { type: string; [key: string]: unknown }): void;
+
+    /** 请求host用户输入 */
+    input(prompt: string): Promise<string>;
+
+    /** 直接打印到host */
+    print(msg: string): void;
+
+    /** 启动一个命名后台任务 */
+    spawn(name: string, fn: (signal: AbortSignal) => Promise<void>): void;
+
+    /**
+     * 启动持久化后台任务（Worker 重启后自动恢复）。
+     * 代码以字符串形式存储，触发时在 sandbox 中执行。
+     * 代码中可通过 `signal` 变量访问 AbortSignal。
+     *
+     * @param name - 任务名称（唯一标识，同名会替换）
+     * @param code - JavaScript 代码字符串
+     *
+     * @example
+     * runtime.spawnPersistent("monitor", `
+     *   while (!signal.aborted) {
+     *     console.log("heartbeat at " + Date.now());
+     *     await new Promise(r => setTimeout(r, 60000));
+     *   }
+     * `);
+     */
+    spawnPersistent(name: string, code: string): void;
+
+    /** 停止一个后台任务（同时清除持久化记录） */
+    kill(name: string): void;
+
+    /** 列出后台任务 */
+    ps(): string[];
+
+    /** 返回当前 sandbox 的 home 目录路径（per-chat 隔离） */
+    home(): string;
+
+    /** 返回 workspace 根目录路径 */
+    workspace(): string;
+
+    /**
+     * 运行时环境变量管理。
+     *
+     * 与 Dashboard 配置页使用同一份 config.env_vars 存储，修改会实时应用到 host 与 sandbox。
+     */
+    env: {
+        /** 列出所有受管环境变量 */
+        list(): Promise<Array<{ key: string; value: string; scope: "both" | "host" | "sandbox" }>>;
+
+        /** 查询单个环境变量，不存在返回 null */
+        get(key: string): Promise<{ key: string; value: string; scope: "both" | "host" | "sandbox" } | null>;
+
+        /**
+         * 新增或覆盖环境变量。
+         * @param scope - both(默认)/host/sandbox
+         */
+        set(key: string, value: string, scope?: "both" | "host" | "sandbox"): Promise<{ ok: true; key: string; value: string; scope: "both" | "host" | "sandbox" }>;
+
+        /** 删除环境变量（不存在时安全返回） */
+        delete(key: string): Promise<{ ok: true; deleted: boolean }>;
+    };
+
+    /**
+     * 设置一次性定时提醒（自然语言）。到期后 agent 将被唤醒并收到 description 作为新任务。重复定时提醒请用 cron
+     *
+     * ⚠️ description 必须是详细的自然语言描述，不是代码。
+     * 写清楚：要做什么、给谁发、发什么内容、如何获取信息等。
+     *
+     * 限制：最短 1 分钟，最长 365 天，每个群最多 10 个活跃提醒。
+     *
+     * @param description - 详细的自然语言任务描述
+     * @param delayMinutes - 延迟分钟数（1 ~ 525600，即 365 天）
+     * @returns { reminderId, triggerAt }
+     *
+     * @example
+     * // 3 分钟后提醒
+     * await runtime.remind("提醒群友该起床了，用活泼的语气叫他", 3);
+     *
+     * @example
+     * // 1 小时后提醒
+     * await runtime.remind("用 tavily 搜索刚才讨论的那个开源项目的最新版本，然后把结果发到群里", 60);
+     */
+    remind(description: string, delayMinutes: number): Promise<{
+        reminderId: string;
+        triggerAt: string;
+        items: Array<{
+            id: string;
+            type: "reminder" | "cron";
+            description: string;
+            /** Unix epoch milliseconds. */
+            triggerAt?: number;
+            cronExpr?: string;
+            taskDescription?: string;
+            /** Unix epoch milliseconds. */
+            createdAt: number;
+            triggered?: boolean;
+        }>;
+    }>;
+
+    /**
+     * 将当前任务升级给 Meta Agent 处理，并立即入队一次跨群 callback attention。
+     *
+     * 用于当前 subagent 视角无法完成的跨群/跨人/全局编排任务：例如需要查别的群、协调多个群、让 Meta 重新分派给其他群、或当前群写权限不足。
+     * request 必须写成详细自然语言，说明当前群、已经查到什么、卡在哪里、希望 Meta 做什么。
+     *
+     * @param request - 给 Meta Agent 的明确任务说明
+     * @param options - urgency=high 会提高本次唤醒优先级；data 可附带结构化上下文
+     * @returns { ok, id, enqueuedAt }，enqueuedAt 为 Unix epoch milliseconds
+     *
+     * @example
+     * await runtime.elevate("当前群有人问 D 群上周 API 网关结论。请 Meta 查 D 群历史，把结论派回本群。", {
+     *   urgency: "high",
+     *   data: { sourceTask: ctx.taskId, targetTopic: "API 网关" }
+     * });
+     */
+    elevate(request: string, options?: {
+        urgency?: "normal" | "high";
+        data?: unknown;
+    }): Promise<{ ok: true; id: string; enqueuedAt: number }>;
+
+    /**
+     * 增加当前 CodeAct session 的可用轮次。
+     *
+     * 仅对当前 session（本轮任务）生效，不会持久化到下次任务。
+     * 在本轮代码中调用后，从下一轮开始生效。
+     *
+     * @param steps - 要增加的轮次数，必须为正整数
+     * @returns 当前累计增加值
+     */
+    extendSteps(steps?: number): { ok: true; extendedBy: number; totalExtended: number };
+
+    /**
+     * 修改当前 CodeAct session 后续代码执行超时（毫秒）。
+     *
+     * 仅对当前 session（本轮任务）生效，不会持久化到下次任务。
+     * 在本轮代码中调用后，从下一段代码执行开始生效。
+     *
+     * @param timeoutMs - 新超时（毫秒），1000 ~ 600000
+     * @returns 已应用的超时值
+     */
+    modifyTimeout(timeoutMs: number): { ok: true; timeoutMs: number };
+};
