@@ -961,17 +961,34 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             const api = createTodoApi(deps.memory);
             const hasDueAt = Object.prototype.hasOwnProperty.call(body, "dueAt");
             const dueAt = hasDueAt ? body.dueAt : undefined;
-            const todoPatch: { bindingId: string; key: string; content: string; dueAt?: string | number | Date | null; forever?: boolean } = {
+            const todoPatch: { 
+              bindingId: string; 
+              key: string;
+              type?: string; 
+              content: string; 
+              dueAt?: string | number | Date | null; 
+              forever?: boolean 
+            } = {
                 bindingId,
                 key,
                 content,
             };
+            if (Object.prototype.hasOwnProperty.call(body, "type")) {
+				todoPatch.type = body.type;
+			}
             if (hasDueAt) todoPatch.dueAt = dueAt;
             if (Object.prototype.hasOwnProperty.call(body, "forever")) todoPatch.forever = body.forever === true;
 
             const item = oldKey
                 ? await api.update(oldKey, todoPatch, oldBindingId)
-                : await api.set({ bindingId, key, content, dueAt, forever: body.forever === true });
+                : await api.set({ 
+                    bindingId, 
+                    key, 
+                    type:body.type,
+                    content, 
+                    dueAt, 
+                    forever: body.forever === true 
+                  });
             if (!item) {
                 res.status(404).json({ error: "todo not found" });
                 return;

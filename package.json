@@ -17,7 +17,7 @@
     "dashboard:build": "cd src/dashboard/ui && pnpm run build",
     "gen:module-docs": "tsx src/tools/generate-module-docs.ts",
     "gen:telegram-mtcute-guides": "tsx src/tools/generate-telegram-mtcute-guides.ts",
-    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null || true"
+    "postinstall": ""
   },
   "dependencies": {
     "@google/genai": "^1.46.0",

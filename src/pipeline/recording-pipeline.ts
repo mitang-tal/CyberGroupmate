@@ -214,13 +214,14 @@ export class RecordingPipeline extends EventEmitter {
 
         log.info("flush 开始", { messageCount: messages.length, clusterOnly });
         this.emit("flush:start", messages.length);
-
+        const handledChatIds = new Set<string>();
+        
+        
         try {
             // ─── Step 1: 话题聚类 ───
             const groupedByChat = this.groupByChat(messages);
             // 已处理（成功完成或已回退）的 chatId；flush 失败时只回退未处理的 chat，
             // 避免已成功写入的 chat 被下轮 flush 重复处理（incrementProfileStats 是增量累加，重跑会双计）
-            const handledChatIds = new Set<string>();
 
             for (const [chatId, chatMessages] of groupedByChat) {
                 const existingTopics = this.registry.getByChat(chatId);

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { ensureCompositeId, getGroupModelKey, getPlatform, isValidCompositeChatId } from "../core/chat-id.js";
+import type { PlatformName } from "../core/chat-id.js";
 import {
     loadConfig,
     resolveComponentProfiles,
@@ -498,7 +499,10 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             // Determine if this call targets a specific chat and should be serialized.
             const intent = getSendIntent(adapter.platform, method, args);
             if (intent) {
-                const targetComposite = ensureCompositeId(adapter.platform === "telegram" ? "telegram" : adapter.platform, String(intent.chatId));
+                const targetComposite = ensureCompositeId(
+                adapter.platform as PlatformName, 
+                String(intent.chatId)
+                );
                 const prev = chatSendQueues.get(targetComposite) ?? Promise.resolve();
                 const op = prev.then(async () => {
                     // For better UX, send typing indicator before humanized delay for Telegram

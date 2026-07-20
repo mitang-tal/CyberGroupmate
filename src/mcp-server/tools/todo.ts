@@ -34,13 +34,21 @@ export function registerTodoTools(mcp: McpServer, deps: McpServerDeps): void {
         "Create or update a todo item. bindingId is required; use 'meta' only for truly global orchestration items. Defaults to a 30-day rolling expiry unless forever is true.",
         {
             key: z.string().describe("Unique key for this todo item"),
+            type: z.enum([
+            "task",
+            "policy",
+            "preference",
+            "experience",
+            "observation",
+            "log",
+            ]).describe("Todo type"),
             content: z.string().describe("Todo item content/description"),
             bindingId: z.string().describe("Binding ID, e.g. 'meta' or 'telegram:xxx'. Required."),
             dueAt: z.string().optional().describe("Due date/time (ISO timestamp or epoch ms). Omit for the default 30-day rolling expiry."),
             forever: z.boolean().optional().describe("Set true only for explicitly permanent rules."),
         },
-        async ({ key, content, bindingId, dueAt, forever }) => {
-            const result = await deps.metaApi.todo.set({ key, content, bindingId, dueAt, forever });
+        async ({ key, type, content, bindingId, dueAt, forever }) => {
+            const result = await deps.metaApi.todo.set({ key, type, content, bindingId, dueAt, forever });
             return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
         },
     );
