@@ -55,7 +55,7 @@ interface MetaAttendMetaData {
     directAddressReason?: string;
     callbackPotential?: number;
     urgentSignals?: string[];
-    schedulerTriggers?: Array<{ id: string; type: "reminder" | "cron" | "wake_condition"; description: string; bindingId?: string; callback?: string; data?: unknown }>;
+    schedulerTriggers?: Array<{ id: string; type: "reminder" | "cron" | "wake_condition"; description: string; bindingId?: string; callback?: string; data?: unknown; triggerAt?: string }>;
 }
 
 interface MetaTopicDigestData {
@@ -585,7 +585,8 @@ export const metaAttendMetaProvider: SectionProvider<MetaAttendMetaData> = {
             lines.push("- schedulerTriggers:");
             for (const trigger of data.schedulerTriggers) {
                 const binding = trigger.bindingId ? ` bindingId=${trigger.bindingId}` : "";
-                lines.push(`  - ${trigger.type}:${trigger.id}${binding} ${trigger.callback ?? trigger.description}`);
+                const triggerTime = trigger.triggerAt ? ` [${formatTsForPrompt(trigger.triggerAt)}]` : "";
+                lines.push(`  - ${trigger.type}:${trigger.id}${binding}${triggerTime} ${trigger.callback ?? trigger.description}`);
                 if (trigger.data !== undefined) {
                     lines.push(`    data=${JSON.stringify(trigger.data)}`);
                 }

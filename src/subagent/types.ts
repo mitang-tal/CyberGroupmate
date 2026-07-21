@@ -145,6 +145,7 @@ export interface AttentionQueueEntry {
         bindingId?: string;
         callback?: string;
         data?: unknown;
+        triggerAt?: string;
     }>;
     /** 当前队列快照中的最大 callbackPotential */
     callbackPotential?: number;

@@ -1317,7 +1317,23 @@ async function main(): Promise<void> {
         // ── Reminder 检查 ──
         const dueReminders = globalState.getDueReminders();
         for (const reminder of dueReminders) {
+            // Mark triggered early to avoid double-enqueue; actual execution guarded by executionStatus
             globalState.markReminderTriggered(reminder.id);
+
+            // Execution guard: 如果已在 RUNNING/COMPLETED，则跳过；否则原子地标记为 RUNNING
+            const current = globalState.getSchedulerEvents().find((e) => e.id === reminder.id && e.type === "reminder");
+            if (!current) continue;
+            if (current.executionStatus === "RUNNING" || current.executionStatus === "COMPLETED") {
+                log.info("Reminder 到期但已在运行或完成，跳过执行", { id: reminder.id, executionStatus: current.executionStatus });
+                continue;
+            }
+            // 将 executionStatus 置为 RUNNING 并持久化（避免重复执行）
+            try {
+                globalState.updateSchedulerEvent(reminder.id, { executionStatus: "RUNNING", lastExecutionAt: new Date().toISOString() });
+            } catch (err) {
+                log.warn("无法将 reminder 标记为 RUNNING，跳过", { id: reminder.id, error: String(err) });
+                continue;
+            }
 
             const wakeMatch = matchDelayWakeReminder(reminder, globalState.getWakeConditions());
             if (wakeMatch) {
@@ -1349,6 +1365,7 @@ async function main(): Promise<void> {
                         callback: reminderCallback,
                         bindingId: reminderBindingId,
                         data: reminder.data,
+                        triggerAt: reminder.triggerAt,
                     },
                 });
                 log.info("Reminder 到期 → Meta Layer1", {
@@ -1365,6 +1382,7 @@ async function main(): Promise<void> {
                 id: reminder.id,
                 type: "reminder",
                 description: reminder.description,
+                triggerAt: reminder.triggerAt,
             }];
             accumulator.ingest(1, createSchedulerItem(reminder.chatId, {
                 type: "reminder",
@@ -1433,6 +1451,7 @@ async function main(): Promise<void> {
                 id: evt.id,
                 type: "cron",
                 description: taskDesc,
+                triggerAt: evt.lastTriggeredAt,
             }];
             accumulator.ingest(1, createSchedulerItem(evt.chatId, {
                 type: "cron",
