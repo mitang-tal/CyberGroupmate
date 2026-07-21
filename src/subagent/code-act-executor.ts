@@ -263,8 +263,8 @@ export function loadApiTypeDefs(platform: string = "telegram", allowedModules?: 
                     }
                 }
 
-                // 按平台过滤模块
-                const filteredRegistry = registry.filter(mod => !excludedModules.has(mod.name));
+                // 按平台及 access 过滤模块：Subagent 不应看到 access === 'meta-only' 的模块
+                const filteredRegistry = registry.filter(mod => !excludedModules.has(mod.name) && mod.access !== "meta-only");
 
                 // 生成轻量概览（包含内置模块 + TS Skills + AgentSkills）
                 moduleBrief = generateBriefOverview(filteredRegistry, allowedModules);
@@ -912,10 +912,13 @@ export class CodeActExecutor {
                 (() => {
                     const registry = getModuleRegistryCache();
                     if (registry.length === 0) return undefined;
+                    // 对于 Subagent 的运行时文档注入，也应屏蔽 meta-only 模块，
+                    // 以保证注入文档与实际注入的 runtime bindings 保持一致。
+                    const filtered = registry.filter(m => m.access !== "meta-only");
                     return {
-                        getPrefixMap: () => buildPrefixMap(getModuleRegistryCache()),
+                        getPrefixMap: () => buildPrefixMap(filtered),
                         lookupDocs: (calledMethods: string[]) =>
-                            lookupFullDocs(getModuleRegistryCache(), calledMethods),
+                            lookupFullDocs(filtered, calledMethods),
                     };
                 })(),
                 renderResult?.manifest,

@@ -26,6 +26,8 @@ export interface MethodDoc {
 }
 
 /** 单个模块的注册条目 */
+export type ModuleAccess = "all" | "meta-only" | "subagent";
+
 export interface ModuleEntry {
     /** 模块名（sandbox 中的全局变量名，如 "runtime", "todo", "telegram"） */
     name: string;
@@ -35,6 +37,7 @@ export interface ModuleEntry {
     methods: MethodDoc[];
     /** 该模块涉及的 interface / type / enum 定义原文（运行时错误后按需注入） */
     typeDefs?: string;
+    access?:ModuleAccess;
 }
 
 import { readFileSync } from "node:fs";
@@ -55,7 +58,11 @@ export function loadModuleRegistry(): ModuleEntry[] {
     try {
         const jsonPath = join(__mr_dirname, "modules-docs.json");
         const raw = readFileSync(jsonPath, "utf-8");
-        return mergeModuleRegistries(JSON.parse(raw) as ModuleEntry[], loadBuiltinGuideRegistry());
+        // 兼容：如果 JSON 中没有 access 字段，则默认视为 "all"
+        const parsed = JSON.parse(raw) as ModuleEntry[];
+        const normalized = parsed.map(e => ({ ...e, access: e.access ?? "all" } as ModuleEntry));
+        // 内置 guide registry 可能也不包含 access 字段，交给 mergeModuleRegistries 处理
+        return mergeModuleRegistries(normalized, loadBuiltinGuideRegistry());
     } catch {
         // fallback: 至少保留内置 guide 入口
         return loadBuiltinGuideRegistry();
@@ -64,22 +71,34 @@ export function loadModuleRegistry(): ModuleEntry[] {
 
 /** 合并同名模块，供内置模块、MCP、Skills 与内置 guide 共同进入同一个 namespace。 */
 export function mergeModuleRegistries(...registries: ModuleEntry[][]): ModuleEntry[] {
-    const merged: ModuleEntry[] = [];
+    // 使用 Map 保证同名模块只会被插入一次，避免重复注册
+    const mergedMap = new Map<string, ModuleEntry>();
+    function resolveAccess(a: ModuleAccess | undefined, b: ModuleAccess | undefined): ModuleAccess {
+        // 优先级： meta-only > subagent > all
+        if (a === "meta-only" || b === "meta-only") return "meta-only";
+        if (a === "subagent" || b === "subagent") return "subagent";
+        return "all";
+    }
+
     for (const registry of registries) {
         for (const entry of registry) {
-            const existing = merged.find(item => item.name === entry.name);
+            const existing = mergedMap.get(entry.name);
             if (!existing) {
-                merged.push({
+                // 首次插入：统一通过 resolveAccess 处理默认 access
+                mergedMap.set(entry.name, {
                     ...entry,
                     methods: [...entry.methods],
+                    access: resolveAccess(undefined, entry.access),
                 });
                 continue;
             }
 
+            // 更新描述（若尚无）
             if (!existing.description && entry.description) {
                 existing.description = entry.description;
             }
 
+            // 合并方法列表（以新条目为准，防止重复）
             for (const method of entry.methods) {
                 const methodIndex = existing.methods.findIndex(item => item.name === method.name);
                 if (methodIndex >= 0) {
@@ -89,14 +108,19 @@ export function mergeModuleRegistries(...registries: ModuleEntry[][]): ModuleEnt
                 }
             }
 
+            // 合并 typeDefs
             if (entry.typeDefs) {
                 existing.typeDefs = existing.typeDefs
                     ? `${existing.typeDefs}\n\n${entry.typeDefs}`
                     : entry.typeDefs;
             }
+
+            // 合并 access：meta-only 必须具有最高优先级，任何来源出现 meta-only 都不能被 all 覆盖。
+            existing.access = resolveAccess(existing.access, entry.access);
         }
     }
-    return merged;
+
+    return Array.from(mergedMap.values());
 }
 
 /**

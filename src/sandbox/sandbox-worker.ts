@@ -596,7 +596,12 @@ async function executeCode(id: string, code: string, scopeId?: string): Promise<
         // ctx 保留为纯用户 state bag（LLM 可跨 turn 存取任意属性）
         const sh = installShell();
         const fixedArgNames = ["ctx", "runtime", "scene", "skills", "fs", "mcp", "cron", "todo", "vision", "memory", "dispatch", "shell", "telegram", "discord", "onebot", "qq"];
-        const fixedArgValues = [ctx, rt, scene, sk, filesystem, mcpBridge, tracker.wrap(cronModule as unknown as Record<string, unknown>), tracker.wrap(todoModule as unknown as Record<string, unknown>), tracker.wrap(visionModule as unknown as Record<string, unknown>), tracker.wrap(memoryModule as unknown as Record<string, unknown>), tracker.wrap(dispatchModule as unknown as Record<string, unknown>), sh, tg, dc, ob, ob];
+        // Provide a read-only wrapper for todo to subagent sandboxes: only get/list are exposed.
+        const todoReadOnly = {
+            get: todoModule.get,
+            list: todoModule.list,
+        } as const;
+        const fixedArgValues = [ctx, rt, scene, sk, filesystem, mcpBridge, tracker.wrap(cronModule as unknown as Record<string, unknown>), tracker.wrap(todoReadOnly as unknown as Record<string, unknown>), tracker.wrap(visionModule as unknown as Record<string, unknown>), tracker.wrap(memoryModule as unknown as Record<string, unknown>), tracker.wrap(dispatchModule as unknown as Record<string, unknown>), sh, tg, dc, ob, ob];
         const allArgNames = [...fixedArgNames, ...skillArgNames];
         const allArgValues = [...fixedArgValues, ...skillArgValues];
 

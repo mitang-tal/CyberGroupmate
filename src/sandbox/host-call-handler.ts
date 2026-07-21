@@ -742,14 +742,14 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             return memory.todoGet(chatId, String(args[0]));
         }
         if (method === "todo.upsert") {
-            const [key, content, options] = args as [string, string, { type?: string; dueAt?: string | number | Date | null; forever?: boolean } | undefined];
-            const type = options?.type;
-            if (!type) throw new Error("todo.upsert: missing required 'type' in options");
-            return memory.todoUpsert(chatId, key, type, content, resolveTodoDueAt(options));
+            // Sandbox-origin todo writes are not permitted. Subagents must report follow-up to Meta.
+            // Host-call-handler only serves sandbox host calls; to preserve Meta/Dashboard write capability
+            // we reject sandbox write attempts here.
+            throw new Error("todo.upsert is not permitted from sandbox. Submit follow-up to Meta instead.");
         }
         if (method === "todo.remove") {
-            memory.todoRemove(chatId, String(args[0]));
-            return;
+            // Prevent sandbox from deleting todos. Deletions must be performed via Meta/Dashboard.
+            throw new Error("todo.remove is not permitted from sandbox. Use Meta or Dashboard to remove todos.");
         }
 
         if (method === "vision.see") {
