@@ -92,7 +92,7 @@ export async function callAnthropic(
     const body: Record<string, unknown> = {
         model,
         messages: apiMessages,
-        temperature,
+        ...(config.omit_temperature ? {} : { temperature }),
         max_tokens: maxTokens,
         // Stop sequences（Anthropic 使用 stop_sequences 字段）
         ...(stop && stop.length > 0 ? { stop_sequences: stop } : {}),

@@ -100,6 +100,7 @@
             <input type="password" class="input input-xs input-bordered w-full" bind:value={p.apiKey} on:focus={pwFocus} on:blur={pwBlur} /></label
           >
           <label class="cfg-field"><span class="cfg-label">Temperature</span><input type="number" class="input input-xs input-bordered w-full" bind:value={p.temperature} min="0" max="2" step="0.1" /></label>
+          <label class="cfg-check" title="勾选后不传 temperature 参数（适用于 gpt-5.5 等不支持的模型）"><input type="checkbox" class="checkbox checkbox-xs" bind:checked={p.omit_temperature} /><span>Omit Temperature</span></label>
           <label class="cfg-field"><span class="cfg-label">Max Tokens</span><input type="number" class="input input-xs input-bordered w-full" bind:value={p.maxTokens} min="1" /></label>
           <label class="cfg-field"><span class="cfg-label">Max Context Tokens</span><input type="number" class="input input-xs input-bordered w-full" bind:value={p.maxContextTokens} placeholder="(默认)" /></label>
           <label class="cfg-field"><span class="cfg-label">Thinking Level</span>
