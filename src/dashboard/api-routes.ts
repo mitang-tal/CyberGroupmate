@@ -2103,11 +2103,15 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         if (!deps.harnessManager) {
             return res.json({ enabled: false });
         }
+        // getStatus() 已用 summarizeRun() 去掉 events；currentRun/runs 也必须去掉 events
+        // （列表视图不需要 events，避免每 2.5s 传输数万条事件对象）
+        const rawCurrent = deps.harnessManager.getCurrentRun();
+        const rawRuns = deps.harnessManager.getRecentRuns(20);
         res.json({
             enabled: true,
             ...deps.harnessManager.getStatus(),
-            currentRun: deps.harnessManager.getCurrentRun(),
-            runs: deps.harnessManager.getRecentRuns(20),
+            currentRun: rawCurrent ? { ...rawCurrent, events: [] } : null,
+            runs: rawRuns.map((run) => ({ ...run, events: [] })),
         });
     });
 

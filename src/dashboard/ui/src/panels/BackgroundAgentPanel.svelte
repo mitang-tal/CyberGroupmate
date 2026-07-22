@@ -16,6 +16,8 @@
   let selectedEventsRunId = null;
   let eventLogSource = 'memory';
   let visibleEvents = [];
+  // 智能轮询：有运行中的任务时拉 events，否则只刷新状态
+  const POLL_INTERVAL = 10000;       // 状态轮询：10s（原 2.5s 太猛）
 
   $: allRuns = status?.enabled
     ? [status.currentRun, ...(status.runs ?? [])].filter(Boolean)
@@ -44,7 +46,9 @@
       status = next;
       const runId = selectedRunId ?? next.currentRun?.id ?? next.runs?.[0]?.id;
       if (!selectedRunId && runId) selectedRunId = runId;
-      if (runId) await loadRunEvents(runId, selectedEventsRunId === runId);
+      // 只在选中运行正在执行或首次加载时才拉 events
+      const needsEvents = selectedRun && (!selectedRun.endedAt || selectedEvents.length === 0);
+      if (runId && needsEvents) await loadRunEvents(runId, selectedEventsRunId === runId);
     } catch (e) {
       status = { enabled: false, error: String(e) };
     }
@@ -485,7 +489,7 @@
 
   onMount(() => {
     refresh();
-    const timer = setInterval(refresh, 2500);
+    const timer = setInterval(refresh, POLL_INTERVAL);
     return () => clearInterval(timer);
   });
 </script>
