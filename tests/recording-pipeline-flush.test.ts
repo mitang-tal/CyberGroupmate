@@ -128,3 +128,126 @@ describe("recording pipeline flush batching + safety floor", () => {
         assert.equal((pipeline as any).shouldRearmDrain(false), false);
     });
 });
+
+/**
+ * 回归：cluster LLM 返回「合法 JSON、语义为空/无效」的软失败。
+ * 修复前——空 assignments 被当成功、消息 unshift 回 buffer、finally re-arm 无限重跑同批（死亡螺旋）。
+ * 修复后——normalizeClusteringResult 永不返回空 assignments，flush 正常排空。
+ */
+describe("recording pipeline clustering output validation", () => {
+    function normalize(pipeline: RecordingPipeline, raw: string, msgs: Message[]): TopicClusteringResult {
+        return (pipeline as any).normalizeClusteringResult(raw, msgs) as TopicClusteringResult;
+    }
+
+    it("合法空结果 → 本地 fallback（每条消息归到 NEW_1，绝不返回空）", () => {
+        const pipeline = new RecordingPipeline(new TopicRegistry(), "Miu", "Miu");
+        const msgs = makeMessages(5);
+
+        const result = normalize(pipeline, JSON.stringify({ assignments: [], evolutions: [] }), msgs);
+
+        assert.equal(result.assignments.length, 5);
+        assert.ok(result.assignments.every(a => a.topicId === "NEW_1"));
+        assert.deepEqual(result.evolutions, []);
+    });
+
+    it("缺失 assignments 字段 → fallback，不抛异常", () => {
+        const pipeline = new RecordingPipeline(new TopicRegistry(), "Miu", "Miu");
+        const msgs = makeMessages(4);
+
+        const result = normalize(pipeline, JSON.stringify({ evolutions: [] }), msgs);
+
+        assert.equal(result.assignments.length, 4);
+        assert.ok(result.assignments.every(a => a.topicId === "NEW_1"));
+    });
+
+    it("JSON 解析失败 → fallback", () => {
+        const pipeline = new RecordingPipeline(new TopicRegistry(), "Miu", "Miu");
+        const msgs = makeMessages(3);
+
+        const result = normalize(pipeline, "这不是 JSON {", msgs);
+
+        assert.equal(result.assignments.length, 3);
+        assert.ok(result.assignments.every(a => a.topicId === "NEW_1"));
+    });
+
+    it("assignments 全部引用不存在的 messageId → fallback", () => {
+        const pipeline = new RecordingPipeline(new TopicRegistry(), "Miu", "Miu");
+        const msgs = makeMessages(3);
+        const raw = JSON.stringify({
+            assignments: [{ messageId: "unknown", topicId: "NEW_1", topicLabel: "test", keywords: [] }],
+            evolutions: [],
+        });
+
+        const result = normalize(pipeline, raw, msgs);
+
+        assert.equal(result.assignments.length, 3);
+        assert.ok(result.assignments.every(a => a.topicId === "NEW_1"));
+    });
+
+    it("evolutions 缺失但 assignments 有效 → 接受并把 evolutions 规范化为 []", () => {
+        const pipeline = new RecordingPipeline(new TopicRegistry(), "Miu", "Miu");
+        const msgs = makeMessages(3);
+        const raw = JSON.stringify({
+            assignments: msgs.map(m => ({ messageId: m.id, topicId: "NEW_1", topicLabel: "话题", keywords: [] })),
+            // 无 evolutions 字段
+        });
+
+        const result = normalize(pipeline, raw, msgs);
+
+        assert.equal(result.assignments.length, 3);
+        assert.ok(result.assignments.every(a => a.topicId === "NEW_1"));
+        assert.deepEqual(result.evolutions, []);
+    });
+
+    it("部分 assignments 有效 → 保留有效项 + 未覆盖消息补 fallback（绝不丢消息）", () => {
+        const pipeline = new RecordingPipeline(new TopicRegistry(), "Miu", "Miu");
+        const msgs = makeMessages(4); // ids: 1000..1003
+        const raw = JSON.stringify({
+            assignments: [
+                { messageId: "1000", topicId: "NEW_1", topicLabel: "有效", keywords: [] }, // 有效
+                { messageId: "1001", topicId: "NEW_1", topicLabel: "有效", keywords: [] }, // 有效
+                { messageId: "unknown", topicId: "NEW_1", topicLabel: "坏", keywords: [] }, // 无效: 假 messageId
+                { messageId: "1002", topicId: "", topicLabel: "坏", keywords: [] },        // 无效: 空 topicId
+                // "1003" 完全未被提及
+            ],
+            evolutions: [],
+        });
+
+        const result = normalize(pipeline, raw, msgs);
+
+        // 覆盖完整：每条消息恰好一个 assignment，无丢失、无重复
+        assert.equal(result.assignments.length, 4);
+        const coveredIds = new Set(result.assignments.map(a => a.messageId));
+        assert.deepEqual([...coveredIds].sort(), ["1000", "1001", "1002", "1003"]);
+        // 有效项保留原 topicId；补齐项走 NEW_FALLBACK
+        const byId = new Map(result.assignments.map(a => [a.messageId, a]));
+        assert.equal(byId.get("1000")?.topicId, "NEW_1");
+        assert.equal(byId.get("1001")?.topicId, "NEW_1");
+        assert.equal(byId.get("1002")?.topicId, "NEW_FALLBACK");
+        assert.equal(byId.get("1003")?.topicId, "NEW_FALLBACK");
+    });
+
+    it("flush 遇到空聚类结果时正常排空 buffer（不回退、不无限重跑）", async () => {
+        const pipeline = new RecordingPipeline(new TopicRegistry(), "Miu", "Miu", undefined, undefined, {
+            maxFlushBatch: 50,
+            minFlushSize: 1,
+        });
+        // 模拟 cluster LLM 返回合法但语义为空的软失败（修复前会触发死亡螺旋）
+        (pipeline as any).llmTopicClustering = async (): Promise<TopicClusteringResult> => ({
+            assignments: [],
+            evolutions: [],
+        });
+        (pipeline as any).llmTopicSummaryTriage = async () => ({ topics: [] });
+        const registry: TopicRegistry = (pipeline as any).registry;
+        (pipeline as any).buffer = makeMessages(12);
+
+        await (pipeline as any).flush();
+
+        // buffer 完全排空（buffer < minFlushSize → finally 不会 re-arm drain，无限循环被切断）
+        assert.equal((pipeline as any).buffer.length, 0);
+        // 整批 fallback 落到单一新话题，12 条消息全部被记录、无丢失
+        const topics = registry.getAll();
+        assert.equal(topics.length, 1);
+        assert.equal(topics[0].messageCount, 12);
+    });
+});
