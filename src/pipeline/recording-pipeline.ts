@@ -250,16 +250,17 @@ export class RecordingPipeline extends EventEmitter {
                 const existingTopics = this.registry.getByChat(chatId);
                 const messageContext = await this.buildRecordingMessageContext(chatMessages, chatId);
 
-                const clustering = await this.llmTopicClustering(chatMessages, existingTopics, messageContext);
+                let clustering = await this.llmTopicClustering(chatMessages, existingTopics, messageContext);
 
-                // 聚类返回空结果时，消息累积回 buffer 等待下轮 flush，不浪费 triage 调用
+                // 防御性兜底：llmTopicClustering 已保证非空有效 assignments。万一未来回归导致空结果，
+                // 也走本地默认归类而非 unshift 回 buffer——后者会被 finally 的 re-arm 当成功重排，
+                // 让同批消息 3s 后再跑一次、无限循环（死亡螺旋）。绝不把消息写回 buffer。
                 if (clustering.assignments.length === 0) {
-                    log.info("聚类结果为空，消息回退到 buffer", {
+                    log.warn("聚类结果为空，使用本地默认归类（不回退 buffer）", {
                         chatId,
                         messageCount: chatMessages.length,
                     });
-                    this.buffer.push(...chatMessages);
-                    continue;
+                    clustering = this.fallbackClustering(chatMessages);
                 }
 
                 // ─── Step 2: 摘要 + Triage（clusterOnly 模式跳过）───
@@ -493,17 +494,88 @@ export class RecordingPipeline extends EventEmitter {
             return this.fallbackClustering(messages);
         }
 
+        // LLM 调用成功、返回内容 → 交给归一化校验（解析失败 / 合法但语义空或无效 → 本地默认归类）。
+        return this.normalizeClusteringResult(response.content, messages);
+    }
+
+    /**
+     * 归一化 + 校验 cluster LLM 的原始输出。
+     *
+     * 关键不变量：**永不返回空 assignments**。空结果会被 flush() 视为「成功但没产出」，
+     * 若把消息 unshift 回 buffer，finally 的 re-arm 会把它当成功重排 → 同批消息 3s 后再跑一次
+     * → 无限循环（死亡螺旋）。因此这里把以下软失败全部降级为本地默认归类：
+     * - JSON 解析失败（raw 非合法 JSON）
+     * - 合法 JSON 但缺 assignments 数组
+     * - 合法 JSON 但 assignments 为空 / 全部无效（messageId 不在本批 / topicId 空）
+     * 日志按类别区分，便于与 LLM 调用失败（在 llmTopicClustering catch 处告警）对账。
+     *
+     * 部分有效时保留有效项，并给未被覆盖的消息补默认归类，保证消息绝不静默丢失。
+     */
+    private normalizeClusteringResult(rawContent: string, messages: Message[]): TopicClusteringResult {
+        let parsed: { assignments?: unknown; evolutions?: unknown };
         try {
             // 提取 JSON（处理可能的 markdown 包裹）
-            const jsonStr = response.content
+            const jsonStr = rawContent
                 .replace(/```json\s*/g, "")
                 .replace(/```\s*/g, "")
                 .trim();
-            return JSON.parse(jsonStr) as TopicClusteringResult;
+            parsed = JSON.parse(jsonStr) as { assignments?: unknown; evolutions?: unknown };
         } catch {
-            log.warn("话题聚类 LLM 输出解析失败，使用默认归类", { raw: response.content.slice(0, 200) });
+            log.warn("话题聚类 LLM 输出 JSON 解析失败，使用本地默认归类", { raw: rawContent.slice(0, 200) });
             return this.fallbackClustering(messages);
         }
+
+        if (!Array.isArray(parsed.assignments)) {
+            log.warn("话题聚类 LLM 输出合法但缺 assignments 数组，使用本地默认归类", {
+                raw: rawContent.slice(0, 200),
+                messageCount: messages.length,
+            });
+            return this.fallbackClustering(messages);
+        }
+
+        // 过滤非法 assignment：messageId 必须指向本批真实消息、topicId 必须非空字符串。
+        const messageIds = new Set(messages.map(m => m.id));
+        const validAssignments = (parsed.assignments as unknown[]).filter(
+            (a): a is TopicClusteringResult["assignments"][number] =>
+                typeof a === "object" && a !== null &&
+                typeof (a as { messageId?: unknown }).messageId === "string" &&
+                messageIds.has((a as { messageId: string }).messageId) &&
+                typeof (a as { topicId?: unknown }).topicId === "string" &&
+                (a as { topicId: string }).topicId.trim().length > 0,
+        );
+
+        if (validAssignments.length === 0) {
+            log.warn("话题聚类 LLM 输出合法但 assignments 为空或全部无效，使用本地默认归类", {
+                raw: rawContent.slice(0, 200),
+                messageCount: messages.length,
+            });
+            return this.fallbackClustering(messages);
+        }
+
+        // 覆盖完整性：给任何未被有效 assignment 覆盖的消息补默认归类，绝不让消息静默丢失。
+        const assignedIds = new Set(validAssignments.map(a => a.messageId));
+        const missingMessages = messages.filter(m => !assignedIds.has(m.id));
+        if (missingMessages.length > 0) {
+            log.warn("话题聚类 LLM 漏归部分消息，未覆盖部分补默认归类", {
+                missing: missingMessages.length,
+                total: messages.length,
+            });
+        }
+
+        return {
+            assignments: [
+                ...validAssignments,
+                ...missingMessages.map(m => ({
+                    messageId: m.id,
+                    topicId: "NEW_FALLBACK",
+                    topicLabel: "对话讨论",
+                    keywords: [] as string[],
+                })),
+            ],
+            evolutions: Array.isArray(parsed.evolutions)
+                ? (parsed.evolutions as TopicClusteringResult["evolutions"])
+                : [],
+        };
     }
 
     /**
