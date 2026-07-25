@@ -75,7 +75,7 @@ export async function callOpenAIResponses(
         store: false,
         ...(systemMessages.length > 0 ? { instructions: systemMessages.join("\n\n") } : {}),
         input,
-        temperature,
+        ...(config.omit_temperature ? {} : { temperature }),
         max_output_tokens: maxTokens,
         ...(reasoningEffort ? { reasoning: { effort: reasoningEffort as ReasoningEffort } } : {}),
         ...(stop && stop.length > 0 ? { stop } : {}),

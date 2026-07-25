@@ -61,7 +61,7 @@ export async function callOpenAI(
         body: JSON.stringify({
             model,
             messages: apiMessages,
-            temperature,
+            ...(config.omit_temperature ? {} : { temperature }),
             max_tokens: maxTokens,
             // Gemini thinking 参数（OpenAI 兼容格式：reasoning_effort）
             ...(thinkingLevel && thinkingLevel !== "none" ? {

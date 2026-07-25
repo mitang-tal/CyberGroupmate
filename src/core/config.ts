@@ -38,6 +38,8 @@ export interface LLMConfig {
     apiKey: string;
     model: string;
     temperature: number;
+    /** 设为 true 则不传 temperature 参数（用于不支持的模型如 gpt-5.5） */
+    omit_temperature?: boolean;
     maxTokens: number;
     /** 模型允许的最大上下文输入 token 数。用于触发 compact。未设置则使用 context_budget.effective_context_window（默认 32000） */
     maxContextTokens?: number;
@@ -587,6 +589,7 @@ const DEFAULT_LLM: LLMConfig = {
     apiKey: "",
     model: "gpt-4o",
     temperature: 0.7,
+    omit_temperature: false,
     maxTokens: 8192,
 };
 
@@ -1241,6 +1244,7 @@ function parseLLMProfile(raw: Record<string, unknown>): LLMConfig {
         apiKey: str(raw.api_key) ?? DEFAULT_LLM.apiKey,
         model: str(raw.model) ?? DEFAULT_LLM.model,
         temperature: num(raw.temperature, DEFAULT_LLM.temperature),
+            omit_temperature: Boolean(raw.omit_temperature ?? DEFAULT_LLM.omit_temperature),
         maxTokens: num(raw.max_tokens, DEFAULT_LLM.maxTokens),
         maxContextTokens: raw.max_context_tokens != null ? num(raw.max_context_tokens, 0) : undefined,
         thinkingLevel: str(raw.thinking_level),
@@ -1372,6 +1376,7 @@ export function serializeConfigToObject(config: AppConfig): Record<string, unkno
         if (p.responsesRequestMode) entry.responses_request_mode = p.responsesRequestMode;
         if (p.replyPrompt) entry.reply_prompt = p.replyPrompt;
         if (p.supportsPrefill === false) entry.supports_prefill = false;
+        if (p.omit_temperature === true) entry.omit_temperature = true;
         if (p.pricing) {
             const pricing: Record<string, unknown> = {
                 input: p.pricing.input,

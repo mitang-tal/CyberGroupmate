@@ -295,6 +295,7 @@
       apiKey: "",
       model: "",
       temperature: 0.7,
+      omit_temperature: false,
       maxTokens: 8192,
     };
     config = config;
