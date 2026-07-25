@@ -1075,7 +1075,12 @@ async function main(): Promise<void> {
         const subagent = subagentManager.getOrCreate(chatId);
         let executor = subagent.codeActExecutor as CodeActExecutor | null | undefined;
         if (!executor) {
-            executor = new CodeActExecutor(chatId);
+            const codeActCfg = loadConfig().subagent?.codeAct;
+            executor = new CodeActExecutor(chatId, codeActCfg ? {
+                maxExecutionTimeMs: codeActCfg.maxExecutionTimeMs,
+                maxSessionMessages: codeActCfg.maxSessionMessages,
+                maxTurns: codeActCfg.maxTurns,
+            } : undefined);
             subagent.codeActExecutor = executor;
         }
 
