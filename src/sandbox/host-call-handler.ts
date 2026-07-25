@@ -827,7 +827,16 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             const ctx = policy();
             // R1（显式 target）：显式查别的私密会话的群内画像 → 收窄回当前会话视角。
             const effective = (targetChatId && isExplicitReadBlocked(targetChatId, ctx)) ? chatId : (targetChatId ?? chatId);
-            const profile = memory.getUserProfile(userId, effective) as unknown as Record<string, unknown> | null;
+            // Alias fallback: agent 可能传 displayName/username 而非规范 userId
+            let resolvedUserId = userId;
+            if (!memory.getPersonIdentity(userId)) {
+                const aliasHits = memory.searchByAlias(userId, 1);
+                if (aliasHits.length > 0) {
+                    resolvedUserId = aliasHits[0].userId;
+                    log.info("getUserProfile alias resolved", { from: userId, to: resolvedUserId } as any);
+                }
+            }
+            const profile = memory.getUserProfile(resolvedUserId, effective) as unknown as Record<string, unknown> | null;
             if (profile && Array.isArray((profile as { recentFacts?: unknown[] }).recentFacts)) {
                 (profile as { recentFacts: unknown[] }).recentFacts =
                     scrubFactsByVisibility((profile as { recentFacts: any[] }).recentFacts, ctx, method).kept;

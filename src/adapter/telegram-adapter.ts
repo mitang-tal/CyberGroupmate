@@ -573,7 +573,8 @@ export class TelegramAdapter implements PlatformAdapter {
             case "telegram.getChatMembers": {
                 const peer = await this.ensurePeerCached(args[0]);
                 const peers = await this.client.getChatMembers(peer, args[1]);
-                return peers.map((p: any) => this.normalizePeer(p));
+                // mtcute ChatMember 的 id/username 在 .user 子对象里，展平后才能拿到
+                return peers.map((p: any) => this.normalizePeer(p?.user ?? p));
             }
             case "telegram.getHistory": {
                 try {
