@@ -191,3 +191,4 @@ telegram.d.ts — Telegram 平台 API 这是系统注入的 Telegram host proxy 
 modules/vision.d.ts — Vision 视觉模块类型定义 提供图片识别能力，让 Agent 可以"看到"图片并理解其内容。 图片路径限定在 workspace/ 目录下。 vision: VisionModule — 全局可用
 
 - `see`: 看图：读取一张或多张图片文件，返回每张图片的文字描述。 使用 Vision LLM 分析图片内容，支持 JPEG、PNG、WebP 等常见格式。
+- `see`: 看图（自定义分析）：用指定 prompt 分析图片，而不是默认的"描述内容"。

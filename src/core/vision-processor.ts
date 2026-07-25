@@ -835,20 +835,27 @@ export async function describeImage(
     imageBuffer: Buffer,
     mimeType: string,
     visionConfigs: LLMConfig[],
+    customPrompt?: string,
 ): Promise<string> {
     const b64 = imageBuffer.toString("base64");
     const dataUri = `data:${mimeType};base64,${b64}`;
 
+    const trimmedPrompt = customPrompt?.trim();
+    const userContent = trimmedPrompt
+        ? trimmedPrompt
+        : "请具体而详细地描述这张图片的内容。如图中有文字/代码，尽你所能给出完整内容。";
+
     const messages: ChatMessage[] = [
         {
             role: "user",
-            content: "请具体而详细地描述这张图片的内容。如图中有文字/代码，尽你所能给出完整内容。",
+            content: userContent,
             imageParts: [{ url: dataUri }],
         },
     ];
 
     const response = await callLLMWithFallback(messages, visionConfigs, { caller: "vision", timeoutMs: resolveComponentTimeout("vision") });
-    return normalizeVisionDescription(response.content);
+    const collapseNewlines = !trimmedPrompt;
+    return normalizeVisionDescription(response.content, collapseNewlines);
 }
 
 /**
@@ -951,9 +958,9 @@ function formatEmojiTag(value?: string | string[]): string {
 /**
  * 规范化 vision LLM 的输出：去除 markdown 代码围栏，将换行折叠为空格
  */
-function normalizeVisionDescription(raw: string): string {
+function normalizeVisionDescription(raw: string, collapseNewlines = true): string {
     const trimmed = raw.trim();
     const fenceMatch = trimmed.match(/^```(?:[a-zA-Z0-9_-]+)?\s*\n?([\s\S]*?)\n?```$/);
     const unfenced = fenceMatch?.[1] ?? trimmed;
-    return unfenced.replace(/\s*\n+\s*/g, " ").trim();
+    return collapseNewlines ? unfenced.replace(/\s*\n+\s*/g, " ").trim() : unfenced.trim();
 }

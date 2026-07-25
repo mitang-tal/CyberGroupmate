@@ -85,7 +85,7 @@
 | **终端交互** | `shell.sendInput("y\n", "tabId")` 应对确认提示（参数顺序：先输入内容，后 tabId）；`"\x03"` = Ctrl+C |
 | **后台任务** | `runtime.spawn` / `spawnPersistent` / `kill` / `ps`。持久化后台任务 Worker 重启自动恢复 |
 | **环境变量** | `runtime.env.get` / `set` / `list` / `delete` |
-| **看图** | `vision.see("path")` 返回图片内容文字描述 |
+| **看图** | `vision.see("path")` 描述图片内容；`vision.see({ prompt: "指令" }, "path")` 按自定义视角分析（数人数/提代码/查状态） |
 
 > ⚠️ `remind` 和 `cron` 的描述必须是**详细自然语言**（非代码）。写清：做什么、给谁发、发什么内容、如何获取信息。触发时以全新 session 收到该描述。
 
@@ -128,7 +128,7 @@ console.log(await runtime.remind("检查 ctx.pendingFile 是否已生成且大�
 
 **大文件发送前压缩** — 图片 > 5 MB 先压缩再发（`convert` / `ffmpeg` / PIL），避免上传超时。
 
-**看图分析** — 收到图片文件需理解内容时，用 `vision.see("path")` 获取描述再决策。
+**看图分析** — 理解图片用 `vision.see("path")`；特定任务（数人数、提取文字/代码、判断状态）用 `vision.see({ prompt }, "path")` 按指令看图。
 
 **跨聊天操作 — dispatch 与 elevate** — 平台 API（`{{platformModule}}.sendText` / `sendMedia` 等）**只能向当前绑定的聊天发送消息，绝对禁止向其他聊天发送**。需要在其他聊天执行操作时，必须通过 `dispatch.taskToGroup()` 派发给目标聊天的 Subagent，由它用自己的平台 API 在自己的聊天里执行。目标任务完成后你会收到内部通知；系统也会把 source、target、结果写入全局 session digest。如果需要全局规划、找不到目标群、要协调多个群，或当前群上下文不足以决定怎么派，才用 `runtime.elevate()` 把球交回 Meta，并在 request 里写清：当前群发生了什么、你已经确认的信息、缺少什么、希望 Meta 做什么。升级后如果当前群需要知道进展，可以发一条克制的说明；不需要时直接总结 `<end_task>`。
 ```javascript
@@ -281,7 +281,7 @@ undefined
 # 多媒体
 
 - 目标消息里的图片/贴纸文字描述是系统视觉结果，据此理解即可，如同亲眼所见；和行动计划冲突时，以目标消息为准
-- 需要分析图片文件时使用 `vision.see("path")`
+- 需要分析图片文件时使用 `vision.see("path")`；需特定视角（如提取代码、数人数）用 `vision.see({ prompt }, "path")`
 - **发送媒体优先本地路径**：`sendMedia(chatId, { type: 'photo', file: 'media/xxx.jpg' })`
 - 发送前先确认文件存在；**大文件先压缩**
 - 本地无文件时才用 URL；**禁止**上传到外部图床（imgbb / imgur / smms / telegraph 等）

@@ -742,7 +742,19 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
         }
 
         if (method === "vision.see") {
-            const imagePaths = args as string[];
+            const first = args[0];
+            const hasOptions = first && typeof first === "object" && !Array.isArray(first);
+            let customPrompt: string | undefined;
+            let imagePaths: string[];
+            if (hasOptions) {
+                const opts = first as { prompt?: unknown };
+                if (typeof opts.prompt === "string" && opts.prompt.trim()) {
+                    customPrompt = opts.prompt.trim();
+                }
+                imagePaths = args.slice(1) as string[];
+            } else {
+                imagePaths = args as string[];
+            }
             if (!imagePaths || imagePaths.length === 0) {
                 throw new Error("vision.see() 至少需要传入一个图片路径");
             }
@@ -780,7 +792,7 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
                 };
                 const mimeType = mimeMap[ext] ?? "image/png";
                 const { buffer, mimeType: finalMime } = await ensureSupportedFormat(rawBuffer, mimeType);
-                return describeImage(buffer, finalMime, visionConfigs);
+                return describeImage(buffer, finalMime, visionConfigs, customPrompt);
             }));
 
             return results;
