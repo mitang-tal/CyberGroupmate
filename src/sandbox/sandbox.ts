@@ -20,6 +20,8 @@ import { loadConfig } from "../core/config.js";
 import { getAgentSkillScriptDirs } from "./skill-loader.js";
 import * as pty from "node-pty";
 import { normalizeProgrammaticTimestamps } from "../core/timezone.js";
+import type { ExecutionContext } from "../execution/execution-context.js";
+import type { ExecutionRecordService } from "../execution/execution-record-service.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -177,8 +179,10 @@ export class Sandbox extends EventEmitter {
             resolve: (result: ExecutionResult) => void;
             reject: (err: Error) => void;
             timer?: ReturnType<typeof setTimeout>;
+            startedAt?: number;  // 新增：用于计算durationMs
         }
     > = new Map();
+
     private requestCounter = 0;
     private projectRoot: string;
     private hostCallHandler: HostCallHandler | null = null;
@@ -190,6 +194,29 @@ export class Sandbox extends EventEmitter {
     private pendingExtendedSteps = 0;
     /** 当前 session 待消费的超时覆盖（由 worker runtime.modifyTimeout 上报） */
     private pendingTimeoutOverrideMs: number | null = null;
+
+     /** 执行记录服务（可选注入） */
+    executionRecordService?: ExecutionRecordService;
+    /** 当前执行上下文（sessionId/taskId/runId/agentId） */
+    executionContext?: ExecutionContext;
+
+    /** 设置执行上下文（支持patch式增量更新） */
+    setExecutionContext(context: Partial<ExecutionContext>): void {
+        this.executionContext = { ...this.executionContext, ...context } as ExecutionContext;
+    }
+    getExecutionContext(): ExecutionContext | undefined {
+    return this.executionContext;
+}
+
+clearExecutionContext(): void {
+    this.executionContext = undefined;
+}
+    setExecutionRecordService(
+		service: ExecutionRecordService
+): void {
+    this.executionRecordService = service;
+}
+
 
     // ─── Multi-Tab PTY 管理 ───
     /** PTY Tab 存储 */
@@ -556,6 +583,24 @@ export class Sandbox extends EventEmitter {
         }
 
         if (msg.type === "result" && msg.id) {
+        if (msg.id === "__ready__") {
+			const pendingReady = this.pendingRequests.get("__ready__");
+
+			if (pendingReady) {
+			this.pendingRequests.delete("__ready__");
+
+			if (pendingReady.timer) {
+            clearTimeout(pendingReady.timer);
+			}
+
+			pendingReady.resolve({
+            output: msg.output ?? "",
+            error: msg.error ?? false,
+			});
+		}
+
+			return;
+}
             if (Number.isInteger(msg.extendSteps) && (msg.extendSteps as number) > 0) {
                 this.pendingExtendedSteps += msg.extendSteps as number;
             }
@@ -567,10 +612,26 @@ export class Sandbox extends EventEmitter {
             if (pending) {
                 this.pendingRequests.delete(msg.id);
                 if (pending.timer) clearTimeout(pending.timer);
-                pending.resolve({
+                 const result = {
                     output: msg.output ?? "",
                     error: msg.error ?? false,
+                };
+                pending.resolve(result);
+
+                // ═══ execution record 接入 ═══
+                this.executionRecordService?.recordSandboxExecution({
+                    runId: this.executionContext?.runId,
+                    sessionId: this.executionContext?.sessionId,
+                    taskId: this.executionContext?.taskId,
+                    agentId: this.executionContext?.agentId,
+                    status: result.error ? "failure" : "success",
+                    durationMs: pending.startedAt
+                        ? Date.now() - pending.startedAt
+                        : undefined,
                 });
+
+                pending.resolve(result);
+
             }
         } else if (msg.type === "notify" && msg.event) {
             this.emit("notify", msg.event);
@@ -645,7 +706,7 @@ export class Sandbox extends EventEmitter {
                 });
             }, timeout);
 
-            this.pendingRequests.set(id, { resolve, reject, timer });
+            this.pendingRequests.set(id, { resolve, reject, timer, startedAt: Date.now() });
 
             const msg = JSON.stringify({
                 type: "execute",

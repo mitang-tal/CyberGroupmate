@@ -31,6 +31,8 @@ import { ContextEngine } from "../context-engine/context-engine.js";
 import { EXECUTOR_FOOTER_TEXT, getExecutorTaskProviders, type ExecutorResolveContext } from "../context-engine/providers/executor-providers.js";
 import type { LLMConfig, VisionConfig } from "../core/config.js";
 import { resolveComponentProfiles, loadConfig } from "../core/config.js";
+import { shortUuid } from "../core/ids.js";
+import crypto from "node:crypto";
 import {
     enrichMessages,
     formatMessageLine,
@@ -563,12 +565,14 @@ export class CodeActExecutor {
 
     private buildSessionHistoryMessages(isContinuation: boolean): ChatMessage[] {
         const latestTaskPromptIndex = isContinuation ? findLatestExecutorTaskPromptIndex(this.session) : -1;
-        return this.session.map((msg, index) => ({
-            role: msg.role,
-            content: sanitizePromptTimestamps(
-                msg.role === "user" && isExecutorTaskPrompt(msg.content) && index !== latestTaskPromptIndex
-                    ? collapseExecutorTaskPrompt(msg.content)
-                    : msg.content,
+        return this.session
+             .filter(msg => msg.role === "user" || msg.role === "assistant")
+             .map((msg, index) => ({
+                 role: msg.role,
+                 content: sanitizePromptTimestamps(
+                     msg.role === "user" && isExecutorTaskPrompt(msg.content) && index !== latestTaskPromptIndex
+                         ? collapseExecutorTaskPrompt(msg.content)
+                         : msg.content,
             ),
             ...(index === this.session.length - 1 ? { cacheBreakpoint: true } : {}),
         }));
@@ -835,6 +839,13 @@ export class CodeActExecutor {
 
         const sentCollector = new SentMessageCollector(this.memory ?? undefined);
         const sandbox = await this.sandboxPool!.acquire(this.chatId);
+        const runId = shortUuid();
+        sandbox.setExecutionContext({
+			runId,
+            sessionId: this.chatId,
+            taskId: task.taskId,
+            agentId: this.personaName ?? "unknown",
+        });
         const deduplicateSentMessages = currentConfig.subagent?.deduplicateSentMessages !== false;
         const bannedWords = currentConfig.subagent?.bannedWords ?? DEFAULT_BANNED_WORDS;
 
@@ -924,6 +935,7 @@ export class CodeActExecutor {
                 renderResult?.manifest,
             );
         } finally {
+			sandbox.clearExecutionContext();
             unregisterPendingSignal();
             // 停止 typing 指示 + 移除进度事件监听
             stopTyping();
@@ -938,11 +950,32 @@ export class CodeActExecutor {
         // ═══ Fix 2: 保存本次 session 的完整对话到 this.session ═══
         // 跳过 system prompt（this.session 不需要重复存系统 prompt）
         // 跳过已有的历史消息（只保存新产生的对话）
-        const historyOffset = 1 + this.session.length; // 1 for system prompt + existing history
-        const newMessages = sessionResult.messages.slice(historyOffset);
+
+
+        const newMessages = sessionResult.messages.slice(messages.length);
+
         for (const msg of newMessages) {
+            if (
+        msg.role !== "user" &&
+        msg.role !== "assistant"
+    ) {
+        continue;
+    }
+
+
+		    if (
+			typeof msg.content === "string" &&
+		   (
+            msg.content.includes("[Execution Output]") ||
+            msg.content.includes("[Observation]") ||
+            msg.content.includes("[Runtime") ||
+            msg.content.includes("[SESSION_HISTORY_COMPACT]")
+		   )
+    ) {
+           continue;
+    }
             this.session.push({
-                role: msg.role as "system" | "user" | "assistant",
+                role: msg.role as "user" | "assistant",
                 content: sanitizePromptTimestamps(msg.content),
                 timestamp: new Date().toISOString(),
             });

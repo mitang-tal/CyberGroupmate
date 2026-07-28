@@ -497,6 +497,17 @@ export interface SchedulerEvent {
     triggered?: boolean;
     /** 上次触发时间（cron） */
     lastTriggeredAt?: string;
+     /** 调度执行状态 */
+    executionStatus?: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+
+    /** 最近一次执行时间 */
+    lastExecutionAt?: string;
+
+    /** 最近发送消息 ID */
+    lastSentMessageId?: string;
+
+    /** 去重 key */
+    dedupKey?: string;
 }
 
 export interface MemoEntry {

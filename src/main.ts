@@ -17,6 +17,8 @@ import type { ShellWakeEvent } from "./sandbox/sandbox.js";
 import { installSkillsDependencies } from "./sandbox/skill-loader.js";
 import { createSandboxHostCallHandler } from "./sandbox/host-call-handler.js";
 import { MemoryStoreV2 } from "./memory-v2/index.js";
+import { ExecutionRecordService } from "./execution/execution-record-service.js";
+import { SqliteExecutionRecordStore } from "./execution/sqlite-execution-record-store.js";
 import {
     loadConfig,
     resolveComponentProfiles,
@@ -376,6 +378,7 @@ async function main(): Promise<void> {
                 appConfig,
                 globalState,
                 memory,
+                executionRecordService,
                 adapters,
                 sandbox,
                 sandboxPool,
@@ -426,6 +429,18 @@ async function main(): Promise<void> {
         },
     });
     const memory = new MemoryStoreV2(join(DATA_DIR, "memory.db"));
+
+    const { SqliteExecutionRecordStore } = await import("./execution/sqlite-execution-record-store.js");
+	const { ExecutionRecordService } = await import("./execution/execution-record-service.js");
+
+	const executionRecordStore = new SqliteExecutionRecordStore(
+    join(DATA_DIR, "execution-records.db")
+);
+
+	const executionRecordService = new ExecutionRecordService(
+    executionRecordStore
+);
+
     const { createInterface: createRL } = await import("node:readline");
     const hostRL = createRL({ input: process.stdin, output: process.stdout });
 
