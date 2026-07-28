@@ -30,6 +30,7 @@ import { deriveChatType } from "../context-engine/prompt-renderer-utils.js";
 import { ContextEngine } from "../context-engine/context-engine.js";
 import { EXECUTOR_FOOTER_TEXT, getExecutorTaskProviders, type ExecutorResolveContext } from "../context-engine/providers/executor-providers.js";
 import type { LLMConfig, VisionConfig } from "../core/config.js";
+import type { ExecutionRecordService } from "../execution/execution-record-service.js";
 import { resolveComponentProfiles, loadConfig } from "../core/config.js";
 import { shortUuid } from "../core/ids.js";
 import crypto from "node:crypto";
@@ -420,6 +421,11 @@ export function endReasonToTaskStatus(endReason: string | undefined): SubagentCa
 export class CodeActExecutor {
     readonly chatId: string;
     private config: CodeActExecutorConfig;
+    private executionRecordService?: ExecutionRecordService;
+
+    setExecutionRecordService(service: ExecutionRecordService): void {
+    this.executionRecordService = service;
+}
 
     /** 独立对话历史（跨 session 保留） */
     session: SessionMessage[] = [];

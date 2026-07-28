@@ -374,6 +374,7 @@ async function main(): Promise<void> {
             sandbox.on("shell_wake", (event: ShellWakeEvent) => {
                 enqueueShellWakeDirectTask(chatId, event);
             });
+            sandbox.setExecutionRecordService(executionRecordService);
             sandbox.setHostCallHandler(createSandboxHostCallHandler(chatId, {
                 appConfig,
                 globalState,
@@ -1049,6 +1050,7 @@ async function main(): Promise<void> {
         let executor = subagent.codeActExecutor as CodeActExecutor | null | undefined;
         if (!executor) {
             executor = new CodeActExecutor(chatId);
+            executor.setExecutionRecordService(executionRecordService);
             subagent.codeActExecutor = executor;
         }
 
