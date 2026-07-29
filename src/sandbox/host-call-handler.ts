@@ -983,6 +983,49 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
         }
         throw new Error(`Unsupported host call: ${method}`);
     };
+
+    /**
+     * Classify a host call error into a diagnostic type and determine if it's a policy denial.
+     */
+    function classifyHostCallError(error: unknown): { type: string; isPolicyDenied: boolean } {
+        const message = error instanceof Error ? error.message : String(error);
+
+        // Policy violations (sandbox security restrictions)
+        if (
+            message.includes("not permitted from sandbox") ||
+            message.includes("[Sandbox 安全限制]") ||
+            message.includes("[Background sandbox]")
+        ) {
+            return { type: "PolicyViolation", isPolicyDenied: true };
+        }
+
+        // Tool not found
+        if (message.startsWith("Unsupported host call:")) {
+            return { type: "UnsupportedMethod", isPolicyDenied: false };
+        }
+
+        // Network errors
+        if (/fetch failed|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/i.test(message)) {
+            return { type: "NetworkError", isPolicyDenied: false };
+        }
+
+        // Timeout
+        if (/timed?out/i.test(message)) {
+            return { type: "Timeout", isPolicyDenied: false };
+        }
+
+        // Validation errors
+        if (/不能为空|上限|非法/.test(message)) {
+            return { type: "ValidationError", isPolicyDenied: false };
+        }
+
+        // Fallback: use original error name
+        return {
+            type: error instanceof Error ? error.name : "UnknownError",
+            isPolicyDenied: false,
+        };
+    }
+
     return async (method: string, args: unknown[]) => {
         const startedAt = Date.now();
 
@@ -1016,12 +1059,14 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
 
             return result;
         } catch (error) {
+            const { type, isPolicyDenied } = classifyHostCallError(error);
+
             executionRecordService.record({
                 id: crypto.randomUUID(),
 
-				runId: executionContext?.runId,
+					runId: executionContext?.runId,
 
-			sessionId:
+				sessionId:
                 executionContext?.sessionId ?? deps.sessionId,
 
             taskId:
@@ -1034,15 +1079,12 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
 
             method,
 
-            status: "failure",
+            status: isPolicyDenied ? "policy_denied" : "failure",
 
             durationMs: Date.now() - startedAt,
 
             error: {
-                type:
-                    error instanceof Error
-                        ? error.name
-                        : "UnknownError",
+                type,
 
                 message:
                     error instanceof Error
@@ -1052,7 +1094,6 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
 
             createdAtMs: Date.now(),
         });
-
 
             throw error;
         }
