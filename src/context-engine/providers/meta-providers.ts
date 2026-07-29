@@ -493,6 +493,7 @@ export const metaCallbacksProvider: SectionProvider<MetaCallbacksData> = {
                         ].filter(Boolean).join("\n")),
                     ].join("\n")
                     : "",
+                cb.failureType ? `  failureType=${cb.failureType}` : "",
                 cb.error ? `  error=${cb.error}` : "",
                 typeof cb.durationMs === "number" ? `  durationMs=${cb.durationMs}` : "",
                 cb.summary ? `  thinkingTranscript=${cb.summary}` : "",
