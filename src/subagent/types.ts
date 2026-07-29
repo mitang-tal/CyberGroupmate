@@ -232,6 +232,8 @@ export interface SubagentCallback {
     executionType: "CODEACT";
     /** 执行状态 — spec 中为 type: 'COMPLETED' | 'FAILED' | 'TIMEOUT' */
     status: "COMPLETED" | "ERROR" | "SKIPPED" | "TIMEOUT";
+    /** 细分失败类型（status=ERROR 时细分原因，status=COMPLETED 时也可用于标记执行过程中的违规） */
+    failureType?: "failure" | "policy_denied";
     /** 结果摘要 */
     summary: string;
     /** 回复内容（spec §2.2 result.replyContent） */

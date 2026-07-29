@@ -1038,6 +1038,22 @@ export class CodeActExecutor {
         // 5. 构建 callback
         // endReason → 终态映射（见 endReasonToTaskStatus）。
         const status: SubagentCallback["status"] = endReasonToTaskStatus(sessionResult.endReason);
+
+        // ═══ Detect policy violations across all execution turns ═══
+        let failureType: SubagentCallback["failureType"];
+        const violationTest = (s: string) =>
+            s.includes("not permitted from sandbox") ||
+            s.includes("[Sandbox 安全限制]") ||
+            s.includes("[Background sandbox]");
+        const hasPolicyViolation =
+            (typeof sessionResult.error === "string" && violationTest(sessionResult.error)) ||
+            sessionResult.turns.some(t =>
+                t.executionResults.some(r => r.error && violationTest(r.output))
+            );
+        if (hasPolicyViolation) {
+            failureType = "policy_denied";
+        }
+
         const callback: SubagentCallback = {
             taskId: task.taskId,
             chatId: this.chatId,
@@ -1045,6 +1061,7 @@ export class CodeActExecutor {
             isDirectMessage: ctx.isDirectMessage,
             executionType: "CODEACT",
             status,
+            failureType,
             summary: thinkingTranscript,
             replyContent: sessionResult.turns
                 .filter((t: any) => t.role === "assistant" && t.content)
