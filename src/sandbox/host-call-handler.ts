@@ -407,6 +407,13 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
         applyHostManagedEnv,
     } = deps;
 
+    // ═══ Policy Denied Guard ═══
+    // Track denied methods per runId to prevent unlimited retry within same run.
+    // Closure state is fresh when sandbox is newly created (onAcquire).
+    // For reused sandbox instances, lastRunId detects cross-run boundary.
+    let deniedGuardLastRunId: string | undefined;
+    const deniedMethods = new Set<string>();
+
     const listSchedulerItems = () => globalState.getSchedulerEvents()
         .filter((event) => (event.bindingId ?? event.chatId) === chatId)
         .map((event) => ({
@@ -1031,7 +1038,24 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
 
         const executionContext = deps.sandbox.getExecutionContext?.();
 
+        // ═══ Policy Denied Guard ═══
+        const currentRunId = executionContext?.runId;
+        // Reset if runId has changed (cross-run boundary for reused sandbox instances)
+        if (currentRunId && currentRunId !== deniedGuardLastRunId) {
+            deniedMethods.clear();
+            deniedGuardLastRunId = currentRunId;
+        }
         try {
+            // Fast rejection: if method was already denied in this run, throw early
+            // (the catch block handles recording and re-throwing)
+            if (currentRunId && deniedMethods.has(method)) {
+                throw new Error(
+                    method + " is not permitted from sandbox " +
+                    "(previously denied in this run). " +
+                    "Submit follow-up to Meta instead."
+                );
+            }
+
             const result = await executeHostCall(method, args);
 
             executionRecordService.record({
@@ -1060,6 +1084,11 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             return result;
         } catch (error) {
             const { type, isPolicyDenied } = classifyHostCallError(error);
+
+            // ═══ Track policy denial for guard (prevent duplicate in same run) ═══
+            if (isPolicyDenied && currentRunId) {
+                deniedMethods.add(method);
+            }
 
             executionRecordService.record({
                 id: crypto.randomUUID(),

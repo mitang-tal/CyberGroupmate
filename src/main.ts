@@ -998,6 +998,9 @@ async function main(): Promise<void> {
     };
 
     function initializeCodeActExecutor(executor: CodeActExecutor, chatId: string): void {
+        // 注入 ExecutionRecordService，确保 dispatch/create/restore 路径都覆盖
+        executor.setExecutionRecordService(executionRecordService);
+
         const currentConfig = loadConfig();
         const persona = currentConfig.persona;
         const visionConfig = currentConfig.vision;

@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { ExecutionRecord, ExecutionStatus} from "./execution-record.types";
-import { ExecutionRecordStore } from "./execution-record-store";
+import { ExecutionRecordStore, type ExecutionStats } from "./execution-record-store";
 
 export class SqliteExecutionRecordStore
     implements ExecutionRecordStore {
@@ -90,9 +90,12 @@ export class SqliteExecutionRecordStore
     taskId?: string;
     method?: string;
     status?: ExecutionStatus;
+    source?: string;
+    limit?: number;
+    offset?: number;
 }): ExecutionRecord[] {
 
-let sql = `
+	let sql = `
         SELECT
             id,
             run_id,
@@ -136,7 +139,22 @@ let sql = `
         params.push(options.status);
     }
 
+    if (options.source) {
+        sql += " AND source = ?";
+        params.push(options.source);
+    }
+
     sql += " ORDER BY created_at DESC";
+
+    if (options.limit !== undefined) {
+        sql += " LIMIT ?";
+        params.push(options.limit);
+    }
+
+    if (options.offset !== undefined) {
+        sql += " OFFSET ?";
+        params.push(options.offset);
+    }
 
     return this.db
         .prepare(sql)
@@ -159,5 +177,35 @@ let sql = `
                 : undefined,
             createdAtMs: row.created_at,
         }));
+    }
+
+    queryStats(): ExecutionStats {
+        const total = (
+            this.db.prepare("SELECT COUNT(*) as cnt FROM execution_records").get() as any
+        ).cnt;
+
+        const bySource = (
+            this.db.prepare(
+                "SELECT source, COUNT(*) as count FROM execution_records GROUP BY source ORDER BY count DESC"
+            ).all() as { source: string; count: number }[]
+        );
+
+        const byStatus = (
+            this.db.prepare(
+                "SELECT status, COUNT(*) as count FROM execution_records GROUP BY status ORDER BY count DESC"
+            ).all() as { status: string; count: number }[]
+        );
+
+        const errorDistribution = (
+            this.db.prepare(
+                `SELECT COALESCE(error_type, 'none') as errorType, COUNT(*) as count
+                 FROM execution_records
+                 WHERE status IN ('failure', 'policy_denied')
+                 GROUP BY errorType
+                 ORDER BY count DESC`
+            ).all() as { errorType: string; count: number }[]
+        );
+
+        return { total, bySource, byStatus, errorDistribution };
     }
 }

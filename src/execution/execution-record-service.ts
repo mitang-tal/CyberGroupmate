@@ -1,5 +1,5 @@
 import { ExecutionRecord, ExecutionStatus} from "./execution-record.types";
-import { ExecutionRecordStore } from "./execution-record-store";
+import { ExecutionRecordStore, type ExecutionStats } from "./execution-record-store";
 
 const MAX_ERROR_MESSAGE_LENGTH = 2000;
 const MAX_ERROR_TYPE_LENGTH = 200;
@@ -166,6 +166,26 @@ export class ExecutionRecordService {
         return this.store.query({
             sessionId,
         });
+    }
+
+    listRecent(params: {
+        limit?: number;
+        offset?: number;
+        source?: string;
+        status?: ExecutionStatus;
+        method?: string;
+    }): ExecutionRecord[] {
+        return this.store.query({
+            source: params.source,
+            status: params.status,
+            method: params.method,
+            limit: params.limit,
+            offset: params.offset,
+        });
+    }
+
+    getStats(): ExecutionStats {
+        return this.store.queryStats();
     }
 
     listFailures(limit = 50): ExecutionRecord[] {
