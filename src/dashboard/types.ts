@@ -16,6 +16,7 @@ import type { PlatformAdapter } from "../adapter/platform-adapter.js";
 import type { AppConfig } from "../core/config.js";
 import type { AttentionAccumulator } from "../accumulator/attention-accumulator.js";
 import type { MetaSandbox } from "../meta-sandbox/meta-sandbox.js";
+import type { ExecutionRecordService } from "../execution/execution-record-service.js";
 
 /** Dashboard 需要的所有组件引用 */
 export interface DashboardDeps {
@@ -28,6 +29,7 @@ export interface DashboardDeps {
     sandboxPool: SandboxPool;
     memory: MemoryStoreV2;
     tokenStats: TokenStatsCollector;
+    executionRecordService: ExecutionRecordService;
     /** 媒体下载管理器（用于贴纸预览等） */
     mediaDownloader?: MediaDownloader;
     /** 图片目录（用于表情包频率追踪和预览） */

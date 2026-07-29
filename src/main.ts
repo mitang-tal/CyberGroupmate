@@ -1191,6 +1191,7 @@ async function main(): Promise<void> {
         dashboardDeps = {
                 nc,
                 subagentManager,
+                executionRecordService,
                 accumulator,
                 q5,
                 mainLoop,

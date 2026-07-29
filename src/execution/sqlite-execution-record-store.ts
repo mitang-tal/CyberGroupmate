@@ -30,6 +30,9 @@ export class SqliteExecutionRecordStore
                 created_at INTEGER NOT NULL
             );
 
+            CREATE INDEX IF NOT EXISTS idx_exec_run
+            ON execution_records(run_id);
+
             CREATE INDEX IF NOT EXISTS idx_exec_session
             ON execution_records(session_id);
 

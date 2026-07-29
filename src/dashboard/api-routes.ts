@@ -420,6 +420,16 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         res.json(bridge.buildSnapshot());
     });
 
+    // ─── Execution Records ───
+    router.get("/execution-records/by-run/:runId", (req, res) => {
+        const runId = req.params.runId;
+        if (!runId) {
+            res.status(400).json({ error: "runId required" });
+            return;
+        }
+        res.json(deps.executionRecordService.listByRun(runId));
+    });
+
     // ─── Subagent Task History ───
     router.get("/subagent-tasks", (req, res) => {
         const limit = Math.min(parseInt(qs(req.query.limit)) || 50, 200);
