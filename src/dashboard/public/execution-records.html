@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Execution Records — CyberGroupmate Dashboard</title>
+  <link rel</title>="icon" type="image/png" href="/kissheart.png" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <style>
+    /* ── 全局 & 布局 ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+      background: #0f1117;
+      color: #e1e4e8;
+      padding: 24px;
+      min-height: 100vh;
+    }
+    .app { max-width: 1400px; margin: 0 auto; }
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    h1 i { color: #58a6ff; }
+    .subtitle { color: #8b949e; font-size: 0.85rem; margin-bottom: 24px; }
+    a.back { color: #58a6ff; text-decoration: none; font-size: 0.85rem; }
+    a.back:hover { text-decoration: underline; }
+
+    /* ── 过滤栏 ── */
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 20px;
+      align-items: center;
+    }
+    .filters label { font-size: 0.8rem; color: #8b949e; }
+    .filters select, .filters input {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #e1e4e8;
+      padding: 6px 12px;
+      font-size: 0.85rem;
+      outline: none;
+    }
+    .filters select:focus, .filters input:focus { border-color: #58a6ff; }
+    .filters .btn {
+      background: #21262d;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #c9d1d9;
+      padding: 6px 16px;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .filters .btn:hover { background: #30363d; }
+
+    /* ── 表格 ── */
+    .table-wrap {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    th {
+      text-align: left;
+      padding: 10px 12px;
+      background: #1c2128;
+      border-bottom: 1px solid #30363d;
+      color: #8b949e;
+      font-weight: 600;
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+    th:hover { color: #e1e4e8; }
+    td {
+      padding: 8px 12px;
+      border-bottom: 1px solid #21262d;
+      vertical-align: middle;
+    }
+    tr:hover td { background: #1c2128; }
+
+    /* ── Source badge ── */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+    .badge-agent    { background: #1f3a5f; color: #79c0ff; }
+    .badge-sandbox  { background: #1f3d2f; color: #7ee787; }
+    .badge-host_call { background: #3d1f2f; color: #ff7b72; }
+
+    /* ── Status badge ── */
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-weight: 500;
+    }
+    .status i { font-size: 0.65rem; }
+    .status-success       { color: #3fb950; }
+    .status-failure       { color: #f85149; }
+    .status-interrupted   { color: #d29922; }
+    .status-policy_denied { color: #bc8cff; }
+    .status-policy_denied .pd-tag {
+      background: #3d1f5f;
+      color: #bc8cff;
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      margin-left: 2px;
+    }
+
+    /* ── Run ID ── */
+    .run-id {
+      font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+      font-size: 0.75rem;
+      color: #8b949e;
+    }
+    td .run-id { color: #58a6ff; cursor: pointer; }
+    td .run-id:hover { text-decoration: underline; }
+
+    /* ── Error message ── */
+    .error-msg {
+      max-width: 320px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #f85149;
+      font-size: 0.75rem;
+    }
+    .error-msg:hover { overflow: visible; white-space: normal; word-break: break-all; background: #0f1117; padding: 4px 8px; border-radius: 4px; position: relative; z-index: 1; }
+
+    /* ── 空状态 / 加载 / 错误 ── */
+    .empty { text-align: center; padding: 40px 20px; color: #8b949e; }
+    .empty i { font-size: 2rem; margin-bottom: 12px; display: block; }
+    .loading { text-align: center; padding: 40px; color: #8b949e; }
+    .loading i { font-size: 1.5rem; }
+    .error-banner {
+      background: #3d1f2f;
+      border: 1px solid #f85149;
+      border-radius: 8px;
+      padding: 12px 16px;
+      color: #f85149;
+      margin-bottom: 16px;
+    }
+
+    /* ── 分页 ── */
+    .pagination {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      padding: 16px;
+    }
+    .pagination button {
+      background: #21262d;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #c9d1d9;
+      padding: 6px 14px;
+      font-size: 0.82rem;
+      cursor: pointer;
+    }
+    .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+    .pagination button:hover:not(:disabled) { background: #30363d; }
+    .pagination span { color: #8b949e; font-size: 0.82rem; }
+
+    /* ── 响应式 ── */
+    @media (max-width: 768px) {
+      body { padding: 12px; }
+      .filters { flex-direction: column; }
+      td, th { padding: 6px 8px; font-size: 0.75rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <a class="back" href="/">&larr; Dashboard</a>
+    <h1><i class="fas fa-list"></i> Execution Records</h1>
+    <p class="subtitle">Agent turns, sandbox executions, and host call records</p>
+
+    <div class="filters">
+      <label>Source
+        <select id="filter</label>-source">
+          <option value="">all</option>
+          <option value="agent">agent</option>
+          <option value="sandbox">sandbox</option>
+          <option value="host_call">host_call</option>
+        </select>
+      </label>
+      <label>Status
+       </label> <select id="filter-status">
+          <option value="">all</option>
+          <option value="success">success</option>
+          <option value="failure">failure</option>
+          <option value="interrupted">interrupted</option>
+          <option value="policy_denied">policy_denied</option>
+        </select>
+      </label>
+      <label>Method
+        <input id="filter-method" placeholder</label>="e.g. agent.turn" size="18" />
+      </label>
+      <button class="btn" onclick="applyFilters()"><i class="fas fa-search"></i> Filter</button>
+      <button class="btn" onclick="resetFilters()"><i class="fas fa-undo"></i> Reset</button>
+      <span id="count-label" style="color:#8b949e;font-size:0.82rem;margin-left:auto;"></span>
+    </div>
+
+    <div id="error-area"></div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th onclick="sortBy('createdAtMs')">Time <i class="fas fa-sort"></i></th>
+            <th onclick="sortBy('source')">Source</th>
+            <th onclick="sortBy('method')">Method</th>
+            <th onclick="sortBy('status')">Status</th>
+            <th onclick="sortBy('runId')">Run ID</th>
+            <th onclick="sortBy('durationMs')">Duration</th>
+            <th>Error</th></th>
+          </tr>
+        </thead>
+        <tbody id="records-body">
+          <tr><td colspan="7" class="loading"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination" id="pagination">
+      <button id="prev-btn" onclick="prevPage()" disabled><i class="fas fa-chevron-left"></i> Prev</button>
+      <span id="page-info"></span>
+      <button id="next-btn" onclick="nextPage()">Next <i class="fas fa-chevron-right"></i></button>
+    </div>
+  </div>
+
+  <script>
+    // ─── State ───
+    const PAGE_SIZE = 30;
+    let currentPage = 0;
+    let sortField = 'createdAtMs';
+    let sortDir = 'desc';
+    let records = [];
+    let filteredRecords = [];
+
+    // ─── Token ───
+    function getToken() {
+      const u = new URL(window.location.href);
+      return u.searchParams.get('token') || '';
+    }
+    function apiUrl(path) {
+      const t = getToken();
+      return path + (path.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(t);
+    }
+
+    // ─── Load ───
+    async function loadRecords() {
+      const tb = document.getElementById('records-body');
+      tb.innerHTML = '<tr><td colspan="7" class="loading"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>';
+      document.getElementById('error-area').innerHTML = '';
+      try {
+        const resp = await fetch(apiUrl('/api/execution-records/recent?limit=500'));
+        if (!resp.ok) {
+          const txt = await resp.text().catch(() => '');
+          throw new Error(resp.status + ' ' + resp.statusText + (txt ? ': ' + txt.slice(0, 100) : ''));
+        }
+        records = await resp.json();
+        applyFilters();
+      } catch (err) {
+        tb.innerHTML = '<tr><td colspan="7" class="empty"><i class="fas fa-exclamation-triangle"></i>Failed to load: ' + err.message + '</td></tr>';
+        document.getElementById('count-label').textContent = '';
+      }
+    }
+
+    // ─── Filter & Sort ───
+    function applyFilters() {
+      const source = document.getElementById('filter-source').value;
+      const status = document.getElementById('filter-status').value;
+      const method = document.getElementById('filter-method').value.trim().toLowerCase();
+
+      filteredRecords = records.filter(r => {
+        if (source && r.source !== source) return false;
+        if (status && r.status !== status) return false;
+        if (method && !r.method.toLowerCase().includes(method)) return false;
+        return true;
+      });
+
+      // Sort
+      filteredRecords.sort((a, b) => {
+        let va = a[sortField], vb = b[sortField];
+        if (va == null) va = '';
+        if (vb == null) vb = '';
+        if (typeof va === 'string') {
+          va = va.toLowerCase();
+          vb = (vb || '').toString().toLowerCase();
+        }
+        if (va < vb) return sortDir === 'asc' ? -1 : 1;
+        if (va > vb) return sortDir === 'asc' ? 1 : -1;
+        return 0;
+      });
+
+      currentPage = 0;
+      renderPage();
+    }
+
+    function resetFilters() {
+      document.getElementById('filter-source').value = '';
+      document.getElementById('filter-status').value = '';
+      document.getElementById('filter-method').value = '';
+      applyFilters();
+    }
+
+    function sortBy(field) {
+      if (sortField === field) {
+        sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        sortField = field;
+        sortDir = 'desc';
+      }
+      applyFilters();
+    }
+
+    // ─── Pagination ───
+    function renderPage() {
+      const tb = document.getElementById('records-body');
+      const total = filteredRecords.length;
+      const totalPages = Math.ceil(total / PAGE_SIZE) || 1;
+      if (currentPage >= totalPages) currentPage = totalPages - 1;
+      const start = currentPage * PAGE_SIZE;
+      const end = Math.min(start + PAGE_SIZE, total);
+      const page = filteredRecords.slice(start, end);
+
+      document.getElementById('count-label').textContent = total + ' records';
+      document.getElementById('page-info').textContent = (totalPages > 1) ? (currentPage + 1) + ' / ' + totalPages : '';
+      document.getElementById('prev-btn').disabled = currentPage <= 0;
+      document.getElementById('next-btn').disabled = currentPage >= totalPages - 1;
+
+      if (page.length === 0) {
+        tb.innerHTML = '<tr><td colspan="7" class="empty"><i class="fas fa-inbox"></i>No records found</td></tr>';
+        return;
+      }
+
+      tb.innerHTML = page.map(r => {
+        const time = r.createdAtMs ? new Date(r.createdAtMs).toLocaleString('zh-CN', { hour12: false }) : '-';
+        const dur = r.durationMs != null ? r.durationMs + 'ms' : '-';
+        const runId = r.runId || '-';
+        const sourceBadge = 'badge-' + (r.source || 'unknown');
+        const sourceIcon = r.source === 'agent' ? 'fa-robot' : r.source === 'sandbox' ? 'fa-cogs' : 'fa-phone';
+        let statusHtml;
+        if (r.status === 'policy_denied') {
+          statusHtml = '<span class="status status-policy_denied"><i class="fas fa-shield-halved"></i> policy_denied<span class="pd-tag">DENIED</span></span>';
+        } else if (r.status === 'success') {
+          statusHtml = '<span class="status status-success"><i class="fas fa-circle"></i> success</span>';
+        } else if (r.status === 'failure') {
+          statusHtml = '<span class="status status-failure"><i class="fas fa-circle"></i> failure</span>';
+        } else if (r.status === 'interrupted') {
+          statusHtml = '<span class="status status-interrupted"><i class="fas fa-circle"></i> interrupted</span>';
+        } else {
+          statusHtml = '<span class="status">' + (r.status || '-') + '</span>';
+        }
+        const errHtml = r.error
+          ? '<div class="error-msg" title="' + escapeHtml(r.error.type ? r.error.type + ': ' : '') + escapeHtml(r.error.message || '') + '">'
+            + (r.error.type ? '<b>' + escapeHtml(r.error.type) + '</b>: ' : '')
+            + escapeHtml((r.error.message || '').slice(0, 120))
+            + ((r.error.message || '').length > 120 ? '…' : '')
+            + '</div>'
+          : '<span style="color:#484f58">—</span>';
+
+        return '<tr>'
+          + '<td style="white-space:nowrap">' + time + '</td>'
+          + '<td><span class="badge ' + sourceBadge + '"><i class="fas ' + sourceIcon + '"></i> ' + (r.source || '?') + '</span></td>'
+          + '<td style="font-family:monospace;font-size:0.78rem">' + escapeHtml(r.method) + '</td>'
+          + '<td>' + statusHtml + '</td>'
+          + '<td><span class="run-id">' + escapeHtml(runId) + '</span></td>'
+          + '<td style="white-space:nowrap">' + dur + '</td>'
+          + '<td>' + errHtml + '</td>'
+          + '</tr>';
+      }).join('');
+    }
+
+    function prevPage() { if (currentPage > 0) { currentPage--; renderPage(); } }
+    function nextPage() { currentPage++; renderPage(); }
+
+    function escapeHtml(s) {
+      if (!s) return '';
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    // ─── Init ───
+    loadRecords();
+  </script>
+</body>
+</html>

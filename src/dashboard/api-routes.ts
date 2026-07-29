@@ -11,6 +11,7 @@ import type { DashboardDeps } from "./types.js";
 import type { EventBridge } from "./event-bridge.js";
 import type { CodeActExecutor } from "../subagent/code-act-executor.js";
 import { refreshModuleRegistryCache } from "../subagent/code-act-executor.js";
+import type { ExecutionStatus } from "../execution/execution-record.types.js";
 import { createLogger } from "../core/logger.js";
 import { loadConfig, validateConfig, saveConfig } from "../core/config.js";
 import { DEFAULT_BANNED_WORDS } from "../core/banned-words.js";
@@ -428,6 +429,37 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             return;
         }
         res.json(deps.executionRecordService.listByRun(runId));
+    });
+
+    router.get("/execution-records/by-session/:sessionId", (req, res) => {
+        const sessionId = req.params.sessionId;
+        if (!sessionId) {
+            res.status(400).json({ error: "sessionId required" });
+            return;
+        }
+        res.json(deps.executionRecordService.listBySession(sessionId));
+    });
+
+    router.get("/execution-records/by-task/:taskId", (req, res) => {
+        const taskId = req.params.taskId;
+        if (!taskId) {
+            res.status(400).json({ error: "taskId required" });
+            return;
+        }
+        res.json(deps.executionRecordService.listByTask(taskId));
+    });
+
+    router.get("/execution-records/recent", (req, res) => {
+        const limit = Math.min(parseInt(qs(req.query.limit)) || 50, 200);
+        const offset = Math.max(parseInt(qs(req.query.offset)) || 0, 0);
+        const source = qs(req.query.source) || undefined;
+        const status = qs(req.query.status) as ExecutionStatus | undefined;
+        const method = qs(req.query.method) || undefined;
+        res.json(deps.executionRecordService.listRecent({ limit, offset, source, status, method }));
+    });
+
+    router.get("/execution-records/stats", (_req, res) => {
+        res.json(deps.executionRecordService.getStats());
     });
 
     // ─── Subagent Task History ───

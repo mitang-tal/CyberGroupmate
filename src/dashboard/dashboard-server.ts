@@ -62,6 +62,11 @@ export class DashboardServer {
             res.sendFile(join(__dirname, "public", "index.html"));
         });
 
+        // Execution Records standalone page
+        this.app.get("/execution-records", (_req, res) => {
+            res.sendFile(join(__dirname, "public", "execution-records.html"));
+        });
+
         // WebSocket upgrade with token auth
         this.server.on("upgrade", (request, socket, head) => {
             const url = new URL(request.url ?? "", `http://localhost:${this.config.port}`);
