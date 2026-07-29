@@ -607,6 +607,7 @@ export class CodeActExecutor {
      */
     async execute(task: CodeActReplyTask): Promise<SubagentCallback> {
         const startTime = Date.now();
+        const runId = shortUuid();
         this.executionCount++;
 
         log.info("execute: 开始", {
@@ -622,11 +623,24 @@ export class CodeActExecutor {
         try {
             // ═══ Fix 9: 实际的 Sandbox 执行逻辑 ═══
             if (this.hasDependencies()) {
-                callback = await this.executeWithSandbox(task, startTime);
+                callback = await this.executeWithSandbox(task, startTime, runId);
             } else {
                 // Fallback: 无依赖时使用骨架逻辑（测试用）
                 callback = this.executeSkeletonFallback(task, startTime);
             }
+
+            // ═══ Record agent turn (success) ═══
+            this.executionRecordService?.recordAgentTurn({
+                runId,
+                sessionId: this.chatId,
+                taskId: task.taskId,
+                agentId: this.personaName ?? "unknown",
+                status: callback.status === "COMPLETED" ? "success"
+                    : callback.status === "ERROR" ? "failure"
+                        : "interrupted",
+                durationMs: callback.durationMs,
+                error: callback.error ? { message: callback.error } : undefined,
+            });
 
         } catch (err) {
             const durationMs = Date.now() - startTime;
@@ -656,6 +670,17 @@ export class CodeActExecutor {
                 error: callback.error,
                 durationMs,
                 completedAt: callback.createdAt,
+            });
+
+            // ═══ Record agent turn (failure) ═══
+            this.executionRecordService?.recordAgentTurn({
+                runId,
+                sessionId: this.chatId,
+                taskId: task.taskId,
+                agentId: this.personaName ?? "unknown",
+                status: cancelledByUser ? "interrupted" : "failure",
+                durationMs,
+                error: cancelledByUser ? undefined : { message: String(err) },
             });
 
             if (cancelledByUser) {
@@ -689,6 +714,7 @@ export class CodeActExecutor {
     private async executeWithSandbox(
         task: CodeActReplyTask,
         startTime: number,
+        runId: string,
     ): Promise<SubagentCallback> {
         // 1. 提取 contextSnapshot 中的执行上下文字段（dispatch-handler 类型安全注入）
         const ctx = task.contextSnapshot;
@@ -845,7 +871,6 @@ export class CodeActExecutor {
 
         const sentCollector = new SentMessageCollector(this.memory ?? undefined);
         const sandbox = await this.sandboxPool!.acquire(this.chatId);
-        const runId = shortUuid();
         sandbox.setExecutionContext({
 			runId,
             sessionId: this.chatId,
