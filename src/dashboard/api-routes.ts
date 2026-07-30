@@ -2845,3 +2845,52 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             res.json(ne.getStats());
         });
     }
+
+    // ─── Agent Evolution ───
+    const ev = deps.evolutionAnalyzer;
+
+    if (ev) {
+        router.post("/evolution/analyze", (req, res) => {
+            const { agentId, agentName } = (req.body || {}) as any;
+            if (agentId && agentName) {
+                const proposal = ev.analyzeAgent(agentId, agentName);
+                if (!proposal) { res.json({ proposal: null, reason: "No specialization identified or in cooling window" }); return; }
+                res.json({ proposal });
+            } else {
+                const proposals = ev.analyzeAll(() => {
+                    // 实际系统中从 CapabilityRegistry 获取 Agent 列表
+                    return [];
+                });
+                res.json({ proposals, count: proposals.length });
+            }
+        });
+
+        router.get("/evolution/proposals", (req, res) => {
+            const status = qs(req.query.status) || undefined;
+            res.json(ev.getProposals(status));
+        });
+
+        router.post("/evolution/approve", (req, res) => {
+            const { proposalId } = (req.body || {}) as any;
+            if (!proposalId) { res.status(400).json({ error: "proposalId required" }); return; }
+            const proposal = ev.approveProposal(proposalId);
+            if (!proposal) { res.status(404).json({ error: "proposal not found or not pending" }); return; }
+            res.json({ proposal });
+        });
+
+        router.post("/evolution/reject", (req, res) => {
+            const { proposalId } = (req.body || {}) as any;
+            if (!proposalId) { res.status(400).json({ error: "proposalId required" }); return; }
+            const proposal = ev.rejectProposal(proposalId);
+            if (!proposal) { res.status(404).json({ error: "proposal not found or not pending" }); return; }
+            res.json({ proposal });
+        });
+
+        router.get("/evolution/history", (_req, res) => {
+            res.json(ev.getEvolutionHistory());
+        });
+
+        router.get("/evolution/cooling/:agentId", (req, res) => {
+            res.json(ev.getCoolingStatus(req.params.agentId));
+        });
+    }

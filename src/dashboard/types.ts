@@ -34,6 +34,7 @@ import type { EcosystemGovernor } from "../ecosystem/ecosystem-governor.js";
 import type { FederationStore } from "../ecosystem/federation-store.js";
 import type { ConflictResolver } from "../conflict/conflict-resolver.js";
 import type { NegotiationEngine } from "../negotiation/negotiation-engine.js";
+import type { EvolutionAnalyzer } from "../evolution/evolution-analyzer.js";
 
 /** Dashboard 需要的所有组件引用 */
 export interface DashboardDeps {
@@ -93,6 +94,8 @@ export interface DashboardDeps {
     conflictResolver?: ConflictResolver;
     /** 协商引擎 */
     negotiationEngine?: NegotiationEngine;
+    /** 演化分析器 */
+    evolutionAnalyzer?: EvolutionAnalyzer;
 }
 
 /** Dashboard 配置 */
