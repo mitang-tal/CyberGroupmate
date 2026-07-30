@@ -816,6 +816,47 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         });
     }
 
+    // ─── Failure Intelligence / Experience ───
+    const fe = deps.failureExtractor;
+    const ei = deps.experienceInjector;
+
+    if (fe) {
+        router.post("/experience/extract", (req, res) => {
+            const { triggerContext, symptom, rootCause, category, sourceAlertId, tool, capability, agentId } = (req.body || {}) as any;
+            if (!triggerContext || !symptom || !rootCause || !category) {
+                res.status(400).json({ error: "triggerContext, symptom, rootCause, category required" });
+                return;
+            }
+            const result = fe.extractFromFailure({ triggerContext, symptom, rootCause, category, sourceAlertId, tool, capability, agentId });
+            res.json(result);
+        });
+
+        router.get("/experience/patterns", (_req, res) => {
+            res.json(fe.queryRelevantExperience({ minConfidence: 0 }));
+        });
+
+        router.post("/experience/decay", (_req, res) => {
+            const result = fe.runDecay();
+            res.json(result);
+        });
+    }
+
+    if (ei) {
+        router.post("/experience/inject-dispatch", (req, res) => {
+            const { taskType, tags, category } = (req.body || {}) as any;
+            if (!taskType) { res.status(400).json({ error: "taskType required" }); return; }
+            const result = ei.getConstraintsForDispatch({ taskType, tags, category });
+            res.json(result);
+        });
+
+        router.post("/experience/inject-replan", (req, res) => {
+            const { executionId, failedStepMethod, failedStepSource } = (req.body || {}) as any;
+            if (!executionId || !failedStepMethod) { res.status(400).json({ error: "executionId and failedStepMethod required" }); return; }
+            const result = ei.getConstraintsForReplan({ executionId, failedStepMethod, failedStepSource });
+            res.json(result);
+        });
+    }
+
     router.get("/execution-records/:id", (req, res) => {
         const id = req.params.id;
         const record = deps.executionRecordService.getById(id);

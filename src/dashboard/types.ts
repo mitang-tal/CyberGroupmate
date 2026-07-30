@@ -25,6 +25,8 @@ import type { GlobalGuardrailEvaluator } from "../governance/global-guardrail-ev
 import type { StabilityTestSuite } from "../validation/stability-test-suite.js";
 import type { ChaosEngine } from "../validation/chaos-engine.js";
 import type { CostGuard } from "../validation/cost-guard.js";
+import type { FailureExtractor } from "../experience/failure-extractor.js";
+import type { ExperienceInjector } from "../experience/experience-injector.js";
 
 /** Dashboard 需要的所有组件引用 */
 export interface DashboardDeps {
@@ -66,6 +68,10 @@ export interface DashboardDeps {
     chaosEngine?: ChaosEngine;
     /** 成本护栏 */
     costGuard?: CostGuard;
+    /** 失败智能提取器 */
+    failureExtractor?: FailureExtractor;
+    /** 经验注入器 */
+    experienceInjector?: ExperienceInjector;
 }
 
 /** Dashboard 配置 */
