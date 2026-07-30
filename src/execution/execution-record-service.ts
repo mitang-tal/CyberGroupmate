@@ -1,4 +1,4 @@
-import { ExecutionRecord, ExecutionStatus, ExecutionTreeNode, ExecutionTimeline } from "./execution-record.types";
+import { ExecutionRecord, ExecutionStatus, ExecutionTreeNode, ExecutionTimeline, ExecutionAnalytics, SourceAnalytics, MethodAnalytics, SlowExecution } from "./execution-record.types";
 import { ExecutionRecordStore, type ExecutionStats } from "./execution-record-store";
 
 const MAX_ERROR_MESSAGE_LENGTH = 2000;
@@ -268,8 +268,32 @@ export class ExecutionRecordService {
     }
 
     // ──────────────────────────────────────────────
-    //  Query helpers
+    //  Analytics
     // ──────────────────────────────────────────────
+
+    getAnalytics(): ExecutionAnalytics {
+        return this.store.queryAnalytics();
+    }
+
+    getErrorSummary(): { errorType: string; count: number; lastOccurredAtMs: number }[] {
+        const analytics = this.store.queryAnalytics();
+        return analytics.errorRanking;
+    }
+
+    getSlowExecutions(limit = 10): SlowExecution[] {
+        const analytics = this.store.queryAnalytics();
+        return analytics.slowExecutions.slice(0, limit);
+    }
+
+    getSourceAnalytics(): SourceAnalytics[] {
+        const analytics = this.store.queryAnalytics();
+        return analytics.bySource;
+    }
+
+    getMethodAnalytics(): MethodAnalytics[] {
+        const analytics = this.store.queryAnalytics();
+        return analytics.byMethod;
+    }
 
     getById(id: string): ExecutionRecord | undefined {
         return this.store.getById(id);

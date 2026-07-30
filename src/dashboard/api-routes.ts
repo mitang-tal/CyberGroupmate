@@ -466,6 +466,33 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         res.json(deps.executionRecordService.getStats());
     });
 
+    // ─── Execution Analytics ───
+    router.get("/execution-analytics/overview", (_req, res) => {
+        const analytics = deps.executionRecordService.getAnalytics();
+        res.json(analytics.overview);
+    });
+
+    router.get("/execution-analytics/full", (_req, res) => {
+        res.json(deps.executionRecordService.getAnalytics());
+    });
+
+    router.get("/execution-analytics/errors", (_req, res) => {
+        res.json(deps.executionRecordService.getErrorSummary());
+    });
+
+    router.get("/execution-analytics/slow", (req, res) => {
+        const limit = Math.min(parseInt(qs(req.query.limit)) || 10, 50);
+        res.json(deps.executionRecordService.getSlowExecutions(limit));
+    });
+
+    router.get("/execution-analytics/by-source", (_req, res) => {
+        res.json(deps.executionRecordService.getSourceAnalytics());
+    });
+
+    router.get("/execution-analytics/by-method", (_req, res) => {
+        res.json(deps.executionRecordService.getMethodAnalytics());
+    });
+
     router.get("/execution-records/:id", (req, res) => {
         const id = req.params.id;
         const record = deps.executionRecordService.getById(id);

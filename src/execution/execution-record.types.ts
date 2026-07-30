@@ -62,3 +62,60 @@ export interface ExecutionTimeline {
     runTimeMs?: number;
     totalTimeMs?: number;
 }
+
+// ──────────────────────────────────────────────
+//  Analytics types
+// ──────────────────────────────────────────────
+
+export interface ExecutionAnalyticsOverview {
+    totalExecutions: number;
+    successCount: number;
+    failureCount: number;
+    interruptedCount: number;
+    timedOutCount: number;
+    policyDeniedCount: number;
+    successRate: number;
+    avgDurationMs: number;
+    maxDurationMs: number;
+}
+
+export interface SourceAnalytics {
+    source: string;
+    count: number;
+    failureCount: number;
+    successRate: number;
+    avgDurationMs: number;
+}
+
+export interface MethodAnalytics {
+    method: string;
+    source: string;
+    count: number;
+    failureCount: number;
+    successRate: number;
+    avgDurationMs: number;
+}
+
+export interface ErrorAnalytics {
+    errorType: string;
+    count: number;
+    lastOccurredAtMs: number;
+}
+
+export interface SlowExecution {
+    id: string;
+    source: string;
+    method: string;
+    status: string;
+    durationMs: number;
+    createdAtMs: number;
+}
+
+export interface ExecutionAnalytics {
+    overview: ExecutionAnalyticsOverview;
+    statusDistribution: { status: string; count: number }[];
+    bySource: SourceAnalytics[];
+    byMethod: MethodAnalytics[];
+    errorRanking: ErrorAnalytics[];
+    slowExecutions: SlowExecution[];
+}

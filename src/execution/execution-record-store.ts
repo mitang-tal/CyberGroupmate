@@ -1,5 +1,5 @@
 // execution-record-store.ts
-import { ExecutionRecord, ExecutionStatus, ExecutionTreeNode } from "./execution-record.types";
+import { ExecutionRecord, ExecutionStatus, ExecutionTreeNode, ExecutionAnalytics } from "./execution-record.types";
 
 export interface ExecutionSourceStats {
     source: string;
@@ -48,4 +48,6 @@ export interface ExecutionRecordStore {
     }): ExecutionRecord[];
 
     queryStats(): ExecutionStats;
+
+    queryAnalytics(): ExecutionAnalytics;
 }

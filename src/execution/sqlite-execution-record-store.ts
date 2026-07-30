@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { ExecutionRecord, ExecutionStatus, ExecutionTreeNode } from "./execution-record.types";
+import { ExecutionRecord, ExecutionStatus, ExecutionTreeNode, ExecutionAnalytics, SourceAnalytics, MethodAnalytics, ErrorAnalytics, SlowExecution } from "./execution-record.types";
 import { ExecutionRecordStore, type ExecutionStats } from "./execution-record-store";
 
 export class SqliteExecutionRecordStore
@@ -331,5 +331,141 @@ export class SqliteExecutionRecordStore
         );
 
         return { total, bySource, byStatus, errorDistribution };
+    }
+
+    queryAnalytics(): ExecutionAnalytics {
+        // ─── Overview ───
+        const overviewRow = this.db.prepare(`
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
+                SUM(CASE WHEN status = 'failure' THEN 1 ELSE 0 END) as failure_count,
+                SUM(CASE WHEN status = 'interrupted' THEN 1 ELSE 0 END) as interrupted_count,
+                SUM(CASE WHEN status = 'timed_out' THEN 1 ELSE 0 END) as timed_out_count,
+                SUM(CASE WHEN status = 'policy_denied' THEN 1 ELSE 0 END) as policy_denied_count,
+                AVG(CASE WHEN duration_ms IS NOT NULL THEN duration_ms ELSE 0 END) as avg_duration,
+                MAX(CASE WHEN duration_ms IS NOT NULL THEN duration_ms ELSE 0 END) as max_duration
+            FROM execution_records
+        `).get() as any;
+
+        const total = overviewRow.total;
+        const successCount = overviewRow.success_count;
+        const failureCount = overviewRow.failure_count;
+        const terminalCount = successCount + failureCount + overviewRow.interrupted_count + overviewRow.timed_out_count + overviewRow.policy_denied_count;
+
+        const overview: ExecutionAnalytics["overview"] = {
+            totalExecutions: total,
+            successCount,
+            failureCount,
+            interruptedCount: overviewRow.interrupted_count,
+            timedOutCount: overviewRow.timed_out_count,
+            policyDeniedCount: overviewRow.policy_denied_count,
+            successRate: terminalCount > 0 ? Math.round((successCount / terminalCount) * 10000) / 100 : 0,
+            avgDurationMs: Math.round(overviewRow.avg_duration),
+            maxDurationMs: overviewRow.max_duration,
+        };
+
+        // ─── Status Distribution ───
+        const statusDistribution = this.db.prepare(
+            "SELECT status, COUNT(*) as count FROM execution_records GROUP BY status ORDER BY count DESC"
+        ).all() as { status: string; count: number }[];
+
+        // ─── By Source ───
+        const bySource = this.db.prepare(`
+            SELECT
+                source,
+                COUNT(*) as count,
+                SUM(CASE WHEN status IN ('failure', 'timed_out') THEN 1 ELSE 0 END) as failure_count,
+                AVG(CASE WHEN duration_ms IS NOT NULL THEN duration_ms ELSE 0 END) as avg_duration
+            FROM execution_records
+            GROUP BY source
+            ORDER BY count DESC
+        `).all() as any[];
+
+        const sourceAnalytics: SourceAnalytics[] = bySource.map((row: any) => {
+            const sTotal = row.count;
+            const sFailures = row.failure_count;
+            return {
+                source: row.source,
+                count: sTotal,
+                failureCount: sFailures,
+                successRate: sTotal > 0 ? Math.round(((sTotal - sFailures) / sTotal) * 10000) / 100 : 0,
+                avgDurationMs: Math.round(row.avg_duration),
+            };
+        });
+
+        // ─── By Method ───
+        const byMethod = this.db.prepare(`
+            SELECT
+                method,
+                source,
+                COUNT(*) as count,
+                SUM(CASE WHEN status IN ('failure', 'timed_out') THEN 1 ELSE 0 END) as failure_count,
+                AVG(CASE WHEN duration_ms IS NOT NULL THEN duration_ms ELSE 0 END) as avg_duration
+            FROM execution_records
+            GROUP BY method
+            ORDER BY count DESC
+        `).all() as any[];
+
+        const methodAnalytics: MethodAnalytics[] = byMethod.map((row: any) => {
+            const mTotal = row.count;
+            const mFailures = row.failure_count;
+            return {
+                method: row.method,
+                source: row.source,
+                count: mTotal,
+                failureCount: mFailures,
+                successRate: mTotal > 0 ? Math.round(((mTotal - mFailures) / mTotal) * 10000) / 100 : 0,
+                avgDurationMs: Math.round(row.avg_duration),
+            };
+        });
+
+        // ─── Error Ranking ───
+        const errorRanking = this.db.prepare(`
+            SELECT
+                COALESCE(error_type, 'none') as errorType,
+                COUNT(*) as count,
+                MAX(created_at) as lastOccurredAtMs
+            FROM execution_records
+            WHERE status IN ('failure', 'policy_denied', 'timed_out')
+              AND error_type IS NOT NULL
+            GROUP BY errorType
+            ORDER BY count DESC
+            LIMIT 20
+        `).all() as { errorType: string; count: number; lastOccurredAtMs: number }[];
+
+        // ─── Slow Executions ───
+        const slowExecutions = this.db.prepare(`
+            SELECT
+                id,
+                source,
+                method,
+                status,
+                duration_ms,
+                created_at
+            FROM execution_records
+            WHERE duration_ms IS NOT NULL
+              AND status NOT IN ('pending', 'running')
+            ORDER BY duration_ms DESC
+            LIMIT 20
+        `).all() as any[];
+
+        const slowList: SlowExecution[] = slowExecutions.map((row: any) => ({
+            id: row.id,
+            source: row.source,
+            method: row.method,
+            status: row.status,
+            durationMs: row.duration_ms,
+            createdAtMs: row.created_at,
+        }));
+
+        return {
+            overview,
+            statusDistribution,
+            bySource: sourceAnalytics,
+            byMethod: methodAnalytics,
+            errorRanking,
+            slowExecutions: slowList,
+        };
     }
 }
