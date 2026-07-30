@@ -857,6 +857,25 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         });
     }
 
+    // ─── Simulation Engine ───
+    const se = deps.simulationEngine;
+
+    if (se) {
+        router.post("/simulation/run", (req, res) => {
+            const { triggerContext, taskType, category, failedComponent } = (req.body || {}) as any;
+            if (!triggerContext) {
+                res.status(400).json({ error: "triggerContext required" });
+                return;
+            }
+            const result = se.runSimulation({ triggerContext, taskType, category, failedComponent });
+            res.json(result);
+        });
+
+        router.get("/simulation/metrics", (_req, res) => {
+            res.json(se.getHitMetrics());
+        });
+    }
+
     router.get("/execution-records/:id", (req, res) => {
         const id = req.params.id;
         const record = deps.executionRecordService.getById(id);

@@ -27,6 +27,7 @@ import type { ChaosEngine } from "../validation/chaos-engine.js";
 import type { CostGuard } from "../validation/cost-guard.js";
 import type { FailureExtractor } from "../experience/failure-extractor.js";
 import type { ExperienceInjector } from "../experience/experience-injector.js";
+import type { SimulationEngine } from "../simulation/simulation-engine.js";
 
 /** Dashboard 需要的所有组件引用 */
 export interface DashboardDeps {
@@ -72,6 +73,8 @@ export interface DashboardDeps {
     failureExtractor?: FailureExtractor;
     /** 经验注入器 */
     experienceInjector?: ExperienceInjector;
+    /** 沙盒推演引擎 */
+    simulationEngine?: SimulationEngine;
 }
 
 /** Dashboard 配置 */

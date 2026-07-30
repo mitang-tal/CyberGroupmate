@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simulation Center — CyberGroupmate Dashboard</title>
+  <link rel="icon" type="image/png" href="/kissheart.png" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans SC",sans-serif; background:#0f1117; color:#e1e4e8; padding:24px; }
+    .app { max-width:1400px; margin:0 auto; }
+    h1 { font-size:1.5rem; margin-bottom:8px; display:flex; align-items:center; gap:10px; }
+    h1 i { color:#58a6ff; }
+    .subtitle { color:#8b949e; font-size:0.85rem; margin-bottom:24px; }
+    a.back { color:#58a6ff; text-decoration:none; }
+
+    .cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:12px; margin-bottom:20px; }
+    .card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:16px; }
+    .card .label { font-size:0.75rem; color:#8b949e; text-transform:uppercase; }
+    .card .value { font-size:1.5rem; font-weight:700; margin-top:4px; }
+    .card .value.green { color:#3fb950; }
+    .card .value.blue { color:#58a6ff; }
+    .card .value.orange { color:#d29922; }
+    .card .value.purple { color:#bc8cff; }
+
+    .section { background:#161b22; border:1px solid #30363d; border-radius:8px; margin-bottom:16px; overflow:hidden; }
+    .section-header { display:flex; align-items:center; justify-content:space-between; padding:12px 16px; background:#1c2128; border-bottom:1px solid #30363d; }
+    .section-header h2 { font-size:1rem; font-weight:600; display:flex; align-items:center; gap:8px; }
+
+    .run-panel { padding:16px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .run-panel input { background:#0f1117; border:1px solid #30363d; border-radius:6px; color:#e1e4e8; padding:8px 12px; font-size:0.85rem; outline:none; width:250px; }
+    .run-panel input:focus { border-color:#58a6ff; }
+
+    .btn { background:#21262d; border:1px solid #30363d; border-radius:6px; color:#c9d1d9; padding:8px 20px; font-size:0.85rem; cursor:pointer; }
+    .btn:hover { background:#30363d; }
+    .btn-primary { background:#1f3a5f; color:#79c0ff; border-color:#58a6ff; }
+
+    .option-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; padding:12px; }
+    .option-card { background:#0f1117; border:1px solid #30363d; border-radius:8px; padding:16px; }
+    .option-card.selected { border-color:#3fb950; box-shadow:0 0 8px rgba(63,185,80,0.3); }
+    .option-card .opt-name { font-size:0.9rem; font-weight:600; margin-bottom:8px; }
+    .option-card .opt-score { font-size:1.3rem; font-weight:700; margin-bottom:8px; }
+    .option-card .opt-row { font-size:0.78rem; color:#8b949e; margin:2px 0; display:flex; justify-content:space-between; }
+    .opt-selected-badge { display:inline-block; background:#1f3d2f; color:#3fb950; padding:2px 8px; border-radius:4px; font-size:0.7rem; font-weight:600; margin-left:8px; }
+    .risk-tag { display:inline-block; padding:2px 6px; border-radius:4px; font-size:0.7rem; margin:2px; background:#3d1f2f; color:#ff7b72; }
+
+    .loading { text-align:center; padding:40px; color:#8b949e; }
+    .empty { text-align:center; padding:40px; color:#8b949e; }
+
+    .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+    .grid-3 { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+
+    @media (max-width:768px) { .option-grid,.grid-2,.grid-3 { grid-template-columns:1fr; } }
+
+    .reasoning-box { background:#0f1117; border:1px solid #30363d; border-radius:6px; padding:12px; font-size:0.82rem; color:#e1e4e8; margin-top:8px; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <a class="back" href="/">&larr; Dashboard</a>
+    <h1><i class="fas fa-cubes"></i> Simulation Center</h1>
+    <p class="subtitle">Multi-option sandbox simulation, risk scoring, and experience ROI tracking</p>
+
+    <!-- Metrics -->
+    <div class="cards" id="metrics-cards">
+      <div class="card"><div class="label">Simulations</div><div class="value blue" id="m-sims">—</div></div>
+      <div class="card"><div class="label">Experience Hits</div><div class="value orange" id="m-hits">—</div></div>
+      <div class="card"><div class="label">Errors Avoided</div><div class="value green" id="m-avoided">—</div></div>
+      <div class="card"><div class="label">Experience ROI</div><div class="value purple" id="m-roi">—</div></div>
+    </div>
+
+    <!-- Run Simulation -->
+    <div class="section">
+      <div class="section-header"><h2><i class="fas fa-play"></i> Run Simulation</h2></div>
+      <div class="run-panel">
+        <input id="sim-trigger" placeholder="triggerContext (e.g. agent_offline:sandbox)" />
+        <input id="sim-task" placeholder="taskType (e.g. sandbox.execute)" />
+        <input id="sim-category" placeholder="category (optional)" />
+        <button class="btn btn-primary" onclick="runSimulation()"><i class="fas fa-rocket"></i> Simulate</button>
+      </div>
+      <div id="run-status" style="padding:0 16px 12px;font-size:0.85rem"></div>
+    </div>
+
+    <!-- Results -->
+    <div id="results-area" style="display:none">
+      <div class="section">
+        <div class="section-header"><h2><i class="fas fa-chart-bar"></i> Option Comparison</h2></div>
+        <div class="option-grid" id="option-grid"></div>
+      </div>
+      <div class="section">
+        <div class="section-header"><h2><i class="fas fa-align-left"></i> Reasoning</h2></div>
+        <div class="reasoning-box" id="reasoning-box"></div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function apiUrl(p) { const t=new URL(location.href).searchParams.get('token')||''; return p+(p.includes('?')?'&':'?')+'token='+encodeURIComponent(t); }
+    function escapeHtml(s) { if(!s)return''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+    async function loadMetrics() {
+      try {
+        const resp = await fetch(apiUrl('/api/simulation/metrics'));
+        if (!resp.ok) return;
+        const m = await resp.json();
+        document.getElementById('m-sims').textContent = m.totalSimulations ?? '—';
+        document.getElementById('m-hits').textContent = m.totalHits ?? '—';
+        document.getElementById('m-avoided').textContent = m.avoidedErrors ?? '—';
+        document.getElementById('m-roi').textContent = m.experienceROI != null ? m.experienceROI + '%' : '—';
+      } catch {}
+    }
+
+    async function runSimulation() {
+      const triggerContext = document.getElementById('sim-trigger').value.trim();
+      const taskType = document.getElementById('sim-task').value.trim() || undefined;
+      const category = document.getElementById('sim-category').value.trim() || undefined;
+
+      if (!triggerContext) {
+        document.getElementById('run-status').innerHTML = '<span style="color:#d29922">triggerContext required</span>';
+        return;
+      }
+
+      document.getElementById('run-status').innerHTML = '<i class="fas fa-spinner fa-pulse"></i> Running simulation...';
+      document.getElementById('results-area').style.display = 'none';
+
+      try {
+        const resp = await fetch(apiUrl('/api/simulation/run'), {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ triggerContext, taskType, category }),
+        });
+        if (!resp.ok) throw new Error((await resp.text()) || 'Failed');
+        const result = await resp.json();
+        renderResults(result);
+        document.getElementById('run-status').innerHTML = '<span style="color:#3fb950"><i class="fas fa-check-circle"></i> Simulation complete</span>';
+        await loadMetrics();
+      } catch (err) {
+        document.getElementById('run-status').innerHTML = '<span style="color:#f85149">' + escapeHtml(err.message) + '</span>';
+      }
+    }
+
+    function renderResults(result) {
+      const grid = document.getElementById('option-grid');
+      const reasoning = document.getElementById('reasoning-box');
+      document.getElementById('results-area').style.display = 'block';
+
+      grid.innerHTML = (result.optionsEvaluated || []).map(opt => {
+        const isSelected = opt.optionId === result.selectedOptionId;
+        const selectedBadge = isSelected ? '<span class="opt-selected-badge"><i class="fas fa-check"></i> SELECTED</span>' : '';
+        const successPct = Math.round((opt.predictedSuccessRate || 0) * 100);
+        const scoreColor = opt.overallScore >= 5 ? '#3fb950' : opt.overallScore >= 0 ? '#d29922' : '#f85149';
+        const risks = (opt.riskFactors || []).map(r => '<span class="risk-tag">' + escapeHtml(r) + '</span>').join(' ');
+
+        return '<div class="option-card' + (isSelected ? ' selected' : '') + '">'
+          + '<div class="opt-name">' + escapeHtml(opt.name) + selectedBadge + '</div>'
+          + '<div class="opt-score" style="color:' + scoreColor + '">' + opt.overallScore + '</div>'
+          + '<div class="opt-row"><span>Success Rate</span><span>' + successPct + '%</span></div>'
+          + '<div class="opt-row"><span>Cost</span><span>' + (opt.estimatedCostToken || 0).toLocaleString() + ' tokens</span></div>'
+          + '<div class="opt-row"><span>Latency</span><span>' + (opt.estimatedLatencyMs || 0) + 'ms</span></div>'
+          + '<div class="opt-row"><span>Action</span><span>' + escapeHtml(opt.actionType) + '</span></div>'
+          + (opt.matchedExperienceIds?.length > 0 ? '<div class="opt-row" style="color:#58a6ff"><span>Experiences</span><span>' + opt.matchedExperienceIds.length + ' matched</span></div>' : '')
+          + (risks ? '<div style="margin-top:8px">' + risks + '</div>' : '')
+          + '</div>';
+      }).join('');
+
+      reasoning.textContent = result.reasoningText || '';
+    }
+
+    loadMetrics();
+  </script>
+</body>
+</html>
