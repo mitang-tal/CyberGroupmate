@@ -608,6 +608,43 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         }
     }
 
+    const mde = deps.metaDecisionEngine;
+
+    if (mde) {
+        router.get("/meta-decisions", (req, res) => {
+            const decisionType = qs(req.query.decisionType) as any || undefined;
+            const status = qs(req.query.status) as any || undefined;
+            const limit = Math.min(parseInt(qs(req.query.limit)) || 50, 200);
+            const offset = Math.max(parseInt(qs(req.query.offset)) || 0, 0);
+            res.json(mde.getDecisionHistory({ decisionType, status, limit, offset }));
+        });
+
+        router.get("/meta-decisions/:id", (req, res) => {
+            const decision = mde.getDecisionHistory({ limit: 1 }).find((d: any) => d.decisionId === req.params.id);
+            if (!decision) { res.status(404).json({ error: "not found" }); return; }
+            res.json(decision);
+        });
+
+        router.post("/meta-decisions/:id/execute", (req, res) => {
+            const ok = mde.executeDecision(req.params.id);
+            res.json({ ok });
+        });
+
+        router.post("/meta-decisions/:id/reject", (req, res) => {
+            const ok = mde.rejectDecision(req.params.id);
+            res.json({ ok });
+        });
+
+        router.post("/meta-decisions/evaluate", (_req, res) => {
+            const decisions = mde.evaluateSystemState();
+            res.json({ decisions, count: decisions.length });
+        });
+
+        router.get("/meta-decisions/policy-state", (_req, res) => {
+            res.json(mde.getPolicyState());
+        });
+    }
+
     router.get("/execution-records/:id", (req, res) => {
         const id = req.params.id;
         const record = deps.executionRecordService.getById(id);

@@ -19,6 +19,7 @@ import type { MetaSandbox } from "../meta-sandbox/meta-sandbox.js";
 import type { ExecutionRecordService } from "../execution/execution-record-service.js";
 import type { CapabilityRegistry } from "../capability-registry/capability-registry.js";
 import type { CapabilityDispatcher } from "../capability-registry/capability-dispatcher.js";
+import type { MetaDecisionEngine } from "../meta-decision/meta-decision-engine.js";
 
 /** Dashboard 需要的所有组件引用 */
 export interface DashboardDeps {
@@ -48,6 +49,8 @@ export interface DashboardDeps {
     capabilityRegistry?: CapabilityRegistry;
     /** Agent 能力调度器 */
     capabilityDispatcher?: CapabilityDispatcher;
+    /** Meta 自主决策引擎 */
+    metaDecisionEngine?: MetaDecisionEngine;
 }
 
 /** Dashboard 配置 */
