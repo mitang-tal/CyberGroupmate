@@ -526,6 +526,44 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         res.json(ctx);
     });
 
+    // ─── Execution Self-Healing ───
+    router.post("/execution-heal/:alertId/trigger", (req, res) => {
+        const action = deps.executionRecordService.triggerSelfHealing(req.params.alertId);
+        if (!action) {
+            res.status(400).json({ error: "could not trigger healing" });
+            return;
+        }
+        res.json({ action });
+    });
+
+    router.get("/execution-heal/actions", (req, res) => {
+        const alertId = qs(req.query.alertId) || undefined;
+        const executionId = qs(req.query.executionId) || undefined;
+        const strategy = qs(req.query.strategy) as any || undefined;
+        const status = qs(req.query.status) as any || undefined;
+        const limit = Math.min(parseInt(qs(req.query.limit)) || 50, 200);
+        const offset = Math.max(parseInt(qs(req.query.offset)) || 0, 0);
+        res.json(deps.executionRecordService.queryHealingActions({ alertId, executionId, strategy, status, limit, offset }));
+    });
+
+    router.get("/execution-heal/actions/:actionId", (req, res) => {
+        const action = deps.executionRecordService.getHealingAction(req.params.actionId);
+        if (!action) {
+            res.status(404).json({ error: "action not found" });
+            return;
+        }
+        res.json(action);
+    });
+
+    router.post("/execution-heal/diagnose/:alertId", async (req, res) => {
+        const result = await deps.executionRecordService.diagnoseExecution(req.params.alertId);
+        if (!result) {
+            res.status(400).json({ error: "could not diagnose" });
+            return;
+        }
+        res.json(result);
+    });
+
     router.get("/execution-records/:id", (req, res) => {
         const id = req.params.id;
         const record = deps.executionRecordService.getById(id);

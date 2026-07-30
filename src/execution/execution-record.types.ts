@@ -163,3 +163,25 @@ export interface CreateAlertPayload {
         metricsSnapshot?: Record<string, unknown>;
     };
 }
+
+// ──────────────────────────────────────────────
+//  Healing types
+// ──────────────────────────────────────────────
+
+export type HealingStrategy = "retry" | "fallback" | "meta_diagnosis" | "escalate";
+
+export type HealingActionStatus = "pending" | "in_progress" | "succeeded" | "failed";
+
+export interface ExecutionHealingAction {
+    actionId: string;
+    alertId: string;
+    executionId: string;
+    strategy: HealingStrategy;
+    status: HealingActionStatus;
+    attemptCount: number;
+    decisionReason: string;
+    actionDetails?: Record<string, unknown>;
+    error?: string;
+    createdAtMs: number;
+    completedAtMs?: number;
+}

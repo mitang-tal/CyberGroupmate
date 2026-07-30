@@ -1,6 +1,8 @@
-import { ExecutionRecord, ExecutionStatus, ExecutionTreeNode, ExecutionTimeline, ExecutionAnalytics, SourceAnalytics, MethodAnalytics, SlowExecution, ExecutionAlert, CreateAlertPayload, AlertStatus, AlertRuleType, AlertSeverity } from "./execution-record.types";
+import { ExecutionRecord, ExecutionStatus, ExecutionTreeNode, ExecutionTimeline, ExecutionAnalytics, SourceAnalytics, MethodAnalytics, SlowExecution, ExecutionAlert, CreateAlertPayload, AlertStatus, AlertRuleType, AlertSeverity, ExecutionHealingAction, HealingStrategy, HealingActionStatus } from "./execution-record.types";
 import { ExecutionRecordStore, type ExecutionStats } from "./execution-record-store";
 import type { AlertStore } from "./alert-store";
+import type { HealingStore } from "./healing-store";
+import { HealingPolicyEngine } from "./healing-policy-engine";
 
 const MAX_ERROR_MESSAGE_LENGTH = 2000;
 const MAX_ERROR_TYPE_LENGTH = 200;
@@ -31,10 +33,17 @@ const VALID_TRANSITIONS: Record<ExecutionStatus, ExecutionStatus[]> = {
 };
 
 export class ExecutionRecordService {
+    private healingEngine?: HealingPolicyEngine;
+
     constructor(
         private store: ExecutionRecordStore,
         private alertStore?: AlertStore,
-    ) {}
+        private healingStore?: HealingStore,
+    ) {
+        if (this.healingStore) {
+            this.healingEngine = new HealingPolicyEngine(this.healingStore, this);
+        }
+    }
 
     // ──────────────────────────────────────────────
     //  Lifecycle methods
@@ -366,6 +375,51 @@ export class ExecutionRecordService {
 
     getActiveAlertCount(): number {
         return this.alertStore?.getActiveAlertCount() ?? 0;
+    }
+
+    // ──────────────────────────────────────────────
+    //  Self-Healing
+    // ──────────────────────────────────────────────
+
+    triggerSelfHealing(alertId: string): ExecutionHealingAction | undefined {
+        const alert = this.alertStore?.getById(alertId);
+        if (!alert || !this.healingEngine) return undefined;
+        return this.healingEngine.triggerSelfHealing(alert);
+    }
+
+    queryHealingActions(options: {
+        alertId?: string;
+        executionId?: string;
+        strategy?: HealingStrategy;
+        status?: HealingActionStatus;
+        limit?: number;
+        offset?: number;
+    }): ExecutionHealingAction[] {
+        return this.healingStore?.query(options) ?? [];
+    }
+
+    getHealingAction(actionId: string): ExecutionHealingAction | undefined {
+        return this.healingStore?.getById(actionId);
+    }
+
+    /**
+     * Meta 诊断接口：获取 Alert 上下文 + 诊断建议
+     */
+    async diagnoseExecution(alertId: string): Promise<object | undefined> {
+        const alert = this.alertStore?.getById(alertId);
+        if (!alert || !this.healingEngine) return undefined;
+
+        const action = this.healingEngine.triggerSelfHealing(alert);
+        if (!action) return undefined;
+
+        const diagnosis = await this.healingEngine.applyMetaDiagnosis(alertId, action);
+        return {
+            alertId,
+            actionId: action.actionId,
+            diagnosis,
+            strategy: action.strategy,
+            status: action.status,
+        };
     }
 
     getById(id: string): ExecutionRecord | undefined {
