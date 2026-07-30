@@ -32,6 +32,7 @@ import type { ReputationEvaluator } from "../reputation/reputation-evaluator.js"
 import type { MetaSelfTestEngine } from "../meta-test/meta-self-test-engine.js";
 import type { EcosystemGovernor } from "../ecosystem/ecosystem-governor.js";
 import type { FederationStore } from "../ecosystem/federation-store.js";
+import type { ConflictResolver } from "../conflict/conflict-resolver.js";
 
 /** Dashboard 需要的所有组件引用 */
 export interface DashboardDeps {
@@ -87,6 +88,8 @@ export interface DashboardDeps {
     ecosystemGovernor?: EcosystemGovernor;
     /** 经验联邦服务 */
     federationStore?: FederationStore;
+    /** 冲突仲裁器 */
+    conflictResolver?: ConflictResolver;
 }
 
 /** Dashboard 配置 */

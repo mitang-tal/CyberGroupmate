@@ -2752,3 +2752,44 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             res.json(fs.getCandidateItems());
         });
     }
+
+    // ─── Conflict Resolution ───
+    const cr = deps.conflictResolver;
+
+    if (cr) {
+        router.post("/conflict/resolve", (req, res) => {
+            const caseData = (req.body || {}) as any;
+            if (!caseData.resourceId || !caseData.conflictType || !Array.isArray(caseData.proposals) || caseData.proposals.length === 0) {
+                res.status(400).json({ error: "resourceId, conflictType, and proposals[] required" });
+                return;
+            }
+            const conflictCase = {
+                conflictCaseId: caseData.conflictCaseId || `case_${Date.now()}`,
+                resourceId: caseData.resourceId,
+                conflictType: caseData.conflictType,
+                proposals: caseData.proposals,
+                createdAtMs: Date.now(),
+                complexContext: caseData.complexContext === true,
+            };
+            const verdict = cr.resolve(conflictCase);
+            res.json(verdict);
+        });
+
+        router.post("/conflict/resolve-batch", (req, res) => {
+            const { cases } = (req.body || {}) as any;
+            if (!Array.isArray(cases) || cases.length === 0) {
+                res.status(400).json({ error: "cases[] required" });
+                return;
+            }
+            const results = cr.resolveBatch(cases);
+            res.json(results);
+        });
+
+        router.get("/conflict/history", (_req, res) => {
+            res.json(cr.getHistory());
+        });
+
+        router.get("/conflict/stats", (_req, res) => {
+            res.json(cr.getStats());
+        });
+    }
