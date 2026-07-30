@@ -20,6 +20,7 @@ import type { ExecutionRecordService } from "../execution/execution-record-servi
 import type { CapabilityRegistry } from "../capability-registry/capability-registry.js";
 import type { CapabilityDispatcher } from "../capability-registry/capability-dispatcher.js";
 import type { MetaDecisionEngine } from "../meta-decision/meta-decision-engine.js";
+import type { DynamicReplanner } from "../task-planner/dynamic-replanner.js";
 
 /** Dashboard 需要的所有组件引用 */
 export interface DashboardDeps {
@@ -51,6 +52,8 @@ export interface DashboardDeps {
     capabilityDispatcher?: CapabilityDispatcher;
     /** Meta 自主决策引擎 */
     metaDecisionEngine?: MetaDecisionEngine;
+    /** 动态任务规划器 */
+    dynamicReplanner?: DynamicReplanner;
 }
 
 /** Dashboard 配置 */

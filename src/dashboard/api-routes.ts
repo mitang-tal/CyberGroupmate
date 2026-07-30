@@ -645,6 +645,49 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         });
     }
 
+    // ─── Dynamic Task Planning ───
+    const dr = deps.dynamicReplanner;
+
+    if (dr) {
+        router.post("/task-planner/generate-patch", (req, res) => {
+            const { executionId, failedStepId } = (req.body || {}) as any;
+            if (!executionId || !failedStepId) {
+                res.status(400).json({ error: "executionId and failedStepId required" });
+                return;
+            }
+            const patch = dr.generateTaskPatch(executionId, failedStepId);
+            if (!patch) {
+                res.status(404).json({ error: "could not generate patch" });
+                return;
+            }
+            res.json(patch);
+        });
+
+        router.post("/task-planner/apply-patch/:patchId", (req, res) => {
+            const plan = dr.applyTaskPatch(req.params.patchId);
+            if (!plan) {
+                res.status(400).json({ error: "could not apply patch" });
+                return;
+            }
+            res.json(plan);
+        });
+
+        router.get("/task-planner/patches", (req, res) => {
+            const executionId = qs(req.query.executionId) || undefined;
+            const status = qs(req.query.status) as any || undefined;
+            res.json(dr.getReplanningHistory(executionId || "").patches);
+        });
+
+        router.get("/task-planner/plans", (req, res) => {
+            const executionId = qs(req.query.executionId) || undefined;
+            res.json(dr.getReplanningHistory(executionId || "").plans);
+        });
+
+        router.get("/task-planner/:executionId/history", (req, res) => {
+            res.json(dr.getReplanningHistory(req.params.executionId));
+        });
+    }
+
     router.get("/execution-records/:id", (req, res) => {
         const id = req.params.id;
         const record = deps.executionRecordService.getById(id);

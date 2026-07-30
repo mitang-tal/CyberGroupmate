@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Task Re-planning — CyberGroupmate Dashboard</title>
+  <link rel="icon" type="image/png" href="/kissheart.png" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+      background: #0f1117;
+      color: #e1e4e8;
+      padding: 24px;
+      min-height: 100vh;
+    }
+    .app { max-width: 1400px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
+    h1 i { color: #58a6ff; }
+    .subtitle { color: #8b949e; font-size: 0.85rem; margin-bottom: 24px; }
+    a.back { color: #58a6ff; text-decoration: none; font-size: 0.85rem; }
+
+    .section { background: #161b22; border: 1px solid #30363d; border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+    .section-header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; background: #1c2128; border-bottom: 1px solid #30363d; }
+    .section-header h2 { font-size: 1rem; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    th { text-align: left; padding: 8px 10px; background: #1c2128; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 600; white-space: nowrap; }
+    td { padding: 8px 10px; border-bottom: 1px solid #21262d; vertical-align: middle; }
+    tr:hover td { background: #1c2128; }
+    tr.clickable { cursor: pointer; }
+
+    .patch-type {
+      display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 500;
+    }
+    .pt-replace_step          { background: #1f3a5f; color: #79c0ff; }
+    .pt-skip_step             { background: #3d2a1f; color: #d29922; }
+    .pt-insert_fallback_step  { background: #1f3d2f; color: #7ee787; }
+    .pt-truncate_and_complete { background: #3d1f2f; color: #ff7b72; }
+
+    .pstatus {
+      display: inline-flex; align-items: center; gap: 4px; font-weight: 500;
+    }
+    .ps-draft    { color: #8b949e; }
+    .ps-applied  { color: #3fb950; }
+    .ps-discarded { color: #f85149; }
+
+    .btn {
+      background: #21262d; border: 1px solid #30363d; border-radius: 6px;
+      color: #c9d1d9; padding: 6px 16px; font-size: 0.82rem; cursor: pointer;
+    }
+    .btn:hover { background: #30363d; }
+    .btn-sm { padding: 4px 10px; font-size: 0.75rem; }
+    .btn-apply { background: #1f3d2f; color: #7ee787; }
+    .btn-discard { background: #3d1f2f; color: #ff7b72; }
+
+    .loading { text-align: center; padding: 40px; color: #8b949e; }
+    .empty { text-align: center; padding: 40px; color: #8b949e; }
+    .empty i { font-size: 2rem; display: block; margin-bottom: 8px; }
+
+    .modal-overlay { display: none; position: fixed; top:0; left:0; right:0; bottom:0; background: rgba(0,0,0,0.6); z-index:100; align-items:center; justify-content:center; }
+    .modal-overlay.visible { display: flex; }
+    .modal { background: #161b22; border:1px solid #30363d; border-radius:12px; padding:24px; max-width:650px; width:90%; max-height:80vh; overflow-y:auto; }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom:16px; }
+    .modal-header h3 { font-size:1.1rem; }
+    .modal-close { background:none; border:none; color:#8b949e; font-size:1.2rem; cursor:pointer; }
+    .modal-close:hover { color:#f85149; }
+    .modal-info-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; font-size:0.82rem; }
+    .modal-info-grid .label { color:#8b949e; }
+    .modal-info-grid .value { color:#e1e4e8; font-family:monospace; font-size:0.8rem; }
+    .preview { font-family:monospace; font-size:0.75rem; color:#8b949e; background:#0f1117; padding:8px; border-radius:6px; max-height:200px; overflow-y:auto; white-space:pre-wrap; }
+
+    .gen-panel { padding:16px; }
+    .gen-panel input { width:100%; background:#0f1117; border:1px solid #30363d; border-radius:6px; color:#e1e4e8; padding:8px 12px; font-size:0.85rem; outline:none; margin-bottom:8px; }
+    .gen-panel input:focus { border-color:#58a6ff; }
+
+    .filters { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:12px; align-items:center; }
+    .filters input, .filters select { background:#161b22; border:1px solid #30363d; border-radius:6px; color:#e1e4e8; padding:6px 12px; font-size:0.85rem; outline:none; }
+
+    .diff-view { font-family:monospace; font-size:0.78rem; }
+    .diff-removed { color:#f85149; text-decoration:line-through; }
+    .diff-added   { color:#3fb950; }
+
+    @media (max-width:768px) { .modal-info-grid { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <a class="back" href="/">&larr; Dashboard</a>
+    <h1><i class="fas fa-puzzle-piece"></i> Task Re-planning</h1>
+    <p class="subtitle">Trace breakpoint analysis, auto-repair patches, and execution chain hot-swap</p>
+
+    <!-- Generate Patch -->
+    <div class="section">
+      <div class="section-header"><h2><i class="fas fa-wrench"></i> Generate Task Patch</h2></div>
+      <div class="gen-panel">
+        <input id="gen-execution-id" placeholder="Execution ID (from failed trace)" />
+        <input id="gen-failed-step-id" placeholder="Failed Step ID (trace node ID)" />
+        <button class="btn" onclick="generatePatch()"><i class="fas fa-magic"></i> Generate Patch</button>
+        <div id="gen-result" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <!-- Patch List -->
+    <div class="section">
+      <div class="section-header">
+        <h2><i class="fas fa-list"></i> Patches</h2>
+        <button class="btn" onclick="loadPatches()"><i class="fas fa-sync"></i> Refresh</button>
+      </div>
+      <table>
+        <thead><tr>
+          <th>Type</th><th>Status</th><th>Execution ID</th><th>Failed Step</th><th>Reasoning</th><th>Created</th><th>Actions</th>
+        </tr></thead>
+        <tbody id="patches-body">
+          <tr><td colspan="7" class="loading"><i class="fas fa-spinner fa-spin"></i></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Modal -->
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modal-title">Patch Detail</h3>
+        <button class="modal-close" onclick="closeModal()"><i class="fas fa-times"></i></button>
+      </div>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <script>
+    function apiUrl(p) { const t=new URL(location.href).searchParams.get('token')||''; return p+(p.includes('?')?'&':'?')+'token='+encodeURIComponent(t); }
+    function escapeHtml(s) { if(!s)return''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+    async function loadPatches() {
+      const tb = document.getElementById('patches-body');
+      tb.innerHTML = '<tr><td colspan="7" class="loading"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+      try {
+        const resp = await fetch(apiUrl('/api/task-planner/patches'));
+        if (!resp.ok) throw new Error(resp.statusText);
+        const patches = await resp.json();
+        if (patches.length === 0) {
+          tb.innerHTML = '<tr><td colspan="7" class="empty"><i class="fas fa-inbox"></i>No patches</td></tr>';
+        } else {
+          tb.innerHTML = patches.map(p => {
+            const ptClass = 'pt-' + p.patchType;
+            const psClass = 'ps-' + p.status;
+            const time = p.createdAtMs ? new Date(p.createdAtMs).toLocaleString('zh-CN',{hour12:false}) : '-';
+            const reasoningShort = p.reasoning.length > 60 ? escapeHtml(p.reasoning.slice(0,60))+'…' : escapeHtml(p.reasoning);
+            const actionsHtml = p.status === 'draft'
+              ? '<button class="btn btn-sm btn-apply" onclick="applyPatch(\''+p.patchId+'\',event)"><i class="fas fa-check"></i> Apply</button>'
+              : '<span style="color:#484f58">—</span>';
+            return '<tr class="clickable" onclick="openDetail(\''+p.patchId+'\')">'
+              + '<td><span class="patch-type ' + ptClass + '">' + escapeHtml(p.patchType) + '</span></td>'
+              + '<td><span class="pstatus ' + psClass + '">' + escapeHtml(p.status) + '</span></td>'
+              + '<td style="font-family:monospace;font-size:0.75rem;color:#8b949e">' + escapeHtml(p.executionId.slice(0,12))+'…</td>'
+              + '<td style="font-family:monospace;font-size:0.75rem;color:#8b949e">' + escapeHtml(p.failedStepId.slice(0,12))+'…</td>'
+              + '<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + reasoningShort + '</td>'
+              + '<td style="font-size:0.75rem;color:#8b949e;white-space:nowrap">' + time + '</td>'
+              + '<td>' + actionsHtml + '</td>'
+              + '</tr>';
+          }).join('');
+        }
+      } catch (err) {
+        tb.innerHTML = '<tr><td colspan="7" class="empty"><i class="fas fa-exclamation-triangle"></i>' + escapeHtml(err.message) + '</td></tr>';
+      }
+    }
+
+    async function generatePatch() {
+      const executionId = document.getElementById('gen-execution-id').value.trim();
+      const failedStepId = document.getElementById('gen-failed-step-id').value.trim();
+      if (!executionId || !failedStepId) {
+        document.getElementById('gen-result').innerHTML = '<span style="color:#d29922">Both fields required</span>';
+        return;
+      }
+      document.getElementById('gen-result').innerHTML = '<i class="fas fa-spinner fa-pulse"></i> Generating...';
+      try {
+        const resp = await fetch(apiUrl('/api/task-planner/generate-patch'), {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ executionId, failedStepId }),
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+          document.getElementById('gen-result').innerHTML = '<span style="color:#3fb950"><i class="fas fa-check-circle"></i> Patch generated: ' + escapeHtml(data.patchType) + '</span>';
+          loadPatches();
+        } else {
+          document.getElementById('gen-result').innerHTML = '<span style="color:#f85149">' + escapeHtml(data.error || 'Failed') + '</span>';
+        }
+      } catch (err) {
+        document.getElementById('gen-result').innerHTML = '<span style="color:#f85149">' + escapeHtml(err.message) + '</span>';
+      }
+    }
+
+    async function applyPatch(patchId, event) {
+      if (event) event.stopPropagation();
+      try {
+        const resp = await fetch(apiUrl('/api/task-planner/apply-patch/' + encodeURIComponent(patchId)), { method: 'POST' });
+        if (resp.ok) { loadPatches(); } else { const d=await resp.json(); alert(d.error||'Failed'); }
+      } catch (err) { alert(err.message); }
+    }
+
+    async function openDetail(patchId) {
+      document.getElementById('modal-overlay').classList.add('visible');
+      document.getElementById('modal-title').textContent = 'Patch: ' + patchId.slice(0,8)+'…';
+      let html = '<div class="modal-section"><div class="modal-info-grid">';
+      try {
+        const resp = await fetch(apiUrl('/api/task-planner/patches'));
+        if (!resp.ok) throw new Error('Failed');
+        const patches = await resp.json();
+        const p = patches.find(x => x.patchId === patchId);
+        if (!p) throw new Error('Not found');
+
+        html += '<div><span class="label">Type</span><br><span class="value">' + escapeHtml(p.patchType) + '</span></div>';
+        html += '<div><span class="label">Status</span><br><span class="value">' + escapeHtml(p.status) + '</span></div>';
+        html += '<div><span class="label">Execution</span><br><span class="value">' + escapeHtml(p.executionId) + '</span></div>';
+        html += '<div><span class="label">Failed Step</span><br><span class="value">' + escapeHtml(p.failedStepId) + '</span></div>';
+        html += '<div><span class="label">Created</span><br><span class="value">' + (p.createdAtMs ? new Date(p.createdAtMs).toLocaleString() : '-') + '</span></div>';
+        if (p.appliedAtMs) {
+          html += '<div><span class="label">Applied</span><br><span class="value">' + new Date(p.appliedAtMs).toLocaleString() + '</span></div>';
+        }
+        html += '</div></div>';
+
+        html += '<div class="modal-section"><h4>Reasoning</h4>';
+        html += '<p style="font-size:0.85rem;color:#e1e4e8">' + escapeHtml(p.reasoning) + '</p></div>';
+
+        if (p.replacementSteps && p.replacementSteps.length > 0) {
+          html += '<div class="modal-section"><h4>Replacement Steps (Diff)</h4>';
+          html += '<div class="diff-view">';
+          html += '<div class="diff-removed">- ' + escapeHtml(p.failedStepId) + ' (failed step removed)</div>';
+          for (const step of p.replacementSteps) {
+            html += '<div class="diff-added">+ ' + escapeHtml(step.stepName) + ' [' + escapeHtml(step.targetCapability) + ']</div>';
+          }
+          html += '</div></div>';
+        }
+
+        html += '<div class="modal-actions" style="margin-top:12px">';
+        if (p.status === 'draft') {
+          html += '<button class="btn btn-apply" onclick="applyPatch(\''+p.patchId+'\',event);closeModal()"><i class="fas fa-check"></i> Apply Patch</button>';
+        }
+        html += '</div>';
+
+      } catch (err) {
+        html += '<div style="color:#f85149">' + escapeHtml(err.message) + '</div>';
+      }
+      document.getElementById('modal-body').innerHTML = html;
+    }
+
+    function closeModal() { document.getElementById('modal-overlay').classList.remove('visible'); }
+    document.getElementById('modal-overlay').addEventListener('click', function(e) { if (e.target === this) closeModal(); });
+
+    loadPatches();
+  </script>
+</body>
+</html>
