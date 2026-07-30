@@ -736,6 +736,86 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         });
     }
 
+    // ─── Stability Validation ───
+    const sts = deps.stabilityTestSuite;
+    const ce = deps.chaosEngine;
+
+    if (sts) {
+        router.post("/validation/run-full-suite", async (_req, res) => {
+            try {
+                const report = await sts.runFullSuite();
+                res.json(report);
+            } catch (err) {
+                res.status(500).json({ error: String(err) });
+            }
+        });
+
+        router.post("/validation/run-chaos", async (_req, res) => {
+            try {
+                const results = await sts.runChaosTests();
+                res.json(results);
+            } catch (err) {
+                res.status(500).json({ error: String(err) });
+            }
+        });
+
+        router.post("/validation/run-recovery", async (_req, res) => {
+            try {
+                const results = await sts.runRecoveryTests();
+                res.json(results);
+            } catch (err) {
+                res.status(500).json({ error: String(err) });
+            }
+        });
+    }
+
+    if (ce) {
+        router.get("/validation/chaos-results", (_req, res) => {
+            res.json({ results: ce.getResults(), summary: ce.getSummary(), activeInjections: ce.listActiveInjections() });
+        });
+
+        router.post("/validation/chaos-inject", (req, res) => {
+            const { faultType, targetComponent, durationMs, probability } = (req.body || {}) as any;
+            if (!faultType || !targetComponent) {
+                res.status(400).json({ error: "faultType and targetComponent required" });
+                return;
+            }
+            const id = ce.inject({ faultType, targetComponent, durationMs: durationMs || 30000, probability: probability || 1.0 });
+            res.json({ id, activeInjections: ce.listActiveInjections() });
+        });
+
+        router.post("/validation/chaos-remove", (req, res) => {
+            const { id } = (req.body || {}) as any;
+            if (!id) { res.status(400).json({ error: "id required" }); return; }
+            ce.remove(id);
+            res.json({ ok: true });
+        });
+
+        router.post("/validation/chaos-reset", (_req, res) => {
+            ce.reset();
+            res.json({ ok: true });
+        });
+    }
+
+    const cg = deps.costGuard;
+
+    if (cg) {
+        router.get("/validation/cost-usage", (_req, res) => {
+            res.json(cg.getUsage());
+        });
+
+        router.post("/validation/cost-check", (req, res) => {
+            const { tokenEstimated } = (req.body || {}) as any;
+            const result = cg.checkExecution(typeof tokenEstimated === "number" ? tokenEstimated : 1000);
+            res.json(result);
+        });
+
+        router.post("/validation/cost-reset", (_req, res) => {
+            cg.reset();
+            res.json({ ok: true });
+        });
+    }
+
     router.get("/execution-records/:id", (req, res) => {
         const id = req.params.id;
         const record = deps.executionRecordService.getById(id);

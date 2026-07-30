@@ -22,6 +22,9 @@ import type { CapabilityDispatcher } from "../capability-registry/capability-dis
 import type { MetaDecisionEngine } from "../meta-decision/meta-decision-engine.js";
 import type { DynamicReplanner } from "../task-planner/dynamic-replanner.js";
 import type { GlobalGuardrailEvaluator } from "../governance/global-guardrail-evaluator.js";
+import type { StabilityTestSuite } from "../validation/stability-test-suite.js";
+import type { ChaosEngine } from "../validation/chaos-engine.js";
+import type { CostGuard } from "../validation/cost-guard.js";
 
 /** Dashboard 需要的所有组件引用 */
 export interface DashboardDeps {
@@ -57,6 +60,12 @@ export interface DashboardDeps {
     dynamicReplanner?: DynamicReplanner;
     /** 全局安全护栏 */
     globalGuardrail?: GlobalGuardrailEvaluator;
+    /** 稳定性验证套件 */
+    stabilityTestSuite?: StabilityTestSuite;
+    /** 故障注入引擎 */
+    chaosEngine?: ChaosEngine;
+    /** 成本护栏 */
+    costGuard?: CostGuard;
 }
 
 /** Dashboard 配置 */
