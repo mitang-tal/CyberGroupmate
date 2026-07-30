@@ -33,6 +33,7 @@ import type { MetaSelfTestEngine } from "../meta-test/meta-self-test-engine.js";
 import type { EcosystemGovernor } from "../ecosystem/ecosystem-governor.js";
 import type { FederationStore } from "../ecosystem/federation-store.js";
 import type { ConflictResolver } from "../conflict/conflict-resolver.js";
+import type { NegotiationEngine } from "../negotiation/negotiation-engine.js";
 
 /** Dashboard 需要的所有组件引用 */
 export interface DashboardDeps {
@@ -90,6 +91,8 @@ export interface DashboardDeps {
     federationStore?: FederationStore;
     /** 冲突仲裁器 */
     conflictResolver?: ConflictResolver;
+    /** 协商引擎 */
+    negotiationEngine?: NegotiationEngine;
 }
 
 /** Dashboard 配置 */

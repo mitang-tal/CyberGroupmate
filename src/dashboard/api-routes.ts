@@ -2793,3 +2793,55 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             res.json(cr.getStats());
         });
     }
+
+    // ─── Contract-Net Negotiation ───
+    const ne = deps.negotiationEngine;
+
+    if (ne) {
+        router.post("/negotiation/publish", async (req, res) => {
+            const { taskType, requiredCapability, slaLatencyMs, maxCostToken, tags } = (req.body || {}) as any;
+            if (!taskType || !requiredCapability || !slaLatencyMs || !maxCostToken) {
+                res.status(400).json({ error: "taskType, requiredCapability, slaLatencyMs, maxCostToken required" });
+                return;
+            }
+            const proposal = {
+                proposalId: `prop_${Date.now()}`,
+                taskType, requiredCapability, slaLatencyMs, maxCostToken,
+                tags: Array.isArray(tags) ? tags : undefined,
+                publishedAtMs: Date.now(),
+                bidDeadlineMs: 500,
+            };
+            const award = await ne.runNegotiation(proposal);
+            res.json(award);
+        });
+
+        router.post("/negotiation/submit-bid", (req, res) => {
+            const { proposalId, agentId, agentName, costEstimateToken, latencyEstimateMs, confidenceScore, round } = (req.body || {}) as any;
+            if (!proposalId || !agentId || costEstimateToken == null || latencyEstimateMs == null || confidenceScore == null) {
+                res.status(400).json({ error: "proposalId, agentId, costEstimateToken, latencyEstimateMs, confidenceScore required" });
+                return;
+            }
+            try {
+                const proposal = {
+                    proposalId, taskType: "", requiredCapability: "",
+                    slaLatencyMs: latencyEstimateMs * 2, maxCostToken: costEstimateToken * 2,
+                    publishedAtMs: Date.now(), bidDeadlineMs: 500,
+                };
+                const bid = ne.submitBid(proposal, {
+                    proposalId, agentId, agentName: agentName || agentId,
+                    costEstimateToken, latencyEstimateMs, confidenceScore, round: round || 1,
+                });
+                res.json(bid);
+            } catch (err) {
+                res.status(400).json({ error: String(err) });
+            }
+        });
+
+        router.get("/negotiation/history", (_req, res) => {
+            res.json(ne.getHistory());
+        });
+
+        router.get("/negotiation/stats", (_req, res) => {
+            res.json(ne.getStats());
+        });
+    }
