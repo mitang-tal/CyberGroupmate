@@ -2894,3 +2894,44 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             res.json(ev.getCoolingStatus(req.params.agentId));
         });
     }
+
+    // ─── Ecosystem Governance v2 (Versioning) ───
+    const eg2 = deps.ecosystemGovernance;
+
+    if (eg2) {
+        router.get("/governance-v2/current", (_req, res) => {
+            res.json(eg2.getCurrent());
+        });
+
+        router.post("/governance-v2/update", (req, res) => {
+            const { values, origin, reason } = (req.body || {}) as any;
+            if (!values || !origin || !reason) {
+                res.status(400).json({ error: "values, origin, reason required" });
+                return;
+            }
+            const snapshot = eg2.update(values, origin, reason);
+            res.json({ snapshot, current: eg2.getCurrent() });
+        });
+
+        router.get("/governance-v2/snapshots", (_req, res) => {
+            res.json(eg2.getSnapshots());
+        });
+
+        router.post("/governance-v2/rollback", (req, res) => {
+            const { targetVersion, origin, reason } = (req.body || {}) as any;
+            if (!targetVersion || !origin || !reason) {
+                res.status(400).json({ error: "targetVersion, origin, reason required" });
+                return;
+            }
+            const snapshot = eg2.rollback(targetVersion, origin, reason);
+            if (!snapshot) {
+                res.status(400).json({ error: "target version not found or already current" });
+                return;
+            }
+            res.json({ snapshot, current: eg2.getCurrent() });
+        });
+
+        router.get("/governance-v2/audit-log", (_req, res) => {
+            res.json(eg2.getAuditLogs());
+        });
+    }
