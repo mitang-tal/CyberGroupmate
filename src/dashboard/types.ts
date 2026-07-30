@@ -29,6 +29,7 @@ import type { FailureExtractor } from "../experience/failure-extractor.js";
 import type { ExperienceInjector } from "../experience/experience-injector.js";
 import type { SimulationEngine } from "../simulation/simulation-engine.js";
 import type { ReputationEvaluator } from "../reputation/reputation-evaluator.js";
+import type { MetaSelfTestEngine } from "../meta-test/meta-self-test-engine.js";
 
 /** Dashboard 需要的所有组件引用 */
 export interface DashboardDeps {
@@ -78,6 +79,8 @@ export interface DashboardDeps {
     simulationEngine?: SimulationEngine;
     /** Agent 声誉评估器 */
     reputationEvaluator?: ReputationEvaluator;
+    /** Meta 自检引擎 */
+    metaSelfTestEngine?: MetaSelfTestEngine;
 }
 
 /** Dashboard 配置 */

@@ -910,6 +910,30 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         });
     }
 
+    // ─── Meta Self-Test ───
+    const mst = deps.metaSelfTestEngine;
+
+    if (mst) {
+        router.post("/meta-test/run", (_req, res) => {
+            const report = mst.runFullSuite();
+            res.json(report);
+        });
+
+        router.get("/meta-test/report/latest", (_req, res) => {
+            const report = mst.getLatestReport();
+            if (!report) {
+                res.status(404).json({ error: "no test report yet" });
+                return;
+            }
+            res.json(report);
+        });
+
+        router.get("/meta-test/history", (req, res) => {
+            const limit = Math.min(parseInt(qs(req.query.limit)) || 20, 100);
+            res.json(mst.getHistory(limit));
+        });
+    }
+
     router.get("/execution-records/:id", (req, res) => {
         const id = req.params.id;
         const record = deps.executionRecordService.getById(id);
