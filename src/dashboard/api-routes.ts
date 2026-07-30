@@ -493,6 +493,39 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         res.json(deps.executionRecordService.getMethodAnalytics());
     });
 
+    // ─── Execution Alerts ───
+    router.get("/execution-alerts", (req, res) => {
+        const status = qs(req.query.status) as any || undefined;
+        const severity = qs(req.query.severity) as any || undefined;
+        const ruleType = qs(req.query.ruleType) as any || undefined;
+        const limit = Math.min(parseInt(qs(req.query.limit)) || 50, 200);
+        const offset = Math.max(parseInt(qs(req.query.offset)) || 0, 0);
+        res.json(deps.executionRecordService.queryAlerts({ status, severity, ruleType, limit, offset }));
+    });
+
+    router.get("/execution-alerts/count", (_req, res) => {
+        res.json({ active: deps.executionRecordService.getActiveAlertCount() });
+    });
+
+    router.post("/execution-alerts/:id/acknowledge", (req, res) => {
+        deps.executionRecordService.updateAlertStatus(req.params.id, "acknowledged");
+        res.json({ ok: true });
+    });
+
+    router.post("/execution-alerts/:id/resolve", (req, res) => {
+        deps.executionRecordService.updateAlertStatus(req.params.id, "resolved");
+        res.json({ ok: true });
+    });
+
+    router.get("/execution-alerts/:id/context", (req, res) => {
+        const ctx = deps.executionRecordService.getAlertContext(req.params.id);
+        if (!ctx) {
+            res.status(404).json({ error: "alert not found" });
+            return;
+        }
+        res.json(ctx);
+    });
+
     router.get("/execution-records/:id", (req, res) => {
         const id = req.params.id;
         const record = deps.executionRecordService.getById(id);

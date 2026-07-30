@@ -119,3 +119,47 @@ export interface ExecutionAnalytics {
     errorRanking: ErrorAnalytics[];
     slowExecutions: SlowExecution[];
 }
+
+// ──────────────────────────────────────────────
+//  Alerting types
+// ──────────────────────────────────────────────
+
+export type AlertRuleType =
+    | "CONTINUOUS_FAILURE"
+    | "FAILURE_RATE_SPIKE"
+    | "EXECUTION_TIMEOUT"
+    | "ERROR_CLUSTER";
+
+export type AlertSeverity = "low" | "medium" | "high" | "critical";
+
+export type AlertStatus = "active" | "acknowledged" | "resolved";
+
+export interface ExecutionAlert {
+    alertId: string;
+    ruleType: AlertRuleType;
+    severity: AlertSeverity;
+    status: AlertStatus;
+    sourceComponent: string;
+    executionId?: string;
+    occurrenceCount: number;
+    contextSummary: {
+        message: string;
+        sampleErrorLogs?: string[];
+        metricsSnapshot?: Record<string, unknown>;
+    };
+    createdAtMs: number;
+    lastObservedAtMs: number;
+    resolvedAtMs?: number;
+}
+
+export interface CreateAlertPayload {
+    ruleType: AlertRuleType;
+    severity: AlertSeverity;
+    sourceComponent: string;
+    executionId?: string;
+    contextSummary: {
+        message: string;
+        sampleErrorLogs?: string[];
+        metricsSnapshot?: Record<string, unknown>;
+    };
+}

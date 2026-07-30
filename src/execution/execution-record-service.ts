@@ -1,5 +1,6 @@
-import { ExecutionRecord, ExecutionStatus, ExecutionTreeNode, ExecutionTimeline, ExecutionAnalytics, SourceAnalytics, MethodAnalytics, SlowExecution } from "./execution-record.types";
+import { ExecutionRecord, ExecutionStatus, ExecutionTreeNode, ExecutionTimeline, ExecutionAnalytics, SourceAnalytics, MethodAnalytics, SlowExecution, ExecutionAlert, CreateAlertPayload, AlertStatus, AlertRuleType, AlertSeverity } from "./execution-record.types";
 import { ExecutionRecordStore, type ExecutionStats } from "./execution-record-store";
+import type { AlertStore } from "./alert-store";
 
 const MAX_ERROR_MESSAGE_LENGTH = 2000;
 const MAX_ERROR_TYPE_LENGTH = 200;
@@ -31,7 +32,8 @@ const VALID_TRANSITIONS: Record<ExecutionStatus, ExecutionStatus[]> = {
 
 export class ExecutionRecordService {
     constructor(
-        private store: ExecutionRecordStore
+        private store: ExecutionRecordStore,
+        private alertStore?: AlertStore,
     ) {}
 
     // ──────────────────────────────────────────────
@@ -293,6 +295,77 @@ export class ExecutionRecordService {
     getMethodAnalytics(): MethodAnalytics[] {
         const analytics = this.store.queryAnalytics();
         return analytics.byMethod;
+    }
+
+    // ──────────────────────────────────────────────
+    //  Alerting
+    // ──────────────────────────────────────────────
+
+    createAlert(payload: CreateAlertPayload, cooldownMs?: number): ExecutionAlert | undefined {
+        return this.alertStore?.insertOrUpdate(payload, cooldownMs);
+    }
+
+    queryAlerts(options: {
+        status?: AlertStatus;
+        severity?: AlertSeverity;
+        ruleType?: AlertRuleType;
+        sourceComponent?: string;
+        limit?: number;
+        offset?: number;
+    }): ExecutionAlert[] {
+        return this.alertStore?.query(options) ?? [];
+    }
+
+    updateAlertStatus(alertId: string, status: AlertStatus): void {
+        this.alertStore?.updateStatus(alertId, status);
+    }
+
+    getAlertContext(alertId: string): object | undefined {
+        const alert = this.alertStore?.getById(alertId);
+        if (!alert) return undefined;
+
+        // Build rich context for Meta consumption
+        const context: Record<string, unknown> = {
+            alertId: alert.alertId,
+            ruleType: alert.ruleType,
+            severity: alert.severity,
+            status: alert.status,
+            sourceComponent: alert.sourceComponent,
+            occurrenceCount: alert.occurrenceCount,
+            contextSummary: alert.contextSummary,
+            createdAt: new Date(alert.createdAtMs).toISOString(),
+            lastObservedAt: new Date(alert.lastObservedAtMs).toISOString(),
+        };
+
+        // Attach related execution if available
+        if (alert.executionId) {
+            const record = this.store.getById(alert.executionId);
+            if (record) {
+                context.relatedExecution = {
+                    id: record.id,
+                    source: record.source,
+                    method: record.method,
+                    status: record.status,
+                    durationMs: record.durationMs,
+                    error: record.error,
+                };
+                // Also attach trace tree
+                try {
+                    const tree = this.getTrace(alert.executionId);
+                    if (tree) {
+                        context.executionTrace = tree;
+                    }
+                } catch {
+                    // Silently skip if trace fails
+                }
+            }
+        }
+
+        return context;
+    }
+
+    getActiveAlertCount(): number {
+        return this.alertStore?.getActiveAlertCount() ?? 0;
     }
 
     getById(id: string): ExecutionRecord | undefined {
