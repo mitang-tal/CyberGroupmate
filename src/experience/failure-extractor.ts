@@ -179,6 +179,9 @@ export class FailureExtractor {
             expiresAtMs: now + EXPERIENCE_TTL_MS,
             createdAtMs: now,
             updatedAtMs: now,
+            originAgentId: params.agentId,
+            originTrustScore: undefined,
+            federationStatus: "candidate",
         };
 
         this.store.insertExperience(experience);

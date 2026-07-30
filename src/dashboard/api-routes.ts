@@ -2695,3 +2695,36 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
 
     return router;
 }
+
+    // ─── Ecosystem Governance ───
+    const eg = deps.ecosystemGovernor;
+
+    if (eg) {
+        router.get("/ecosystem/rate-limit", (_req, res) => {
+            res.json({ limit: eg.getRateLimit(), status: eg.getRateLimitStatus(), killSwitch: eg.isKillSwitchActive(), quarantineCategories: eg.getQuarantineCategories() });
+        });
+
+        router.post("/ecosystem/check-submit", (req, res) => {
+            const { agentId } = (req.body || {}) as any;
+            if (!agentId) { res.status(400).json({ error: "agentId required" }); return; }
+            res.json(eg.checkSubmitPermission(agentId));
+        });
+
+        router.post("/ecosystem/evaluate-candidate", (req, res) => {
+            const { originTrustScore, category, frequency, confidence } = (req.body || {}) as any;
+            if (!category) { res.status(400).json({ error: "category required" }); return; }
+            res.json(eg.evaluateCandidate({ originTrustScore, category, frequency: frequency || 1, confidence: confidence || 0.5 }));
+        });
+
+        router.post("/ecosystem/kill-switch", (req, res) => {
+            const { active } = (req.body || {}) as any;
+            if (typeof active !== "boolean") { res.status(400).json({ error: "active (boolean) required" }); return; }
+            if (active) eg.engageKillSwitch(); else eg.disengageKillSwitch();
+            res.json({ ok: true, active: eg.isKillSwitchActive() });
+        });
+
+        router.post("/ecosystem/reset", (_req, res) => {
+            eg.reset();
+            res.json({ ok: true });
+        });
+    }

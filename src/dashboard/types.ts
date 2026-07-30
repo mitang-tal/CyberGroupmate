@@ -30,6 +30,7 @@ import type { ExperienceInjector } from "../experience/experience-injector.js";
 import type { SimulationEngine } from "../simulation/simulation-engine.js";
 import type { ReputationEvaluator } from "../reputation/reputation-evaluator.js";
 import type { MetaSelfTestEngine } from "../meta-test/meta-self-test-engine.js";
+import type { EcosystemGovernor } from "../ecosystem/ecosystem-governor.js";
 
 /** Dashboard 需要的所有组件引用 */
 export interface DashboardDeps {
@@ -81,6 +82,8 @@ export interface DashboardDeps {
     reputationEvaluator?: ReputationEvaluator;
     /** Meta 自检引擎 */
     metaSelfTestEngine?: MetaSelfTestEngine;
+    /** 生态治理引擎 */
+    ecosystemGovernor?: EcosystemGovernor;
 }
 
 /** Dashboard 配置 */

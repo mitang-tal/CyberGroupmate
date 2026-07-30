@@ -42,7 +42,10 @@ export class SqliteExperienceStore implements ExperienceStore {
                 status TEXT NOT NULL DEFAULT 'active',
                 expires_at_ms INTEGER NOT NULL,
                 created_at_ms INTEGER NOT NULL,
-                updated_at_ms INTEGER NOT NULL
+                updated_at_ms INTEGER NOT NULL,
+                origin_agent_id TEXT,
+                origin_trust_score REAL,
+                federation_status TEXT NOT NULL DEFAULT 'candidate'
             );
 
             CREATE INDEX IF NOT EXISTS idx_fp_trigger
@@ -112,8 +115,9 @@ export class SqliteExperienceStore implements ExperienceStore {
                 (experience_id, pattern_id, type,
                  context_tool, context_capability, context_agent_id,
                  rule_avoid, rule_prefer, rule_constraints,
-                 confidence, frequency, status, expires_at_ms, created_at_ms, updated_at_ms)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 confidence, frequency, status, expires_at_ms, created_at_ms, updated_at_ms,
+                 origin_agent_id, origin_trust_score, federation_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
             item.experienceId, item.patternId, item.type,
             item.context.tool ?? null, item.context.capability ?? null, item.context.agentId ?? null,
@@ -121,6 +125,8 @@ export class SqliteExperienceStore implements ExperienceStore {
             item.rule.constraints ? JSON.stringify(item.rule.constraints) : null,
             item.confidence, item.frequency, item.status,
             item.expiresAtMs, item.createdAtMs, item.updatedAtMs,
+            item.originAgentId ?? null, item.originTrustScore ?? null,
+            item.federationStatus ?? "candidate",
         );
     }
 
@@ -224,6 +230,9 @@ export class SqliteExperienceStore implements ExperienceStore {
             expiresAtMs: row.expires_at_ms,
             createdAtMs: row.created_at_ms,
             updatedAtMs: row.updated_at_ms,
+            originAgentId: row.origin_agent_id ?? undefined,
+            originTrustScore: row.origin_trust_score ?? undefined,
+            federationStatus: row.federation_status ?? "candidate",
         };
     }
 }

@@ -25,6 +25,8 @@ export interface FailurePattern {
     sourceAlertIds: string[];
 }
 
+export type FederationStatus = "candidate" | "validated" | "quarantined" | "federated";
+
 export interface ExperienceItem {
     experienceId: string;
     patternId: string;
@@ -45,6 +47,11 @@ export interface ExperienceItem {
     expiresAtMs: number;
     createdAtMs: number;
     updatedAtMs: number;
+
+    /** 联邦字段 */
+    originAgentId?: string;
+    originTrustScore?: number;
+    federationStatus: FederationStatus;
 }
 
 export interface ExperienceQuery {
