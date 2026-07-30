@@ -92,6 +92,25 @@ export class EcosystemGovernor {
     }
 
     /**
+     * 晋升许可检查：candidate/quarantined → validated
+     */
+    canPromote(agentId: string, federationStatus: string): { allowed: boolean; reason?: string } {
+        if (this.killSwitchEngaged) {
+            return { allowed: false, reason: "Ecosystem kill switch is active. Federation suspended." };
+        }
+
+        if (federationStatus === "federated") {
+            return { allowed: false, reason: "Experience is already federated." };
+        }
+
+        if (federationStatus === "candidate" || federationStatus === "quarantined") {
+            return { allowed: true };
+        }
+
+        return { allowed: false, reason: `Invalid federation status: ${federationStatus}` };
+    }
+
+    /**
      * 审批隔离区经验进入联邦
      */
     approveQuarantine(federationStatus: FederationStatus): FederationStatus {

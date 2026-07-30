@@ -31,6 +31,7 @@ import type { SimulationEngine } from "../simulation/simulation-engine.js";
 import type { ReputationEvaluator } from "../reputation/reputation-evaluator.js";
 import type { MetaSelfTestEngine } from "../meta-test/meta-self-test-engine.js";
 import type { EcosystemGovernor } from "../ecosystem/ecosystem-governor.js";
+import type { FederationStore } from "../ecosystem/federation-store.js";
 
 /** Dashboard 需要的所有组件引用 */
 export interface DashboardDeps {
@@ -84,6 +85,8 @@ export interface DashboardDeps {
     metaSelfTestEngine?: MetaSelfTestEngine;
     /** 生态治理引擎 */
     ecosystemGovernor?: EcosystemGovernor;
+    /** 经验联邦服务 */
+    federationStore?: FederationStore;
 }
 
 /** Dashboard 配置 */

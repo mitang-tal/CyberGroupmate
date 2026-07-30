@@ -2728,3 +2728,27 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             res.json({ ok: true });
         });
     }
+
+    // ─── Experience Federation ───
+    const fs = deps.federationStore;
+
+    if (fs) {
+        router.post("/federation/promote", (req, res) => {
+            const { experienceId, agentId } = (req.body || {}) as any;
+            if (!experienceId) { res.status(400).json({ error: "experienceId required" }); return; }
+            const result = fs.promote(experienceId, agentId);
+            res.json(result);
+        });
+
+        router.get("/federation/items", (_req, res) => {
+            res.json(fs.getFederatedItems());
+        });
+
+        router.get("/federation/quarantine", (_req, res) => {
+            res.json(fs.getQuarantinedItems());
+        });
+
+        router.get("/federation/candidates", (_req, res) => {
+            res.json(fs.getCandidateItems());
+        });
+    }
