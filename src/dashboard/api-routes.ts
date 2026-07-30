@@ -564,6 +564,50 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         res.json(result);
     });
 
+    // ─── Capability Registry ───
+    const cr = deps.capabilityRegistry;
+    const cd = deps.capabilityDispatcher;
+
+    if (cr) {
+        router.get("/capabilities/agents", (_req, res) => {
+            const status = qs(_req.query.status) as any || undefined;
+            res.json(cr.listAgents(status));
+        });
+
+        router.get("/capabilities/agents/:id", (req, res) => {
+            const agent = cr.getAgent(req.params.id);
+            if (!agent) { res.status(404).json({ error: "not found" }); return; }
+            res.json(agent);
+        });
+
+        router.post("/capabilities/agents/:id/status", (req, res) => {
+            const { status } = req.body || {};
+            if (!status) { res.status(400).json({ error: "status required" }); return; }
+            const ok = cr.updateStatus(req.params.id, status);
+            res.json({ ok });
+        });
+
+        router.get("/capabilities/topology", (_req, res) => {
+            res.json(cr.getCapabilityTopology());
+        });
+
+        if (cd) {
+            router.post("/capabilities/dispatch", (req, res) => {
+                const { taskType, tags, category, priority } = (req.body || {}) as any;
+                if (!taskType) { res.status(400).json({ error: "taskType required" }); return; }
+                const match = cd.dispatch({ taskType, tags, category, priority });
+                if (!match) { res.status(404).json({ error: "no suitable agent found" }); return; }
+                res.json(match);
+            });
+
+            router.post("/capabilities/candidates", (req, res) => {
+                const { taskType, tags, category } = (req.body || {}) as any;
+                if (!taskType) { res.status(400).json({ error: "taskType required" }); return; }
+                res.json(cd.listCandidates({ taskType, tags, category }));
+            });
+        }
+    }
+
     router.get("/execution-records/:id", (req, res) => {
         const id = req.params.id;
         const record = deps.executionRecordService.getById(id);

@@ -17,6 +17,8 @@ import type { AppConfig } from "../core/config.js";
 import type { AttentionAccumulator } from "../accumulator/attention-accumulator.js";
 import type { MetaSandbox } from "../meta-sandbox/meta-sandbox.js";
 import type { ExecutionRecordService } from "../execution/execution-record-service.js";
+import type { CapabilityRegistry } from "../capability-registry/capability-registry.js";
+import type { CapabilityDispatcher } from "../capability-registry/capability-dispatcher.js";
 
 /** Dashboard 需要的所有组件引用 */
 export interface DashboardDeps {
@@ -42,6 +44,10 @@ export interface DashboardDeps {
     onConfigSaved?: (config: AppConfig) => Promise<void> | void;
     /** Background Agent HarnessManager */
     harnessManager?: import("../harness/manager.js").HarnessManager;
+    /** Agent 能力注册表 */
+    capabilityRegistry?: CapabilityRegistry;
+    /** Agent 能力调度器 */
+    capabilityDispatcher?: CapabilityDispatcher;
 }
 
 /** Dashboard 配置 */

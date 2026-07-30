@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Capability Registry — CyberGroupmate Dashboard</title>
+  <link rel="icon" type="image/png" href="/kissheart.png" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
+      background: #0f1117;
+      color: #e1e4e8;
+      padding: 24px;
+      min-height: 100vh;
+    }
+    .app { max-width: 1400px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
+    h1 i { color: #58a6ff; }
+    .subtitle { color: #8b949e; font-size: 0.85rem; margin-bottom: 24px; }
+    a.back { color: #58a6ff; text-decoration: none; font-size: 0.85rem; }
+
+    .section {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+    .section-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 12px 16px; background: #1c2128; border-bottom: 1px solid #30363d;
+    }
+    .section-header h2 { font-size: 1rem; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    th { text-align: left; padding: 8px 10px; background: #1c2128; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 600; white-space: nowrap; }
+    td { padding: 8px 10px; border-bottom: 1px solid #21262d; vertical-align: middle; }
+    tr:hover td { background: #1c2128; }
+
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 600;
+    }
+    .status-online      { background: #1f3d2f; color: #7ee787; }
+    .status-busy        { background: #3d2a1f; color: #d29922; }
+    .status-offline     { background: #3d1f2f; color: #ff7b72; }
+    .status-maintenance { background: #1f2a3f; color: #79c0ff; }
+
+    .cap-tag { display: inline-block; padding: 2px 6px; margin: 1px; border-radius: 4px; font-size: 0.7rem; background: #21262d; color: #8b949e; }
+
+    .btn {
+      background: #21262d; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; padding: 6px 16px; font-size: 0.82rem; cursor: pointer;
+    }
+    .btn:hover { background: #30363d; }
+    .btn-sm { padding: 4px 10px; font-size: 0.75rem; }
+
+    .loading { text-align: center; padding: 40px; color: #8b949e; }
+    .loading i { font-size: 1.5rem; }
+    .empty { text-align: center; padding: 40px; color: #8b949e; }
+    .empty i { font-size: 2rem; display: block; margin-bottom: 8px; }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+    .topology-card {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px; border-bottom: 1px solid #21262d;
+    }
+    .topology-card:last-child { border-bottom: none; }
+    .topology-card .cat-name { font-weight: 600; min-width: 120px; color: #58a6ff; }
+    .topology-card .cap-list { display: flex; flex-wrap: wrap; gap: 4px; }
+
+    .modal-overlay {
+      display: none; position: fixed; top:0; left:0; right:0; bottom:0;
+      background: rgba(0,0,0,0.6); z-index: 100; align-items: center; justify-content: center;
+    }
+    .modal-overlay.visible { display: flex; }
+    .modal {
+      background: #161b22; border: 1px solid #30363d; border-radius: 12px;
+      padding: 24px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto;
+    }
+    .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .modal-header h3 { font-size: 1.1rem; }
+    .modal-close { background: none; border: none; color: #8b949e; font-size: 1.2rem; cursor: pointer; }
+    .modal-close:hover { color: #f85149; }
+    .modal-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.82rem; }
+    .modal-info-grid .label { color: #8b949e; }
+    .modal-info-grid .value { color: #e1e4e8; font-family: monospace; font-size: 0.8rem; }
+
+    @media (max-width: 768px) { .grid-2 { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <a class="back" href="/">&larr; Dashboard</a>
+    <h1><i class="fas fa-project-diagram"></i> Capability Registry</h1>
+    <p class="subtitle">Agent capability topology, dispatch routing, and fleet management</p>
+
+    <div class="section">
+      <div class="section-header">
+        <h2><i class="fas fa-robot"></i> Registered Agents</h2>
+        <button class="btn" onclick="loadAgents()"><i class="fas fa-sync"></i> Refresh</button>
+      </div>
+      <table>
+        <thead><tr>
+          <th>Name</th><th>Status</th><th>Capabilities</th><th>Active Tasks</th><th>Last Heartbeat</th><th>Actions</th>
+        </tr></thead>
+        <tbody id="agents-body">
+          <tr><td colspan="6" class="loading"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="grid-2">
+      <div class="section">
+        <div class="section-header"><h2><i class="fas fa-sitemap"></i> Capability Topology</h2></div>
+        <div id="topology-content"><div class="loading"><i class="fas fa-spinner fa-spin"></i></div></div>
+      </div>
+      <div class="section">
+        <div class="section-header"><h2><i class="fas fa-search"></i> Dispatch Test</h2></div>
+        <div style="padding:16px">
+          <input id="dispatch-task" placeholder="taskType (e.g. code_execution)" style="width:100%;background:#0f1117;border:1px solid #30363d;border-radius:6px;color:#e1e4e8;padding:8px 12px;font-size:0.85rem;outline:none;margin-bottom:8px" />
+          <input id="dispatch-category" placeholder="category (optional)" style="width:100%;background:#0f1117;border:1px solid #30363d;border-radius:6px;color:#e1e4e8;padding:8px 12px;font-size:0.85rem;outline:none;margin-bottom:8px" />
+          <input id="dispatch-tags" placeholder="tags (comma separated, optional)" style="width:100%;background:#0f1117;border:1px solid #30363d;border-radius:6px;color:#e1e4e8;padding:8px 12px;font-size:0.85rem;outline:none;margin-bottom:8px" />
+          <button class="btn" onclick="testDispatch()"><i class="fas fa-rocket"></i> Dispatch</button>
+          <div id="dispatch-result" style="margin-top:12px;font-size:0.82rem"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal -->
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modal-title">Agent Detail</h3>
+        <button class="modal-close" onclick="closeModal()"><i class="fas fa-times"></i></button>
+      </div>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <script>
+    function apiUrl(p) { const t=new URL(location.href).searchParams.get('token')||''; return p+(p.includes('?')?'&':'?')+'token='+encodeURIComponent(t); }
+    function escapeHtml(s) { if(!s)return''; return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+    async function loadAgents() {
+      const tb = document.getElementById('agents-body');
+      tb.innerHTML = '<tr><td colspan="6" class="loading"><i class="fas fa-spinner fa-spin"></i></td></tr>';
+      try {
+        const resp = await fetch(apiUrl('/api/capabilities/agents'));
+        if (!resp.ok) throw new Error(resp.statusText);
+        const agents = await resp.json();
+        if (agents.length === 0) {
+          tb.innerHTML = '<tr><td colspan="6" class="empty"><i class="fas fa-inbox"></i>No agents registered</td></tr>';
+        } else {
+          tb.innerHTML = agents.map(a => {
+            const statusClass = 'status-' + a.status;
+            const statusIcon = a.status === 'online' ? 'fa-circle' : a.status === 'busy' ? 'fa-spinner fa-pulse' : a.status === 'offline' ? 'fa-times-circle' : 'fa-wrench';
+            const caps = a.capabilities.map(c => '<span class="cap-tag">' + escapeHtml(c.name) + '</span>').join('');
+            const hb = a.lastHeartbeatAtMs ? new Date(a.lastHeartbeatAtMs).toLocaleString('zh-CN',{hour12:false}) : '-';
+            return '<tr>'
+              + '<td><strong>' + escapeHtml(a.name) + '</strong></td>'
+              + '<td><span class="status-badge ' + statusClass + '"><i class="fas ' + statusIcon + '"></i> ' + escapeHtml(a.status) + '</span></td>'
+              + '<td>' + caps + '</td>'
+              + '<td>' + a.activeTaskCount + '</td>'
+              + '<td style="font-size:0.75rem;color:#8b949e">' + hb + '</td>'
+              + '<td><button class="btn btn-sm" onclick="openDetail(\'' + a.agentId + '\')"><i class="fas fa-info-circle"></i></button></td>'
+              + '</tr>';
+          }).join('');
+        }
+      } catch (err) {
+        tb.innerHTML = '<tr><td colspan="6" class="empty"><i class="fas fa-exclamation-triangle"></i>' + escapeHtml(err.message) + '</td></tr>';
+      }
+
+      // Load topology
+      try {
+        const topResp = await fetch(apiUrl('/api/capabilities/topology'));
+        if (topResp.ok) {
+          const top = await topResp.json();
+          const tc = document.getElementById('topology-content');
+          if (top.length === 0) {
+            tc.innerHTML = '<div class="empty"><i class="fas fa-leaf"></i>No capabilities</div>';
+          } else {
+            tc.innerHTML = top.map(cat => '<div class="topology-card"><span class="cat-name">' + escapeHtml(cat.category) + '</span><div class="cap-list">' + cat.capabilities.map(c => '<span class="cap-tag">' + escapeHtml(c.name) + ' (' + c.agentCount + ')</span>').join('') + '</div></div>').join('');
+          }
+        }
+      } catch {}
+    }
+
+    async function openDetail(agentId) {
+      document.getElementById('modal-overlay').classList.add('visible');
+      document.getElementById('modal-title').textContent = 'Agent: ' + agentId.slice(0, 8) + '…';
+      let html = '<div class="modal-section"><div class="modal-info-grid">';
+      try {
+        const resp = await fetch(apiUrl('/api/capabilities/agents/' + encodeURIComponent(agentId)));
+        if (!resp.ok) throw new Error('Not found');
+        const a = await resp.json();
+        html += '<div><span class="label">Name</span><br><span class="value">' + escapeHtml(a.name) + '</span></div>';
+        html += '<div><span class="label">Status</span><br><span class="value">' + escapeHtml(a.status) + '</span></div>';
+        html += '<div><span class="label">Active Tasks</span><br><span class="value">' + a.activeTaskCount + '</span></div>';
+        html += '<div><span class="label">Registered</span><br><span class="value">' + new Date(a.registeredAtMs).toLocaleString() + '</span></div>';
+        html += '<div><span class="label">Last Heartbeat</span><br><span class="value">' + new Date(a.lastHeartbeatAtMs).toLocaleString() + '</span></div>';
+        html += '</div></div>';
+        html += '<div class="modal-section"><h4 style="color:#58a6ff;font-size:0.85rem;margin-bottom:8px">Capabilities</h4>';
+        for (const cap of a.capabilities) {
+          html += '<div style="background:#0f1117;padding:8px;border-radius:6px;margin-bottom:6px;font-size:0.8rem">';
+          html += '<strong>' + escapeHtml(cap.name) + '</strong> <span style="color:#8b949e">[' + escapeHtml(cap.category) + ']</span><br>';
+          html += '<span style="color:#8b949e">' + escapeHtml(cap.description) + '</span><br>';
+          if (cap.tags.length > 0) html += cap.tags.map(t => '<span class="cap-tag">' + escapeHtml(t) + '</span>').join('');
+          html += '</div>';
+        }
+        html += '</div>';
+      } catch (err) {
+        html += '<div style="color:#f85149">' + escapeHtml(err.message) + '</div>';
+      }
+      document.getElementById('modal-body').innerHTML = html;
+    }
+
+    async function testDispatch() {
+      const taskType = document.getElementById('dispatch-task').value.trim();
+      if (!taskType) { document.getElementById('dispatch-result').innerHTML = '<span style="color:#d29922">taskType required</span>'; return; }
+      const category = document.getElementById('dispatch-category').value.trim() || undefined;
+      const tagsRaw = document.getElementById('dispatch-tags').value.trim();
+      const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(Boolean) : undefined;
+
+      document.getElementById('dispatch-result').innerHTML = '<i class="fas fa-spinner fa-pulse"></i> Dispatching...';
+      try {
+        const resp = await fetch(apiUrl('/api/capabilities/dispatch'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ taskType, category, tags }),
+        });
+        if (resp.ok) {
+          const match = await resp.json();
+          document.getElementById('dispatch-result').innerHTML =
+            '<div style="color:#3fb950"><i class="fas fa-check-circle"></i> Matched: <strong>' + escapeHtml(match.agentName) + '</strong> (' + escapeHtml(match.matchType) + ', confidence=' + match.confidence + ')</div>' +
+            '<div style="color:#8b949e;font-size:0.75rem;margin-top:4px">Agent: ' + escapeHtml(match.agentId) + ' | Capability: ' + escapeHtml(match.capabilityId) + '</div>';
+        } else {
+          const err = await resp.json().catch(() => ({ error: resp.statusText }));
+          document.getElementById('dispatch-result').innerHTML = '<span style="color:#f85149">' + escapeHtml(err.error || 'No match') + '</span>';
+        }
+      } catch (err) {
+        document.getElementById('dispatch-result').innerHTML = '<span style="color:#f85149">' + escapeHtml(err.message) + '</span>';
+      }
+    }
+
+    function closeModal() { document.getElementById('modal-overlay').classList.remove('visible'); }
+    document.getElementById('modal-overlay').addEventListener('click', function(e) { if (e.target === this) closeModal(); });
+
+    loadAgents();
+  </script>
+</body>
+</html>
