@@ -876,6 +876,40 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         });
     }
 
+    // ─── Agent Reputation ───
+    const rev = deps.reputationEvaluator;
+
+    if (rev) {
+        router.get("/reputation/agents", (_req, res) => {
+            res.json(rev.listAll());
+        });
+
+        router.get("/reputation/agent/:agentId", (req, res) => {
+            const rep = rev.getDispatchWeight(req.params.agentId);
+            res.json(rep);
+        });
+
+        router.post("/reputation/evaluate", (req, res) => {
+            const { agentId, agentName, executions, alerts, failures } = (req.body || {}) as any;
+            if (!agentId || !agentName) {
+                res.status(400).json({ error: "agentId and agentName required" });
+                return;
+            }
+            const rep = rev.evaluate({
+                agentId, agentName,
+                capabilityExecutions: executions || [],
+                recentAlerts: alerts || 0,
+                recentFailures: failures || 0,
+            });
+            res.json(rep);
+        });
+
+        router.post("/reputation/evaluate-all", (_req, res) => {
+            const results = rev.evaluateAll(() => []);
+            res.json({ count: results.length });
+        });
+    }
+
     router.get("/execution-records/:id", (req, res) => {
         const id = req.params.id;
         const record = deps.executionRecordService.getById(id);

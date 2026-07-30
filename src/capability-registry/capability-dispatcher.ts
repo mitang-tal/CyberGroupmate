@@ -11,7 +11,16 @@ import { CapabilityRegistry } from "./capability-registry";
 import { DispatchRequest, DispatchMatch, AgentRegistration } from "./types";
 
 export class CapabilityDispatcher {
+    private reputationProvider?: (agentId: string) => { trustScore: number; trustState: string; reliability: number };
+
     constructor(private registry: CapabilityRegistry) {}
+
+    /** 注入声誉权重提供者 */
+    setReputationProvider(
+        provider: (agentId: string) => { trustScore: number; trustState: string; reliability: number },
+    ): void {
+        this.reputationProvider = provider;
+    }
 
     /**
      * 根据任务需求分发到最合适的 Agent
@@ -83,9 +92,12 @@ export class CapabilityDispatcher {
             }
         }
 
-        // Sort by confidence desc, then by active task count asc
+        // Sort by confidence desc, then by reputation weight desc, then by active task count asc
         results.sort((a, b) => {
             if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+            const weightA = this.getReputationWeight(a.agentId);
+            const weightB = this.getReputationWeight(b.agentId);
+            if (weightB !== weightA) return weightB - weightA;
             const agentA = this.registry.getAgent(a.agentId);
             const agentB = this.registry.getAgent(b.agentId);
             return (agentA?.activeTaskCount ?? 0) - (agentB?.activeTaskCount ?? 0);
@@ -115,9 +127,14 @@ export class CapabilityDispatcher {
     }
 
     private tryRuleMatch(agents: AgentRegistration[], category: string): DispatchMatch | undefined {
-        // Sort by active task count ascending (least loaded first)
+        // Sort by reputation weight desc, then active task count asc
         const sorted = [...agents].sort(
-            (a, b) => a.activeTaskCount - b.activeTaskCount,
+            (a, b) => {
+                const wa = this.getReputationWeight(a.agentId);
+                const wb = this.getReputationWeight(b.agentId);
+                if (wb !== wa) return wb - wa;
+                return a.activeTaskCount - b.activeTaskCount;
+            },
         );
 
         for (const agent of sorted) {
@@ -138,11 +155,15 @@ export class CapabilityDispatcher {
 
     private tryFallbackMatch(agents: AgentRegistration[], taskType: string): DispatchMatch | undefined {
         const sorted = [...agents].sort(
-            (a, b) => a.activeTaskCount - b.activeTaskCount,
+            (a, b) => {
+                const wa = this.getReputationWeight(a.agentId);
+                const wb = this.getReputationWeight(b.agentId);
+                if (wb !== wa) return wb - wa;
+                return a.activeTaskCount - b.activeTaskCount;
+            },
         );
 
         for (const agent of sorted) {
-            // Find the capability whose name best matches the task type
             let bestCap: (typeof agent.capabilities)[0] | undefined;
             let bestScore = 0;
 
@@ -165,7 +186,6 @@ export class CapabilityDispatcher {
             }
         }
 
-        // Last resort: any online agent, first capability
         const first = sorted[0];
         if (first && first.capabilities.length > 0) {
             return {
@@ -180,12 +200,19 @@ export class CapabilityDispatcher {
         return undefined;
     }
 
+    private getReputationWeight(agentId: string): number {
+        if (!this.reputationProvider) return 0.5;
+        const rep = this.reputationProvider(agentId);
+        if (rep.trustState === "untrusted") return 0;
+        if (rep.trustState === "probation") return rep.trustScore * 0.5;
+        return rep.trustScore;
+    }
+
     private similarityScore(a: string, b: string): number {
         const al = a.toLowerCase();
         const bl = b.toLowerCase();
         if (al === bl) return 1;
         if (al.includes(bl) || bl.includes(al)) return 0.8;
-        // Simple word overlap
         const aWords = new Set(al.split(/[_\s.-]+/));
         const bWords = new Set(bl.split(/[_\s.-]+/));
         let common = 0;

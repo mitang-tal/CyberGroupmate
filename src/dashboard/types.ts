@@ -28,6 +28,7 @@ import type { CostGuard } from "../validation/cost-guard.js";
 import type { FailureExtractor } from "../experience/failure-extractor.js";
 import type { ExperienceInjector } from "../experience/experience-injector.js";
 import type { SimulationEngine } from "../simulation/simulation-engine.js";
+import type { ReputationEvaluator } from "../reputation/reputation-evaluator.js";
 
 /** Dashboard 需要的所有组件引用 */
 export interface DashboardDeps {
@@ -75,6 +76,8 @@ export interface DashboardDeps {
     experienceInjector?: ExperienceInjector;
     /** 沙盒推演引擎 */
     simulationEngine?: SimulationEngine;
+    /** Agent 声誉评估器 */
+    reputationEvaluator?: ReputationEvaluator;
 }
 
 /** Dashboard 配置 */
