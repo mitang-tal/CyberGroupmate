@@ -1,4 +1,4 @@
-import { ExecutionRecord, ExecutionStatus} from "./execution-record.types";
+import { ExecutionRecord, ExecutionStatus } from "./execution-record.types";
 import { ExecutionRecordStore, type ExecutionStats } from "./execution-record-store";
 
 const MAX_ERROR_MESSAGE_LENGTH = 2000;
@@ -11,10 +11,125 @@ const SENSITIVE_METHODS = new Set([
     "runtime.env.list",
 ]);
 
+const TERMINAL_STATUSES: ReadonlySet<ExecutionStatus> = new Set([
+    "success",
+    "failure",
+    "interrupted",
+    "policy_denied",
+    "timed_out",
+]);
+
+const VALID_TRANSITIONS: Record<ExecutionStatus, ExecutionStatus[]> = {
+    pending: ["running", "policy_denied"],
+    running: ["success", "failure", "interrupted", "timed_out"],
+    success: [],
+    failure: [],
+    interrupted: [],
+    policy_denied: [],
+    timed_out: [],
+};
+
 export class ExecutionRecordService {
     constructor(
         private store: ExecutionRecordStore
     ) {}
+
+    // ──────────────────────────────────────────────
+    //  Lifecycle methods
+    // ──────────────────────────────────────────────
+
+    start(params: {
+        runId?: string;
+        sessionId?: string;
+        taskId?: string;
+        agentId?: string;
+
+        parentId?: string;
+        sequence?: number;
+
+        source: ExecutionRecord["source"];
+        method: string;
+
+        timeoutMs?: number;
+    }): string {
+        const id = crypto.randomUUID();
+
+        this.store.insert({
+            id,
+            runId: params.runId,
+            sessionId: params.sessionId,
+            taskId: params.taskId,
+            agentId: params.agentId,
+
+            parentId: params.parentId,
+            sequence: params.sequence,
+
+            source: params.source,
+            method: params.method,
+
+            status: "pending",
+
+            timeoutMs: params.timeoutMs,
+
+            createdAtMs: Date.now(),
+        });
+
+        return id;
+    }
+
+    markRunning(id: string): void {
+        const record = this.store.getById(id);
+        if (!record) return;
+
+        this.transition(record, "running");
+        this.store.update(id, { startedAtMs: Date.now() });
+    }
+
+    complete(id: string, status: ExecutionStatus, extra?: {
+        durationMs?: number;
+        error?: { type?: string; message?: string };
+    }): void {
+        const record = this.store.getById(id);
+        if (!record) return;
+
+        const now = Date.now();
+        const patch: Partial<ExecutionRecord> = {
+            completedAtMs: now,
+        };
+
+        if (extra?.durationMs !== undefined) {
+            patch.durationMs = extra.durationMs;
+        } else {
+            // Auto-calculate from startedAtMs if available
+            if (record.startedAtMs !== undefined) {
+                patch.durationMs = now - record.startedAtMs;
+            }
+        }
+
+        if (extra?.error) {
+            patch.error = {
+                type: extra.error.type?.slice(0, MAX_ERROR_TYPE_LENGTH),
+                message: extra.error.message?.slice(0, MAX_ERROR_MESSAGE_LENGTH),
+            };
+        }
+
+        this.transition(record, status);
+        this.store.update(id, { ...patch, status });
+    }
+
+    private transition(current: ExecutionRecord, to: ExecutionStatus): void {
+        const allowed = VALID_TRANSITIONS[current.status];
+        if (!allowed || !allowed.includes(to)) {
+            console.warn(
+                `ExecutionRecordService: invalid transition ${current.status} -> ${to} for ${current.id}`
+            );
+            return;
+        }
+    }
+
+    // ──────────────────────────────────────────────
+    //  Convenience methods (old-style, now using lifecycle)
+    // ──────────────────────────────────────────────
 
     record(record: ExecutionRecord): void {
         const sanitized: ExecutionRecord = {
@@ -36,8 +151,9 @@ export class ExecutionRecordService {
 
         this.store.insert(sanitized);
     }
-		recordHostCall(params: {
-		runId?: string;
+
+    recordHostCall(params: {
+        runId?: string;
         sessionId?: string;
         taskId?: string;
         agentId?: string;
@@ -53,10 +169,9 @@ export class ExecutionRecordService {
             message?: string;
         };
     }): void {
-
         this.record({
             id: crypto.randomUUID(),
-			runId: params.runId,
+            runId: params.runId,
             sessionId: params.sessionId,
             taskId: params.taskId,
             agentId: params.agentId,
@@ -75,7 +190,6 @@ export class ExecutionRecordService {
         });
     }
 
-
     recordAgentTurn(params: {
         sessionId?: string;
         runId?: string;
@@ -91,10 +205,9 @@ export class ExecutionRecordService {
             message?: string;
         };
     }): void {
-
         this.record({
             id: crypto.randomUUID(),
-			runId: params.runId,
+            runId: params.runId,
             sessionId: params.sessionId,
             taskId: params.taskId,
             agentId: params.agentId,
@@ -113,7 +226,6 @@ export class ExecutionRecordService {
         });
     }
 
-
     recordSandboxExecution(params: {
         sessionId?: string;
         runId?: string;
@@ -129,11 +241,9 @@ export class ExecutionRecordService {
             message?: string;
         };
     }): void {
-
-
         this.record({
             id: crypto.randomUUID(),
-			runId: params.runId,
+            runId: params.runId,
             sessionId: params.sessionId,
             taskId: params.taskId,
             agentId: params.agentId,
@@ -150,18 +260,32 @@ export class ExecutionRecordService {
 
             createdAtMs: Date.now(),
         });
+    }
 
-        }
-        listByTask(taskId: string): ExecutionRecord[] {
+    // ──────────────────────────────────────────────
+    //  Query helpers
+    // ──────────────────────────────────────────────
+
+    getById(id: string): ExecutionRecord | undefined {
+        return this.store.getById(id);
+    }
+
+    getActive(): ExecutionRecord[] {
+        return this.store.queryActive();
+    }
+
+    listByTask(taskId: string): ExecutionRecord[] {
         return this.store.query({
             taskId,
         });
     }
-		listByRun(runId: string): ExecutionRecord[] {
-    return this.store.query({
-        runId,
-    });
-}
+
+    listByRun(runId: string): ExecutionRecord[] {
+        return this.store.query({
+            runId,
+        });
+    }
+
     listBySession(sessionId: string): ExecutionRecord[] {
         return this.store.query({
             sessionId,

@@ -26,6 +26,12 @@ export interface ExecutionStats {
 export interface ExecutionRecordStore {
     insert(record: ExecutionRecord): void;
 
+    update(id: string, patch: Partial<ExecutionRecord>): void;
+
+    getById(id: string): ExecutionRecord | undefined;
+
+    queryActive(): ExecutionRecord[];
+
     query(options: {
         sessionId?: string;
         runId?: string;

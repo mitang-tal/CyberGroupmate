@@ -458,8 +458,22 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         res.json(deps.executionRecordService.listRecent({ limit, offset, source, status, method }));
     });
 
+    router.get("/execution-records/active", (_req, res) => {
+        res.json(deps.executionRecordService.getActive());
+    });
+
     router.get("/execution-records/stats", (_req, res) => {
         res.json(deps.executionRecordService.getStats());
+    });
+
+    router.get("/execution-records/:id", (req, res) => {
+        const id = req.params.id;
+        const record = deps.executionRecordService.getById(id);
+        if (!record) {
+            res.status(404).json({ error: "not found" });
+            return;
+        }
+        res.json(record);
     });
 
     // ─── Subagent Task History ───

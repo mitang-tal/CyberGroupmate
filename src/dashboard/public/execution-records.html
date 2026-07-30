@@ -210,8 +210,13 @@
           <option value="">all</option>
           <option value="success">success</option>
           <option value="failure">failure</option>
+          <option value="pending">pending</option>
+          <option value="running">running</option>
+          <option value="success">success</option>
+          <option value="failure">failure</option>
           <option value="interrupted">interrupted</option>
           <option value="policy_denied">policy_denied</option>
+          <option value="timed_out">timed_out</option>
         </select>
       </label>
       <label>Method
@@ -369,6 +374,12 @@
           statusHtml = '<span class="status status-failure"><i class="fas fa-circle"></i> failure</span>';
         } else if (r.status === 'interrupted') {
           statusHtml = '<span class="status status-interrupted"><i class="fas fa-circle"></i> interrupted</span>';
+        } else if (r.status === 'pending') {
+          statusHtml = '<span class="status" style="color:#8b949e"><i class="fas fa-clock"></i> pending</span>';
+        } else if (r.status === 'running') {
+          statusHtml = '<span class="status" style="color:#58a6ff"><i class="fas fa-spinner fa-pulse"></i> running</span>';
+        } else if (r.status === 'timed_out') {
+          statusHtml = '<span class="status status-failure"><i class="fas fa-hourglass-end"></i> timed_out</span>';
         } else {
           statusHtml = '<span class="status">' + (r.status || '-') + '</span>';
         }

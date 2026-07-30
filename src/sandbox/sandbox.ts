@@ -179,7 +179,8 @@ export class Sandbox extends EventEmitter {
             resolve: (result: ExecutionResult) => void;
             reject: (err: Error) => void;
             timer?: ReturnType<typeof setTimeout>;
-            startedAt?: number;  // 新增：用于计算durationMs
+            startedAt?: number;
+            executionId?: string;
         }
     > = new Map();
 
@@ -616,19 +617,12 @@ clearExecutionContext(): void {
                     output: msg.output ?? "",
                     error: msg.error ?? false,
                 };
-                pending.resolve(result);
 
-                // ═══ execution record 接入 ═══
-                this.executionRecordService?.recordSandboxExecution({
-                    runId: this.executionContext?.runId,
-                    sessionId: this.executionContext?.sessionId,
-                    taskId: this.executionContext?.taskId,
-                    agentId: this.executionContext?.agentId,
-                    status: result.error ? "failure" : "success",
-                    durationMs: pending.startedAt
-                        ? Date.now() - pending.startedAt
-                        : undefined,
-                });
+                // ═══ execution record lifecycle ═══
+                if (pending.executionId && this.executionRecordService) {
+                    this.executionRecordService.markRunning(pending.executionId);
+                    this.executionRecordService.complete(pending.executionId, result.error ? "failure" : "success");
+                }
 
                 pending.resolve(result);
 
@@ -697,6 +691,11 @@ clearExecutionContext(): void {
                     timeoutMs: timeout,
                 });
                 reject(error);
+                // ═══ Mark execution as timed_out ═══
+                const timedOut = this.pendingRequests.get(id);
+                if (timedOut?.executionId && this.executionRecordService) {
+                    this.executionRecordService.complete(timedOut.executionId, "timed_out");
+                }
                 void this.stop().catch((err) => {
                     log.warn("execute: failed to stop timed-out sandbox worker", {
                         chatId: this.chatId,
@@ -706,7 +705,17 @@ clearExecutionContext(): void {
                 });
             }, timeout);
 
-            this.pendingRequests.set(id, { resolve, reject, timer, startedAt: Date.now() });
+            const executionId = this.executionRecordService?.start({
+                runId: this.executionContext?.runId,
+                sessionId: this.executionContext?.sessionId,
+                taskId: this.executionContext?.taskId,
+                agentId: this.executionContext?.agentId,
+                source: "sandbox",
+                method: "sandbox.execute",
+                timeoutMs: timeout,
+            });
+
+            this.pendingRequests.set(id, { resolve, reject, timer, startedAt: Date.now(), executionId });
 
             const msg = JSON.stringify({
                 type: "execute",

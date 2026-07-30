@@ -1,8 +1,11 @@
 export type ExecutionStatus =
+    | "pending"
+    | "running"
     | "success"
     | "failure"
     | "interrupted"
-    | "policy_denied";
+    | "policy_denied"
+    | "timed_out";
 
 export type ExecutionSource =
     | "sandbox"
@@ -14,10 +17,13 @@ export type ExecutionSource =
 
 export interface ExecutionRecord {
     id: string;
-	runId?: string;
+    runId?: string;
     sessionId?: string;
     taskId?: string;
     agentId?: string;
+
+    parentId?: string;
+    sequence?: number;
 
     source: ExecutionSource;
 
@@ -26,6 +32,7 @@ export interface ExecutionRecord {
     status: ExecutionStatus;
 
     durationMs?: number;
+    timeoutMs?: number;
 
     error?: {
         type?: string;
@@ -33,4 +40,6 @@ export interface ExecutionRecord {
     };
 
     createdAtMs: number;
+    startedAtMs?: number;
+    completedAtMs?: number;
 }

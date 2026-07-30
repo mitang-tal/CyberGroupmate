@@ -21,13 +21,18 @@ export class SqliteExecutionRecordStore
                 session_id TEXT,
                 task_id TEXT,
                 agent_id TEXT,
+                parent_id TEXT,
+                sequence INTEGER,
                 source TEXT,
                 method TEXT NOT NULL,
                 status TEXT NOT NULL,
                 duration_ms INTEGER,
+                timeout_ms INTEGER,
                 error_type TEXT,
                 error_message TEXT,
-                created_at INTEGER NOT NULL
+                created_at INTEGER NOT NULL,
+                started_at_ms INTEGER,
+                completed_at_ms INTEGER
             );
 
             CREATE INDEX IF NOT EXISTS idx_exec_run
@@ -38,6 +43,9 @@ export class SqliteExecutionRecordStore
 
             CREATE INDEX IF NOT EXISTS idx_exec_task
             ON execution_records(task_id);
+
+            CREATE INDEX IF NOT EXISTS idx_exec_parent
+            ON execution_records(parent_id);
 
             CREATE INDEX IF NOT EXISTS idx_exec_method
             ON execution_records(method);
@@ -58,31 +66,130 @@ export class SqliteExecutionRecordStore
                 session_id,
                 task_id,
                 agent_id,
+                parent_id,
+                sequence,
                 source,
                 method,
                 status,
                 duration_ms,
+                timeout_ms,
                 error_type,
                 error_message,
-                created_at
+                created_at,
+                started_at_ms,
+                completed_at_ms
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
             record.id,
             record.runId ?? null,
             record.sessionId ?? null,
             record.taskId ?? null,
             record.agentId ?? null,
+            record.parentId ?? null,
+            record.sequence ?? null,
             record.source,
             record.method,
             record.status,
             record.durationMs ?? null,
+            record.timeoutMs ?? null,
             record.error?.type ?? null,
             record.error?.message ?? null,
-            record.createdAtMs
+            record.createdAtMs,
+            record.startedAtMs ?? null,
+            record.completedAtMs ?? null
         );
     }
 
+
+    private mapRow(row: any): ExecutionRecord {
+        return {
+            id: row.id,
+            runId: row.run_id ?? undefined,
+            sessionId: row.session_id ?? undefined,
+            taskId: row.task_id ?? undefined,
+            agentId: row.agent_id ?? undefined,
+            parentId: row.parent_id ?? undefined,
+            sequence: row.sequence ?? undefined,
+            source: row.source,
+            method: row.method,
+            status: row.status,
+            durationMs: row.duration_ms ?? undefined,
+            timeoutMs: row.timeout_ms ?? undefined,
+            error: row.error_type || row.error_message
+                ? {
+                    type: row.error_type ?? undefined,
+                    message: row.error_message ?? undefined,
+                }
+                : undefined,
+            createdAtMs: row.created_at,
+            startedAtMs: row.started_at_ms ?? undefined,
+            completedAtMs: row.completed_at_ms ?? undefined,
+        };
+    }
+
+    update(id: string, patch: Partial<ExecutionRecord>): void {
+        const sets: string[] = [];
+        const params: unknown[] = [];
+
+        if (patch.status !== undefined) {
+            sets.push("status = ?");
+            params.push(patch.status);
+        }
+        if (patch.durationMs !== undefined) {
+            sets.push("duration_ms = ?");
+            params.push(patch.durationMs);
+        }
+        if (patch.timeoutMs !== undefined) {
+            sets.push("timeout_ms = ?");
+            params.push(patch.timeoutMs);
+        }
+        if (patch.error !== undefined) {
+            sets.push("error_type = ?", "error_message = ?");
+            params.push(patch.error?.type ?? null, patch.error?.message ?? null);
+        }
+        if (patch.startedAtMs !== undefined) {
+            sets.push("started_at_ms = ?");
+            params.push(patch.startedAtMs);
+        }
+        if (patch.completedAtMs !== undefined) {
+            sets.push("completed_at_ms = ?");
+            params.push(patch.completedAtMs);
+        }
+        if (patch.sequence !== undefined) {
+            sets.push("sequence = ?");
+            params.push(patch.sequence);
+        }
+        if (patch.source !== undefined) {
+            sets.push("source = ?");
+            params.push(patch.source);
+        }
+        if (patch.method !== undefined) {
+            sets.push("method = ?");
+            params.push(patch.method);
+        }
+
+        if (sets.length === 0) return;
+
+        params.push(id);
+        this.db.prepare(
+            `UPDATE execution_records SET ${sets.join(", ")} WHERE id = ?`
+        ).run(...params);
+    }
+
+    getById(id: string): ExecutionRecord | undefined {
+        const row = this.db.prepare(
+            "SELECT * FROM execution_records WHERE id = ?"
+        ).get(id) as any;
+        return row ? this.mapRow(row) : undefined;
+    }
+
+    queryActive(): ExecutionRecord[] {
+        const rows = this.db.prepare(
+            "SELECT * FROM execution_records WHERE status IN ('pending', 'running') ORDER BY created_at ASC"
+        ).all() as any[];
+        return rows.map((row) => this.mapRow(row));
+    }
 
     query(options: {
     runId?: string;
@@ -102,13 +209,18 @@ export class SqliteExecutionRecordStore
             session_id,
             task_id,
             agent_id,
+            parent_id,
+            sequence,
             source,
             method,
             status,
             duration_ms,
+            timeout_ms,
             error_type,
             error_message,
-            created_at
+            created_at,
+            started_at_ms,
+            completed_at_ms
         FROM execution_records
         WHERE 1 = 1
     `;
@@ -159,24 +271,7 @@ export class SqliteExecutionRecordStore
     return this.db
         .prepare(sql)
         .all(...params)
-        .map((row: any) => ({
-            id: row.id,
-            runId: row.run_id ?? undefined,
-            sessionId: row.session_id ?? undefined,
-            taskId: row.task_id ?? undefined,
-            agentId: row.agent_id ?? undefined,
-            source: row.source,
-            method: row.method,
-            status: row.status,
-            durationMs: row.duration_ms ?? undefined,
-            error: row.error_type || row.error_message
-                ? {
-                    type: row.error_type ?? undefined,
-                    message: row.error_message ?? undefined,
-                }
-                : undefined,
-            createdAtMs: row.created_at,
-        }));
+        .map((row: any) => this.mapRow(row));
     }
 
     queryStats(): ExecutionStats {

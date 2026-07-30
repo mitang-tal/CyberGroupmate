@@ -1045,6 +1045,17 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             deniedMethods.clear();
             deniedGuardLastRunId = currentRunId;
         }
+
+        // ═══ Start execution record (pending) ═══
+        const executionId = executionRecordService.start({
+            runId: executionContext?.runId,
+            sessionId: executionContext?.sessionId ?? deps.sessionId,
+            taskId: executionContext?.taskId ?? deps.taskId,
+            agentId: executionContext?.agentId ?? deps.agentId,
+            source: "host_call",
+            method,
+        });
+
         try {
             // Fast rejection: if method was already denied in this run, throw early
             // (the catch block handles recording and re-throwing)
@@ -1056,30 +1067,12 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
                 );
             }
 
+            executionRecordService.markRunning(executionId);
             const result = await executeHostCall(method, args);
 
-            executionRecordService.record({
-                id: crypto.randomUUID(),
-
-				runId: executionContext?.runId,
-
-				sessionId: executionContext?.sessionId ?? deps.sessionId,
-
-				taskId: executionContext?.taskId ?? deps.taskId,
-
-				agentId: executionContext?.agentId ?? deps.agentId,
-
-				source: "host_call",
-
-				method,
-
-				status: "success",
-
-				durationMs: Date.now() - startedAt,
-
-				createdAtMs: Date.now(),
-
-				});
+            executionRecordService.complete(executionId, "success", {
+                durationMs: Date.now() - startedAt,
+            });
 
             return result;
         } catch (error) {
@@ -1090,39 +1083,16 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
                 deniedMethods.add(method);
             }
 
-            executionRecordService.record({
-                id: crypto.randomUUID(),
-
-					runId: executionContext?.runId,
-
-				sessionId:
-                executionContext?.sessionId ?? deps.sessionId,
-
-            taskId:
-                executionContext?.taskId ?? deps.taskId,
-
-            agentId:
-                executionContext?.agentId ?? deps.agentId,
-
-            source: "host_call",
-
-            method,
-
-            status: isPolicyDenied ? "policy_denied" : "failure",
-
-            durationMs: Date.now() - startedAt,
-
-            error: {
-                type,
-
-                message:
-                    error instanceof Error
-                        ? error.message
-                        : String(error),
-            },
-
-            createdAtMs: Date.now(),
-        });
+            executionRecordService.complete(executionId, isPolicyDenied ? "policy_denied" : "failure", {
+                durationMs: Date.now() - startedAt,
+                error: {
+                    type,
+                    message:
+                        error instanceof Error
+                            ? error.message
+                            : String(error),
+                },
+            });
 
             throw error;
         }

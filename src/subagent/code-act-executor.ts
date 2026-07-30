@@ -618,6 +618,16 @@ export class CodeActExecutor {
             hasSandbox: this.hasDependencies(),
         });
 
+        // ═══ Start execution record ═══
+        const agentTurnExecutionId = this.executionRecordService?.start({
+            runId,
+            sessionId: this.chatId,
+            taskId: task.taskId,
+            agentId: this.personaName ?? "unknown",
+            source: "agent",
+            method: "agent.turn",
+        });
+
         let callback: SubagentCallback;
 
         try {
@@ -629,18 +639,19 @@ export class CodeActExecutor {
                 callback = this.executeSkeletonFallback(task, startTime);
             }
 
-            // ═══ Record agent turn (success) ═══
-            this.executionRecordService?.recordAgentTurn({
-                runId,
-                sessionId: this.chatId,
-                taskId: task.taskId,
-                agentId: this.personaName ?? "unknown",
-                status: callback.status === "COMPLETED" ? "success"
-                    : callback.status === "ERROR" ? "failure"
-                        : "interrupted",
-                durationMs: callback.durationMs,
-                error: callback.error ? { message: callback.error } : undefined,
-            });
+            // ═══ Complete agent turn (success) ═══
+            if (agentTurnExecutionId) {
+                this.executionRecordService?.markRunning(agentTurnExecutionId);
+                this.executionRecordService?.complete(agentTurnExecutionId,
+                    callback.status === "COMPLETED" ? "success"
+                        : callback.status === "ERROR" ? "failure"
+                            : "interrupted",
+                    {
+                        durationMs: callback.durationMs,
+                        error: callback.error ? { message: callback.error } : undefined,
+                    }
+                );
+            }
 
         } catch (err) {
             const durationMs = Date.now() - startTime;
@@ -672,16 +683,16 @@ export class CodeActExecutor {
                 completedAt: callback.createdAt,
             });
 
-            // ═══ Record agent turn (failure) ═══
-            this.executionRecordService?.recordAgentTurn({
-                runId,
-                sessionId: this.chatId,
-                taskId: task.taskId,
-                agentId: this.personaName ?? "unknown",
-                status: cancelledByUser ? "interrupted" : "failure",
-                durationMs,
-                error: cancelledByUser ? undefined : { message: String(err) },
-            });
+            // ═══ Complete agent turn (failure) ═══
+            if (agentTurnExecutionId) {
+                this.executionRecordService?.complete(agentTurnExecutionId,
+                    cancelledByUser ? "interrupted" : "failure",
+                    {
+                        durationMs,
+                        error: cancelledByUser ? undefined : { message: String(err) },
+                    }
+                );
+            }
 
             if (cancelledByUser) {
                 log.info("execute: 已取消", { chatId: this.chatId, taskId: task.taskId, error: String(err) });
