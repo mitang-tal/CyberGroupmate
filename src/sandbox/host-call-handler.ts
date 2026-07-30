@@ -1052,6 +1052,7 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             sessionId: executionContext?.sessionId ?? deps.sessionId,
             taskId: executionContext?.taskId ?? deps.taskId,
             agentId: executionContext?.agentId ?? deps.agentId,
+            parentId: executionContext?.executionId,
             source: "host_call",
             method,
         });

@@ -4,11 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Execution Records — CyberGroupmate Dashboard</title>
-  <link rel</title>="icon" type="image/png" href="/kissheart.png" />
+  <link rel="icon" type="image/png" href="/kissheart.png" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
   <style>
-    /* ── 全局 & 布局 ── */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0;</title> }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif;
       background: #0f1117;
@@ -30,7 +29,6 @@
     a.back { color: #58a6ff; text-decoration: none; font-size: 0.85rem; }
     a.back:hover { text-decoration: underline; }
 
-    /* ── 过滤栏 ── */
     .filters {
       display: flex;
       flex-wrap: wrap;
@@ -60,7 +58,6 @@
     }
     .filters .btn:hover { background: #30363d; }
 
-    /* ── 表格 ── */
     .table-wrap {
       background: #161b22;
       border: 1px solid #30363d;
@@ -90,8 +87,8 @@
       vertical-align: middle;
     }
     tr:hover td { background: #1c2128; }
+    tr.clickable { cursor: pointer; }
 
-    /* ── Source badge ── */
     .badge {
       display: inline-flex;
       align-items: center;
@@ -105,7 +102,6 @@
     .badge-sandbox  { background: #1f3d2f; color: #7ee787; }
     .badge-host_call { background: #3d1f2f; color: #ff7b72; }
 
-    /* ── Status badge ── */
     .status {
       display: inline-flex;
       align-items: center;
@@ -127,7 +123,6 @@
       margin-left: 2px;
     }
 
-    /* ── Run ID ── */
     .run-id {
       font-family: "SF Mono", "Fira Code", "Cascadia Code", monospace;
       font-size: 0.75rem;
@@ -136,7 +131,6 @@
     td .run-id { color: #58a6ff; cursor: pointer; }
     td .run-id:hover { text-decoration: underline; }
 
-    /* ── Error message ── */
     .error-msg {
       max-width: 320px;
       overflow: hidden;
@@ -147,7 +141,6 @@
     }
     .error-msg:hover { overflow: visible; white-space: normal; word-break: break-all; background: #0f1117; padding: 4px 8px; border-radius: 4px; position: relative; z-index: 1; }
 
-    /* ── 空状态 / 加载 / 错误 ── */
     .empty { text-align: center; padding: 40px 20px; color: #8b949e; }
     .empty i { font-size: 2rem; margin-bottom: 12px; display: block; }
     .loading { text-align: center; padding: 40px; color: #8b949e; }
@@ -161,7 +154,6 @@
       margin-bottom: 16px;
     }
 
-    /* ── 分页 ── */
     .pagination {
       display: flex;
       justify-content: center;
@@ -182,11 +174,123 @@
     .pagination button:hover:not(:disabled) { background: #30363d; }
     .pagination span { color: #8b949e; font-size: 0.82rem; }
 
-    /* ── 响应式 ── */
+    /* ── Detail Panel ── */
+    #detail-panel {
+      display: none;
+      margin-top: 20px;
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 20px;
+    }
+    #detail-panel.visible { display: block; }
+    .detail-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .detail-header h2 { font-size: 1.1rem; font-weight: 600; }
+    .detail-header .close-btn {
+      background: none;
+      border: none;
+      color: #8b949e;
+      font-size: 1.2rem;
+      cursor: pointer;
+    }
+    .detail-header .close-btn:hover { color: #f85149; }
+    .detail-info {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 8px;
+      margin-bottom: 20px;
+      font-size: 0.85rem;
+    }
+    .detail-info .label { color: #8b949e; }
+    .detail-info .value { color: #e1e4e8; font-family: monospace; font-size: 0.8rem; }
+
+    .trace-section, .timeline-section {
+      margin-top: 16px;
+    }
+    .trace-section h3, .timeline-section h3 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: #58a6ff;
+    }
+
+    /* ── Trace Tree ── */
+    .trace-tree { font-family: "SF Mono", "Fira Code", monospace; font-size: 0.8rem; }
+    .trace-node {
+      padding: 6px 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .trace-node .indent {
+      display: inline-block;
+      width: 20px;
+    }
+    .trace-node .connector {
+      color: #30363d;
+      margin-right: 4px;
+    }
+    .trace-node .node-source { font-weight: 500; }
+    .trace-node .node-method { color: #8b949e; margin-left: 4px; }
+    .trace-children { padding-left: 24px; border-left: 1px solid #30363d; margin-left: 8px; }
+
+    /* ── Timeline ── */
+    .timeline-bar {
+      position: relative;
+      height: 40px;
+      background: #1c2128;
+      border-radius: 6px;
+      margin: 8px 0;
+      overflow: hidden;
+    }
+    .timeline-segment {
+      position: absolute;
+      top: 0;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      color: #fff;
+    }
+    .timeline-segment.queue  { background: #21262d; color: #8b949e; }
+    .timeline-segment.run    { background: #1f3a5f; color: #79c0ff; }
+    .timeline-events { font-size: 0.8rem; }
+    .timeline-event {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0;
+    }
+    .timeline-event .event-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .timeline-event .event-dot.created   { background: #8b949e; }
+    .timeline-event .event-dot.started   { background: #58a6ff; }
+    .timeline-event .event-dot.completed { background: #3fb950; }
+    .timeline-event .event-time { color: #8b949e; font-family: monospace; font-size: 0.75rem; }
+    .timeline-stats {
+      display: flex;
+      gap: 16px;
+      margin-top: 8px;
+      font-size: 0.8rem;
+    }
+    .timeline-stats .stat { color: #8b949e; }
+    .timeline-stats .stat span { color: #e1e4e8; font-weight: 500; }
+
     @media (max-width: 768px) {
       body { padding: 12px; }
       .filters { flex-direction: column; }
       td, th { padding: 6px 8px; font-size: 0.75rem; }
+      .detail-info { grid-template-columns: 1fr 1fr; }
     }
   </style>
 </head>
@@ -197,8 +301,8 @@
     <p class="subtitle">Agent turns, sandbox executions, and host call records</p>
 
     <div class="filters">
-      <label>Source
-        <select id="filter</label>-source">
+      <label></label>Source
+        <select id="filter-source">
           <option value="">all</option>
           <option value="agent">agent</option>
           <option value="sandbox">sandbox</option>
@@ -208,8 +312,6 @@
       <label>Status
        </label> <select id="filter-status">
           <option value="">all</option>
-          <option value="success">success</option>
-          <option value="failure">failure</option>
           <option value="pending">pending</option>
           <option value="running">running</option>
           <option value="success">success</option>
@@ -220,7 +322,7 @@
         </select>
       </label>
       <label>Method
-        <input id="filter-method" placeholder</label>="e.g. agent.turn" size="18" />
+       </label> <input id="filter-method" placeholder="e.g. agent.turn" size="18" />
       </label>
       <button class="btn" onclick="applyFilters()"><i class="fas fa-search"></i> Filter</button>
       <button class="btn" onclick="resetFilters()"><i class="fas fa-undo"></i> Reset</button>
@@ -251,10 +353,30 @@
       <span id="page-info"></span>
       <button id="next-btn" onclick="nextPage()">Next <i class="fas fa-chevron-right"></i></button>
     </div>
+
+    <!-- ═══ Detail Panel ═══ -->
+    <div id="detail-panel">
+      <div class="detail-header">
+        <h2><i class="fas fa-code-branch"></i> Execution Detail</h2>
+        <button class="close-btn" onclick="closeDetail()"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="detail-info" id="detail-info"></div>
+      <div class="trace-section">
+        <h3><i class="fas fa-sitemap"></i> Execution Trace</h3>
+        <div id="trace-content" class="trace-tree">
+          <div class="loading"><i class="fas fa-spinner fa-spin"></i> Loading trace...</div>
+        </div>
+      </div>
+      <div class="timeline-section">
+        <h3><i class="fas fa-clock"></i> Timeline</h3>
+        <div id="timeline-content">
+          <div class="loading"><i class="fas fa-spinner fa-spin"></i> Loading timeline...</div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
-    // ─── State ───
     const PAGE_SIZE = 30;
     let currentPage = 0;
     let sortField = 'createdAtMs';
@@ -262,7 +384,6 @@
     let records = [];
     let filteredRecords = [];
 
-    // ─── Token ───
     function getToken() {
       const u = new URL(window.location.href);
       return u.searchParams.get('token') || '';
@@ -272,7 +393,6 @@
       return path + (path.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(t);
     }
 
-    // ─── Load ───
     async function loadRecords() {
       const tb = document.getElementById('records-body');
       tb.innerHTML = '<tr><td colspan="7" class="loading"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>';
@@ -291,7 +411,6 @@
       }
     }
 
-    // ─── Filter & Sort ───
     function applyFilters() {
       const source = document.getElementById('filter-source').value;
       const status = document.getElementById('filter-status').value;
@@ -304,7 +423,6 @@
         return true;
       });
 
-      // Sort
       filteredRecords.sort((a, b) => {
         let va = a[sortField], vb = b[sortField];
         if (va == null) va = '';
@@ -339,7 +457,6 @@
       applyFilters();
     }
 
-    // ─── Pagination ───
     function renderPage() {
       const tb = document.getElementById('records-body');
       const total = filteredRecords.length;
@@ -391,7 +508,7 @@
             + '</div>'
           : '<span style="color:#484f58">—</span>';
 
-        return '<tr>'
+        return '<tr class="clickable" onclick="openDetail(\'' + r.id + '\')">'
           + '<td style="white-space:nowrap">' + time + '</td>'
           + '<td><span class="badge ' + sourceBadge + '"><i class="fas ' + sourceIcon + '"></i> ' + (r.source || '?') + '</span></td>'
           + '<td style="font-family:monospace;font-size:0.78rem">' + escapeHtml(r.method) + '</td>'
@@ -411,7 +528,152 @@
       return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
-    // ─── Init ───
+    // ═══ Detail Panel ═══
+    function closeDetail() {
+      document.getElementById('detail-panel').classList.remove('visible');
+    }
+
+    async function openDetail(id) {
+      const panel = document.getElementById('detail-panel');
+      panel.classList.add('visible');
+
+      // Load record info
+      try {
+        const resp = await fetch(apiUrl('/api/execution-records/' + encodeURIComponent(id)));
+        if (!resp.ok) throw new Error(resp.statusText);
+        const record = await resp.json();
+        renderDetailInfo(record);
+      } catch (err) {
+        document.getElementById('detail-info').innerHTML = '<span style="color:#f85149">Failed to load: ' + err.message + '</span>';
+      }
+
+      // Load trace
+      const traceEl = document.getElementById('trace-content');
+      traceEl.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> Loading trace...</div>';
+      try {
+        const resp = await fetch(apiUrl('/api/execution-records/' + encodeURIComponent(id) + '/trace'));
+        if (resp.ok) {
+          const tree = await resp.json();
+          traceEl.innerHTML = renderTraceTree(tree);
+        } else if (resp.status === 404) {
+          traceEl.innerHTML = '<div class="empty" style="padding:20px"><i class="fas fa-leaf"></i>No trace (standalone execution)</div>';
+        } else {
+          traceEl.innerHTML = '<div style="color:#f85149">Failed to load trace</div>';
+        }
+      } catch (err) {
+        traceEl.innerHTML = '<div style="color:#f85149">Error: ' + err.message + '</div>';
+      }
+
+      // Load timeline
+      const timelineEl = document.getElementById('timeline-content');
+      timelineEl.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> Loading timeline...</div>';
+      try {
+        const resp = await fetch(apiUrl('/api/execution-records/' + encodeURIComponent(id) + '/timeline'));
+        if (resp.ok) {
+          const timeline = await resp.json();
+          timelineEl.innerHTML = renderTimeline(timeline);
+        } else if (resp.status === 404) {
+          timelineEl.innerHTML = '<div class="empty" style="padding:20px"><i class="fas fa-clock"></i>No timeline data</div>';
+        } else {
+          timelineEl.innerHTML = '<div style="color:#f85149">Failed to load timeline</div>';
+        }
+      } catch (err) {
+        timelineEl.innerHTML = '<div style="color:#f85149">Error: ' + err.message + '</div>';
+      }
+    }
+
+    function renderDetailInfo(record) {
+      const time = record.createdAtMs ? new Date(record.createdAtMs).toLocaleString('zh-CN', { hour12: false }) : '-';
+      const started = record.startedAtMs ? new Date(record.startedAtMs).toLocaleString('zh-CN', { hour12: false }) : '-';
+      const completed = record.completedAtMs ? new Date(record.completedAtMs).toLocaleString('zh-CN', { hour12: false }) : '-';
+      document.getElementById('detail-info').innerHTML = `
+        <div><span class="label">ID</span><br><span class="value">${escapeHtml(record.id)}</span></div>
+        <div><span class="label">Source</span><br><span class="value">${escapeHtml(record.source)}</span></div>
+        <div><span class="label">Method</span><br><span class="value">${escapeHtml(record.method)}</span></div>
+        <div><span class="label">Status</span><br><span class="value">${escapeHtml(record.status)}</span></div>
+        <div><span class="label">Duration</span><br><span class="value">${record.durationMs != null ? record.durationMs + 'ms' : '-'}</span></div>
+        <div><span class="label">Created</span><br><span class="value">${time}</span></div>
+        <div><span class="label">Started</span><br><span class="value">${started}</span></div>
+        <div><span class="label">Completed</span><br><span class="value">${completed}</span></div>
+        ${record.runId ? '<div><span class="label">Run ID</span><br><span class="value">' + escapeHtml(record.runId) + '</span></div>' : ''}
+        ${record.parentId ? '<div><span class="label">Parent ID</span><br><span class="value">' + escapeHtml(record.parentId) + '</span></div>' : ''}
+        ${record.timeoutMs != null ? '<div><span class="label">Timeout</span><br><span class="value">' + record.timeoutMs + 'ms</span></div>' : ''}
+      `;
+    }
+
+    function renderTraceTree(node, depth) {
+      if (depth === undefined) depth = 0;
+      const r = node.record;
+      const sourceIcon = r.source === 'agent' ? 'fa-robot' : r.source === 'sandbox' ? 'fa-cogs' : 'fa-phone';
+      const indent = depth > 0 ? '<span class="connector">&#x2514;&#x2500;</span>' : '';
+      const statusColor = r.status === 'success' ? '#3fb950' : r.status === 'failure' ? '#f85149' : r.status === 'running' ? '#58a6ff' : r.status === 'pending' ? '#8b949e' : r.status === 'timed_out' ? '#f85149' : r.status === 'policy_denied' ? '#bc8cff' : '#d29922';
+
+      let html = '<div class="trace-node">'
+        + indent
+        + '<i class="fas ' + sourceIcon + '" style="color:' + statusColor + '"></i>'
+        + '<span class="node-source" style="color:' + statusColor + '">' + escapeHtml(r.source) + '</span>'
+        + '<span class="node-method">' + escapeHtml(r.method) + '</span>'
+        + '<span style="font-size:0.7rem;color:#8b949e;margin-left:4px">[' + escapeHtml(r.status) + ']</span>'
+        + (r.durationMs != null ? '<span style="font-size:0.7rem;color:#8b949e;margin-left:4px">' + r.durationMs + 'ms</span>' : '')
+        + '</div>';
+
+      if (node.children && node.children.length > 0) {
+        html += '<div class="trace-children">';
+        for (const child of node.children) {
+          html += renderTraceTree(child, depth + 1);
+        }
+        html += '</div>';
+      }
+
+      return html;
+    }
+
+    function renderTimeline(timeline) {
+      const events = timeline.events || [];
+      let html = '<div class="timeline-events">';
+      for (const ev of events) {
+        const t = new Date(ev.atMs).toLocaleString('zh-CN', { hour12: false });
+        html += '<div class="timeline-event">'
+          + '<span class="event-dot ' + ev.type + '"></span>'
+          + '<span class="event-time">' + t + '</span>'
+          + '<span>' + escapeHtml(ev.label) + '</span>'
+          + '</div>';
+      }
+      html += '</div>';
+
+      // Visual bar
+      if (events.length >= 2) {
+        const min = events[0].atMs;
+        const max = events[events.length - 1].atMs;
+        const range = max - min || 1;
+        html += '<div class="timeline-bar">';
+        for (let i = 0; i < events.length - 1; i++) {
+          const left = ((events[i].atMs - min) / range * 100);
+          const width = ((events[i + 1].atMs - events[i].atMs) / range * 100);
+          const cls = events[i + 1].type === 'started' ? 'run' : 'queue';
+          html += '<div class="timeline-segment ' + cls + '" style="left:' + left + '%;width:' + width + '%;font-size:0.65rem">'
+            + (events[i + 1].atMs - events[i].atMs) + 'ms'
+            + '</div>';
+        }
+        html += '</div>';
+      }
+
+      // Stats
+      html += '<div class="timeline-stats">';
+      if (timeline.queueTimeMs != null) {
+        html += '<div class="stat">Queue: <span>' + timeline.queueTimeMs + 'ms</span></div>';
+      }
+      if (timeline.runTimeMs != null) {
+        html += '<div class="stat">Run: <span>' + timeline.runTimeMs + 'ms</span></div>';
+      }
+      if (timeline.totalTimeMs != null) {
+        html += '<div class="stat">Total: <span>' + timeline.totalTimeMs + 'ms</span></div>';
+      }
+      html += '</div>';
+
+      return html;
+    }
+
     loadRecords();
   </script>
 </body>

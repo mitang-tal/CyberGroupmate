@@ -476,6 +476,26 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         res.json(record);
     });
 
+    router.get("/execution-records/:id/trace", (req, res) => {
+        const id = req.params.id;
+        const tree = deps.executionRecordService.getTrace(id);
+        if (!tree) {
+            res.status(404).json({ error: "not found" });
+            return;
+        }
+        res.json(tree);
+    });
+
+    router.get("/execution-records/:id/timeline", (req, res) => {
+        const id = req.params.id;
+        const timeline = deps.executionRecordService.getTimeline(id);
+        if (!timeline) {
+            res.status(404).json({ error: "not found" });
+            return;
+        }
+        res.json(timeline);
+    });
+
     // ─── Subagent Task History ───
     router.get("/subagent-tasks", (req, res) => {
         const limit = Math.min(parseInt(qs(req.query.limit)) || 50, 200);

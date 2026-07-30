@@ -633,7 +633,7 @@ export class CodeActExecutor {
         try {
             // ═══ Fix 9: 实际的 Sandbox 执行逻辑 ═══
             if (this.hasDependencies()) {
-                callback = await this.executeWithSandbox(task, startTime, runId);
+                callback = await this.executeWithSandbox(task, startTime, runId, agentTurnExecutionId);
             } else {
                 // Fallback: 无依赖时使用骨架逻辑（测试用）
                 callback = this.executeSkeletonFallback(task, startTime);
@@ -726,6 +726,7 @@ export class CodeActExecutor {
         task: CodeActReplyTask,
         startTime: number,
         runId: string,
+        agentTurnExecutionId?: string,
     ): Promise<SubagentCallback> {
         // 1. 提取 contextSnapshot 中的执行上下文字段（dispatch-handler 类型安全注入）
         const ctx = task.contextSnapshot;
@@ -883,10 +884,11 @@ export class CodeActExecutor {
         const sentCollector = new SentMessageCollector(this.memory ?? undefined);
         const sandbox = await this.sandboxPool!.acquire(this.chatId);
         sandbox.setExecutionContext({
-			runId,
+				runId,
             sessionId: this.chatId,
             taskId: task.taskId,
             agentId: this.personaName ?? "unknown",
+            executionId: agentTurnExecutionId,
         });
         const deduplicateSentMessages = currentConfig.subagent?.deduplicateSentMessages !== false;
         const bannedWords = currentConfig.subagent?.bannedWords ?? DEFAULT_BANNED_WORDS;

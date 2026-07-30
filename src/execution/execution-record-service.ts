@@ -1,4 +1,4 @@
-import { ExecutionRecord, ExecutionStatus } from "./execution-record.types";
+import { ExecutionRecord, ExecutionStatus, ExecutionTreeNode, ExecutionTimeline } from "./execution-record.types";
 import { ExecutionRecordStore, type ExecutionStats } from "./execution-record-store";
 
 const MAX_ERROR_MESSAGE_LENGTH = 2000;
@@ -91,6 +91,11 @@ export class ExecutionRecordService {
     }): void {
         const record = this.store.getById(id);
         if (!record) return;
+
+        // ═══ completeOnce protection: only running/pending can complete ═══
+        if (record.status !== "running" && record.status !== "pending") {
+            return;
+        }
 
         const now = Date.now();
         const patch: Partial<ExecutionRecord> = {
@@ -272,6 +277,56 @@ export class ExecutionRecordService {
 
     getActive(): ExecutionRecord[] {
         return this.store.queryActive();
+    }
+
+    getTrace(id: string): ExecutionTreeNode | undefined {
+        const record = this.store.getById(id);
+        if (!record) return undefined;
+
+        // If this record has a parent, return the full tree from the root
+        if (record.parentId) {
+            return this.store.getExecutionTree(record.parentId);
+        }
+
+        return this.store.getExecutionTree(id);
+    }
+
+    getTimeline(id: string): ExecutionTimeline | undefined {
+        const record = this.store.getById(id);
+        if (!record) return undefined;
+
+        const events: ExecutionTimeline["events"] = [
+            { type: "created", atMs: record.createdAtMs, label: "Execution created" },
+        ];
+
+        if (record.startedAtMs !== undefined) {
+            events.push({ type: "started", atMs: record.startedAtMs, label: "Execution started" });
+        }
+
+        if (record.completedAtMs !== undefined) {
+            events.push({ type: "completed", atMs: record.completedAtMs, label: "Execution completed" });
+        }
+
+        events.sort((a, b) => a.atMs - b.atMs);
+
+        const timeline: ExecutionTimeline = {
+            id: record.id,
+            events,
+        };
+
+        if (record.startedAtMs !== undefined) {
+            timeline.queueTimeMs = record.startedAtMs - record.createdAtMs;
+        }
+
+        if (record.startedAtMs !== undefined && record.completedAtMs !== undefined) {
+            timeline.runTimeMs = record.completedAtMs - record.startedAtMs;
+        }
+
+        if (record.completedAtMs !== undefined) {
+            timeline.totalTimeMs = record.completedAtMs - record.createdAtMs;
+        }
+
+        return timeline;
     }
 
     listByTask(taskId: string): ExecutionRecord[] {

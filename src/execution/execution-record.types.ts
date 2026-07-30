@@ -43,3 +43,22 @@ export interface ExecutionRecord {
     startedAtMs?: number;
     completedAtMs?: number;
 }
+
+export interface ExecutionTreeNode {
+    record: ExecutionRecord;
+    children: ExecutionTreeNode[];
+}
+
+export interface ExecutionTimelineEvent {
+    type: "created" | "started" | "completed";
+    atMs: number;
+    label: string;
+}
+
+export interface ExecutionTimeline {
+    id: string;
+    events: ExecutionTimelineEvent[];
+    queueTimeMs?: number;
+    runTimeMs?: number;
+    totalTimeMs?: number;
+}

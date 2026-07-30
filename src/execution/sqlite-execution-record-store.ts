@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { ExecutionRecord, ExecutionStatus} from "./execution-record.types";
+import { ExecutionRecord, ExecutionStatus, ExecutionTreeNode } from "./execution-record.types";
 import { ExecutionRecordStore, type ExecutionStats } from "./execution-record-store";
 
 export class SqliteExecutionRecordStore
@@ -182,6 +182,35 @@ export class SqliteExecutionRecordStore
             "SELECT * FROM execution_records WHERE id = ?"
         ).get(id) as any;
         return row ? this.mapRow(row) : undefined;
+    }
+
+    getChildren(parentId: string): ExecutionRecord[] {
+        const rows = this.db.prepare(
+            "SELECT * FROM execution_records WHERE parent_id = ? ORDER BY sequence ASC, created_at ASC"
+        ).all(parentId) as any[];
+        return rows.map((row) => this.mapRow(row));
+    }
+
+    getExecutionTree(id: string, maxDepth = 10): ExecutionTreeNode | undefined {
+        const record = this.getById(id);
+        if (!record) return undefined;
+
+        const node: ExecutionTreeNode = {
+            record,
+            children: [],
+        };
+
+        if (maxDepth > 0) {
+            const children = this.getChildren(id);
+            for (const child of children) {
+                const subtree = this.getExecutionTree(child.id, maxDepth - 1);
+                if (subtree) {
+                    node.children.push(subtree);
+                }
+            }
+        }
+
+        return node;
     }
 
     queryActive(): ExecutionRecord[] {

@@ -710,10 +710,17 @@ clearExecutionContext(): void {
                 sessionId: this.executionContext?.sessionId,
                 taskId: this.executionContext?.taskId,
                 agentId: this.executionContext?.agentId,
+                parentId: this.executionContext?.executionId,
                 source: "sandbox",
                 method: "sandbox.execute",
                 timeoutMs: timeout,
             });
+
+            // Update execution context so child host calls chain to this sandbox execution
+            if (executionId && this.executionContext) {
+                const updatedContext = { ...this.executionContext, executionId };
+                this.executionContext = updatedContext;
+            }
 
             this.pendingRequests.set(id, { resolve, reject, timer, startedAt: Date.now(), executionId });
 
