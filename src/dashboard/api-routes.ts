@@ -688,6 +688,54 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         });
     }
 
+    // ─── Governance & Guardrails ───
+    const gg = deps.globalGuardrail;
+
+    if (gg) {
+        // Kill Switch
+        router.get("/governance/kill-switch", (_req, res) => {
+            res.json({ active: gg.isKillSwitchActive() });
+        });
+
+        router.post("/governance/kill-switch", (req, res) => {
+            const { active } = (req.body || {}) as any;
+            if (typeof active !== "boolean") {
+                res.status(400).json({ error: "active (boolean) required" });
+                return;
+            }
+            gg.toggleKillSwitch(active);
+            res.json({ ok: true, active: gg.isKillSwitchActive() });
+        });
+
+        // Evaluation
+        router.post("/governance/evaluate", (req, res) => {
+            const { sourceType, sourceId, executionId, stepId, replanCount } = (req.body || {}) as any;
+            if (!sourceType || !sourceId) {
+                res.status(400).json({ error: "sourceType and sourceId required" });
+                return;
+            }
+            const result = gg.evaluateGuardrails({ sourceType, sourceId, executionId, stepId, replanCount });
+            res.json(result);
+        });
+
+        // Policies
+        router.get("/governance/policies", (_req, res) => {
+            const ruleType = qs(_req.query.ruleType) as any || undefined;
+            const status = qs(_req.query.status) as any || undefined;
+            res.json(gg.listPolicies());
+        });
+
+        // Violations
+        router.get("/governance/violations", (req, res) => {
+            const ruleType = qs(req.query.ruleType) as any || undefined;
+            const sourceType = qs(req.query.sourceType) as any || undefined;
+            const actionTaken = qs(req.query.actionTaken) as any || undefined;
+            const limit = Math.min(parseInt(qs(req.query.limit)) || 50, 200);
+            const offset = Math.max(parseInt(qs(req.query.offset)) || 0, 0);
+            res.json(gg.queryViolations({ ruleType, sourceType, actionTaken, limit, offset }));
+        });
+    }
+
     router.get("/execution-records/:id", (req, res) => {
         const id = req.params.id;
         const record = deps.executionRecordService.getById(id);

@@ -21,6 +21,7 @@ import type { CapabilityRegistry } from "../capability-registry/capability-regis
 import type { CapabilityDispatcher } from "../capability-registry/capability-dispatcher.js";
 import type { MetaDecisionEngine } from "../meta-decision/meta-decision-engine.js";
 import type { DynamicReplanner } from "../task-planner/dynamic-replanner.js";
+import type { GlobalGuardrailEvaluator } from "../governance/global-guardrail-evaluator.js";
 
 /** Dashboard 需要的所有组件引用 */
 export interface DashboardDeps {
@@ -54,6 +55,8 @@ export interface DashboardDeps {
     metaDecisionEngine?: MetaDecisionEngine;
     /** 动态任务规划器 */
     dynamicReplanner?: DynamicReplanner;
+    /** 全局安全护栏 */
+    globalGuardrail?: GlobalGuardrailEvaluator;
 }
 
 /** Dashboard 配置 */
