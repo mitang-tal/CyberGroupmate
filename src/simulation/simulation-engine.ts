@@ -22,6 +22,7 @@ export class SimulationEngine {
     private extractor: FailureExtractor;
     private injector: ExperienceInjector;
     private hitRecords: ExperienceHitRecord[] = [];
+    private totalSimulations = 0;
 
     constructor(extractor: FailureExtractor, injector: ExperienceInjector) {
         this.extractor = extractor;
@@ -53,9 +54,7 @@ export class SimulationEngine {
         scored.sort((a, b) => b.overallScore - a.overallScore);
         const selected = scored[0];
 
-        // 5. 记录经验命中
-        this.recordHits(scored, context.triggerContext);
-
+        // 5. 构建推演结果
         const result: SimulationResult = {
             simulationId: crypto.randomUUID(),
             triggerContext: context.triggerContext,
@@ -64,6 +63,12 @@ export class SimulationEngine {
             reasoningText: this.buildReasoning(scored, selected, experienceConstraints),
             createdAtMs: Date.now(),
         };
+
+        // 6. 记录经验命中（按真实 simulationId 与选中方案）
+        this.recordHits(scored, selected, result.simulationId);
+
+        // 仅在即将成功返回前累加推演计数，避免中途 throw / early return 被误计入
+        this.totalSimulations += 1;
 
         return result;
     }
@@ -77,12 +82,11 @@ export class SimulationEngine {
         avoidedErrors: number;
         experienceROI: number;
     } {
-        const totalSims = new Set(this.hitRecords.map((r) => r.simulationId)).size;
         const totalHits = this.hitRecords.filter((r) => r.matched).length;
         const avoidedErrors = this.hitRecords.filter((r) => r.avoidedError).length;
 
         return {
-            totalSimulations: totalSims,
+            totalSimulations: this.totalSimulations,
             totalHits,
             avoidedErrors,
             experienceROI: totalHits > 0 ? Math.round((avoidedErrors / totalHits) * 10000) / 100 : 0,
@@ -186,10 +190,7 @@ export class SimulationEngine {
         });
     }
 
-    private recordHits(options: SimulationOption[], simulationTrigger: string): void {
-        const simulationId = crypto.randomUUID();
-        let bestOptionId = options[0]?.optionId || "";
-
+    private recordHits(options: SimulationOption[], selected: SimulationOption, simulationId: string): void {
         for (const opt of options) {
             for (const expId of opt.matchedExperienceIds) {
                 this.hitRecords.push({
@@ -197,7 +198,7 @@ export class SimulationEngine {
                     experienceId: expId,
                     simulationId,
                     matched: true,
-                    avoidedError: opt.optionId === bestOptionId,
+                    avoidedError: opt.optionId === selected.optionId,
                     createdAtMs: Date.now(),
                 });
             }
