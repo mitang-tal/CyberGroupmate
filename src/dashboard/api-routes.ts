@@ -10,6 +10,7 @@ import { join } from "node:path";
 import type { DashboardDeps } from "./types.js";
 import type { EventBridge } from "./event-bridge.js";
 import { userGate } from "../adapter/user-gate.js";
+import type { AdapterConnectionStatus } from "../adapter/platform-adapter.js";
 import type { CodeActExecutor } from "../subagent/code-act-executor.js";
 import { refreshModuleRegistryCache } from "../subagent/code-act-executor.js";
 import { createLogger } from "../core/logger.js";
@@ -370,6 +371,30 @@ function buildGlobalStateSummary(
             })),
         },
     };
+}
+
+/**
+ * 汇总各平台 adapter 的连接状态。
+ * 未实现 getConnectionStatus 的 adapter 用 unknown 占位，避免前端缺项。
+ */
+export function collectAdapterStatuses(deps: Pick<DashboardDeps, "adapters">): AdapterConnectionStatus[] {
+    return (deps.adapters ?? []).map((adapter) => {
+        const supportsReconnect = typeof adapter.reconnect === "function";
+        const status = adapter.getConnectionStatus?.();
+        if (status) {
+            return { ...status, supportsReconnect };
+        }
+        return {
+            platform: adapter.platform,
+            state: "connected",
+            since: "",
+            reconnectAttempts: 0,
+            nextRetryAt: null,
+            lastConnectedAt: null,
+            detail: "该 adapter 未上报连接状态",
+            supportsReconnect,
+        };
+    });
 }
 
 function getSchedulerBindingId(event: SchedulerEvent): string {
@@ -1814,6 +1839,37 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         } catch (err: unknown) {
             const errMsg = err instanceof Error ? err.message : String(err);
             res.json({ ok: false, error: errMsg.includes("abort") ? "连接超时 (15s)" : errMsg });
+        }
+    });
+
+    // ─── 平台连接状态 ───
+    router.get("/adapters", (_req, res) => {
+        res.json({ adapters: collectAdapterStatuses(deps) });
+    });
+
+    // 手动重连指定平台
+    router.post("/adapters/:platform/reconnect", async (req, res) => {
+        const platform = String(req.params.platform ?? "");
+        const adapter = (deps.adapters ?? []).find((item) => item.platform === platform);
+        if (!adapter) {
+            res.status(404).json({ error: `unknown platform: ${platform}` });
+            return;
+        }
+        if (typeof adapter.reconnect !== "function") {
+            res.status(400).json({ error: `${platform} adapter 不支持手动重连` });
+            return;
+        }
+
+        try {
+            log.info("Dashboard 手动重连 adapter", { platform });
+            await adapter.reconnect();
+            res.json({ ok: true, status: adapter.getConnectionStatus?.() ?? null });
+        } catch (err) {
+            log.warn("Dashboard 手动重连失败", { platform, error: String(err) });
+            res.status(500).json({
+                error: String(err),
+                status: adapter.getConnectionStatus?.() ?? null,
+            });
         }
     });
 

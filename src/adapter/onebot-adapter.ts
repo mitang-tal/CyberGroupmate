@@ -7,7 +7,8 @@
 
 import type { NotificationCenter } from "../event/notification-center.js";
 import type { OneBotConfig } from "../core/config.js";
-import type { PlatformAdapter } from "./platform-adapter.js";
+import type { AdapterConnectionStatus, PlatformAdapter } from "./platform-adapter.js";
+import { ConnectionTracker } from "./connection-tracker.js";
 import type { MediaDownloader } from "../core/media-downloader.js";
 import { ensureSupportedFormat } from "../core/vision-processor.js";
 import { composeChatId, ensureCompositeId, parseChatId } from "../core/chat-id.js";
@@ -122,8 +123,15 @@ export class OneBotAdapter implements PlatformAdapter {
     private stopRequested = false;
     private reconnectTimer: NodeJS.Timeout | null = null;
     private reconnectAttempts = 0;
+    private heartbeatTimer: NodeJS.Timeout | null = null;
+    private lastPongAt = 0;
+    private readonly connection = new ConnectionTracker("onebot");
     private static readonly RECONNECT_BASE_MS = 1000;
     private static readonly RECONNECT_MAX_MS = 30_000;
+    /** ws ping 间隔；NapCat 侧不一定主动 ping，半开连接只能靠自己探活 */
+    private static readonly HEARTBEAT_INTERVAL_MS = 30_000;
+    /** 超过该时长没有任何回应（pong 或消息）即认为连接已死 */
+    private static readonly HEARTBEAT_TIMEOUT_MS = 90_000;
     private readonly pending = new Map<string, { resolve: (v: unknown) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }>();
     private readonly mutedChats = new Map<string, number>();
     /** 缓存群名：groupId → group_name
@@ -149,9 +157,49 @@ export class OneBotAdapter implements PlatformAdapter {
 
         this.stopRequested = false;
         this.reconnectAttempts = 0;
-        await this.connect();
+        try {
+            await this.connect();
+        } catch (err) {
+            // 首次连接失败也要进入自动重连，否则要人工重启进程才能恢复。
+            // close 事件通常会安排重连；这里兜住 close 没触发的情况。
+            if (!this.stopRequested && !this.reconnectTimer) {
+                this.scheduleReconnect();
+            }
+            throw err;
+        }
 
         // 连接成功后预加载白名单群组的名称
+        this.prefetchWhitelistedGroups();
+    }
+
+    getConnectionStatus(): AdapterConnectionStatus {
+        return this.connection.snapshot();
+    }
+
+    /** 手动重连：立即断开重连，重置退避计数 */
+    async reconnect(): Promise<void> {
+        log.info("OneBotAdapter 手动重连");
+        this.stopRequested = false;
+        this.clearReconnectTimer();
+        this.stopHeartbeat();
+        this.reconnectAttempts = 0;
+        this.connection.resetAttempts();
+
+        const ws = this.ws;
+        this.ws = null;
+        this.started = false;
+        if (ws) {
+            // 换掉 close 监听，避免旧连接的 close 又排一次自动重连
+            ws.removeAllListeners();
+            try {
+                ws.terminate();
+            } catch (err) {
+                log.debug("OneBotAdapter 手动重连时关闭旧连接失败", { error: String(err) });
+            }
+            this.drainPending();
+        }
+
+        await this.connect();
         this.prefetchWhitelistedGroups();
     }
 
@@ -159,31 +207,45 @@ export class OneBotAdapter implements PlatformAdapter {
         return new Promise<void>((resolve, reject) => {
             const isReconnect = this.reconnectAttempts > 0;
             let settled = false;
+            this.connection.markConnecting(this.config.wsUrl);
             const ws = new WebSocket(this.config.wsUrl);
             this.ws = ws;
 
-            ws.once("open", () => {
+            const settle = (fn: () => void) => {
+                if (settled) return;
                 settled = true;
+                fn();
+            };
+
+            ws.once("open", () => {
                 this.started = true;
                 this.reconnectAttempts = 0;
+                this.connection.markConnected(`${this.config.wsUrl} (self ${this.config.selfId})`);
+                this.startHeartbeat(ws);
                 if (isReconnect) {
                     log.info("OneBotAdapter 重连成功", { wsUrl: this.config.wsUrl });
                 } else {
                     log.info("OneBotAdapter 已连接", { wsUrl: this.config.wsUrl, selfId: this.config.selfId });
                 }
-                resolve();
+                settle(resolve);
             });
 
             ws.once("error", (err) => {
+                this.connection.markDisconnected(String(err));
                 if (isReconnect) {
                     log.warn("OneBotAdapter 重连失败", { error: String(err) });
-                } else if (!settled) {
-                    settled = true;
-                    reject(err instanceof Error ? err : new Error(String(err)));
                 }
+                // 无论首连还是重连都要 settle：否则 scheduleReconnect 里 await 的
+                // promise 永远悬挂。重连的实际重试由 close 处理器负责。
+                settle(() => reject(err instanceof Error ? err : new Error(String(err))));
+            });
+
+            ws.on("pong", () => {
+                this.lastPongAt = Date.now();
             });
 
             ws.on("message", (data) => {
+                this.lastPongAt = Date.now();
                 try {
                     this.handleWsMessage(String(data));
                 } catch (err) {
@@ -191,18 +253,67 @@ export class OneBotAdapter implements PlatformAdapter {
                 }
             });
 
-            ws.on("close", () => {
+            ws.on("close", (code, reason) => {
+                if (this.ws === ws) this.ws = null;
                 this.started = false;
-                this.ws = null;
+                this.stopHeartbeat();
                 this.drainPending();
+                settle(() => reject(new Error(`OneBot websocket closed before open (code ${code})`)));
                 if (this.stopRequested) {
+                    this.connection.markStopped();
                     log.info("OneBot websocket 已关闭");
                     return;
                 }
-                log.warn("OneBot websocket 已断开，将自动重连");
+                this.connection.markDisconnected(`closed code=${code} reason=${String(reason ?? "")}`.trim());
+                log.warn("OneBot websocket 已断开，将自动重连", { code });
                 this.scheduleReconnect();
             });
         });
+    }
+
+    /**
+     * ws 探活：定期 ping，若长时间没有任何回应就主动 terminate 触发重连。
+     *
+     * 半开连接（TCP 还在但对端已死）不会触发 close，没有探活就会静默失联。
+     */
+    private startHeartbeat(ws: WebSocket): void {
+        this.stopHeartbeat();
+        this.lastPongAt = Date.now();
+        this.heartbeatTimer = setInterval(() => {
+            if (this.ws !== ws || ws.readyState !== WebSocket.OPEN) return;
+
+            if (Date.now() - this.lastPongAt > OneBotAdapter.HEARTBEAT_TIMEOUT_MS) {
+                log.warn("OneBot websocket 心跳超时，主动断开重连", {
+                    silentMs: Date.now() - this.lastPongAt,
+                });
+                this.connection.markDisconnected("心跳超时");
+                try {
+                    ws.terminate();
+                } catch (err) {
+                    log.debug("OneBot 心跳超时 terminate 失败", { error: String(err) });
+                }
+                return;
+            }
+
+            try {
+                ws.ping();
+            } catch (err) {
+                log.debug("OneBot ping 失败", { error: String(err) });
+            }
+        }, OneBotAdapter.HEARTBEAT_INTERVAL_MS);
+        if (this.heartbeatTimer.unref) this.heartbeatTimer.unref();
+    }
+
+    private stopHeartbeat(): void {
+        if (!this.heartbeatTimer) return;
+        clearInterval(this.heartbeatTimer);
+        this.heartbeatTimer = null;
+    }
+
+    private clearReconnectTimer(): void {
+        if (!this.reconnectTimer) return;
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
     }
 
     private drainPending(): void {
@@ -220,25 +331,30 @@ export class OneBotAdapter implements PlatformAdapter {
             OneBotAdapter.RECONNECT_BASE_MS * Math.pow(2, this.reconnectAttempts - 1),
             OneBotAdapter.RECONNECT_MAX_MS,
         );
+        this.connection.markRetryScheduled(this.reconnectAttempts, delay);
         log.info(`OneBotAdapter 将在 ${delay}ms 后重连 (第 ${this.reconnectAttempts} 次)`);
         this.reconnectTimer = setTimeout(async () => {
             this.reconnectTimer = null;
             if (this.stopRequested) return;
             try {
                 await this.connect();
+                this.prefetchWhitelistedGroups();
             } catch {
-                // connect() rejects only on first call; reconnect failures
-                // are handled by the close handler which re-schedules.
+                // 连接失败由 close 处理器重新排程；这里只吞掉 rejection，
+                // 避免变成 unhandled rejection。
+                if (!this.stopRequested && !this.reconnectTimer) {
+                    this.scheduleReconnect();
+                }
             }
         }, delay);
+        if (this.reconnectTimer.unref) this.reconnectTimer.unref();
     }
 
     async stop(): Promise<void> {
         this.stopRequested = true;
-        if (this.reconnectTimer) {
-            clearTimeout(this.reconnectTimer);
-            this.reconnectTimer = null;
-        }
+        this.clearReconnectTimer();
+        this.stopHeartbeat();
+        this.connection.markStopped();
         if (!this.ws) return;
         this.ws.close();
         this.ws = null;

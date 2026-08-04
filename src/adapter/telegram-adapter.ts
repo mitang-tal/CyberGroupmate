@@ -9,7 +9,8 @@
 
 import type { NotificationCenter } from "../event/notification-center.js";
 import type { TelegramConfig } from "../core/config.js";
-import type { PlatformAdapter } from "./platform-adapter.js";
+import type { AdapterConnectionStatus, PlatformAdapter } from "./platform-adapter.js";
+import { ConnectionTracker } from "./connection-tracker.js";
 import { composeChatId, parseChatId, isTelegram, isValidCompositeChatId, ensureCompositeId, getPlatform } from "../core/chat-id.js";
 import { createLogger } from "../core/logger.js";
 import { userGate } from "./user-gate.js";
@@ -234,9 +235,20 @@ const MAX_MTCUTE_OBJECT_REFS = 1000;
 export class TelegramAdapter implements PlatformAdapter {
     readonly platform = "telegram";
 
+    private static readonly RECONNECT_BASE_MS = 2000;
+    private static readonly RECONNECT_MAX_MS = 60_000;
+    /** mtcute 卡在 connecting/offline 超过该时长即重建 client */
+    private static readonly OFFLINE_RECOVERY_TIMEOUT_MS = 120_000;
+
     private client: any | null = null;
     private selfUser: PlainUser | null = null;
     private messageHandler: ((msg: any) => Promise<void>) | null = null;
+    private readonly connection = new ConnectionTracker("telegram");
+    private stopRequested = false;
+    private reconnectTimer: NodeJS.Timeout | null = null;
+    private reconnectAttempts = 0;
+    private offlineWatchdog: NodeJS.Timeout | null = null;
+    private startInFlight: Promise<void> | null = null;
     private mediaCache = new MediaFileCache();
     private mtcuteObjectRefCounter = 0;
     private mtcuteObjectRefs = new Map<string, MtcuteObjectRefRecord>();
@@ -267,8 +279,42 @@ export class TelegramAdapter implements PlatformAdapter {
 
     async start(): Promise<void> {
         if (this.client) return;
+        if (this.startInFlight) return this.startInFlight;
 
+        this.stopRequested = false;
+        this.startInFlight = this.doStart().finally(() => {
+            this.startInFlight = null;
+        });
+
+        try {
+            await this.startInFlight;
+        } catch (err) {
+            // mtcute 只在建连之后自己重连；首次 start 失败必须由我们排程重试，
+            // 否则 adapter 会一直保持死状态直到人工重启进程。
+            this.connection.markDisconnected(String(err));
+            this.scheduleReconnect(String(err));
+            throw err;
+        }
+    }
+
+    getConnectionStatus(): AdapterConnectionStatus {
+        return this.connection.snapshot();
+    }
+
+    /** 手动重连：销毁 client 并重建，重置退避计数 */
+    async reconnect(): Promise<void> {
+        log.info("TelegramAdapter 手动重连");
+        this.clearReconnectTimer();
+        this.reconnectAttempts = 0;
+        this.connection.resetAttempts();
+        await this.teardownClient("manual reconnect");
+        this.stopRequested = false;
+        await this.start();
+    }
+
+    private async doStart(): Promise<void> {
         this.validateConfig();
+        this.connection.markConnecting(`mode=${this.config.mode ?? "userbot"}`);
 
         const client = await this.createClient(this.config);
 
@@ -286,6 +332,11 @@ export class TelegramAdapter implements PlatformAdapter {
         this.client = client;
         this.selfUser = this.normalizeUser(self);
         this.rememberPeerObject(self);
+        this.reconnectAttempts = 0;
+        this.attachConnectionListeners(client);
+        this.connection.markConnected(
+            `${this.selfUser.displayName ?? this.selfUser.firstName ?? this.selfUser.id} (${this.selfUser.id}), mode=${this.config.mode ?? "userbot"}`,
+        );
 
         // Bot mode: mtcute lazily registers channel pts/cpts. Pre-warm known groups
         // via getChat so the update loop sees their pts before any messages arrive.
@@ -395,6 +446,10 @@ export class TelegramAdapter implements PlatformAdapter {
     }
 
     async stop(): Promise<void> {
+        this.stopRequested = true;
+        this.clearReconnectTimer();
+        this.clearOfflineWatchdog();
+        this.connection.markStopped();
         if (!this.client) return;
 
         if (this.messageHandler) {
@@ -408,6 +463,128 @@ export class TelegramAdapter implements PlatformAdapter {
 
         this.client = null;
         this.selfUser = null;
+    }
+
+    /**
+     * 订阅 mtcute 的连接状态。
+     *
+     * mtcute 自己会在传输层重连，我们只做两件事：
+     * 1. 把状态暴露出去（dashboard 显示）
+     * 2. 长时间回不到 connected 时重建 client——mtcute 偶尔会卡在
+     *    connecting/offline 再也不恢复，这时只有重建才能救
+     */
+    private attachConnectionListeners(client: any): void {
+        const onState = (state: string) => {
+            if (this.client !== client || this.stopRequested) return;
+            switch (state) {
+                case "connected":
+                case "updating":
+                    this.clearOfflineWatchdog();
+                    this.connection.markConnected();
+                    break;
+                case "connecting":
+                    this.connection.markConnecting();
+                    this.armOfflineWatchdog(client, state);
+                    break;
+                case "offline":
+                default:
+                    this.connection.markDisconnected(`mtcute state=${state}`);
+                    this.armOfflineWatchdog(client, state);
+                    break;
+            }
+            log.debug("Telegram 连接状态变化", { state });
+        };
+
+        try {
+            client.onConnectionState?.add?.(onState);
+        } catch (err) {
+            log.warn("订阅 Telegram 连接状态失败（不影响收发）", { error: String(err) });
+        }
+
+        try {
+            client.onError?.add?.((err: unknown) => {
+                this.connection.noteError(String(err));
+                log.warn("Telegram client error", { error: String(err) });
+            });
+        } catch {
+            // 老版本没有 onError，忽略
+        }
+    }
+
+    private armOfflineWatchdog(client: any, state: string): void {
+        if (this.offlineWatchdog) return;
+        this.offlineWatchdog = setTimeout(() => {
+            this.offlineWatchdog = null;
+            if (this.stopRequested || this.client !== client) return;
+            log.warn("Telegram 长时间未恢复连接，重建 client", {
+                state,
+                timeoutMs: TelegramAdapter.OFFLINE_RECOVERY_TIMEOUT_MS,
+            });
+            void this.rebuildAfterStall();
+        }, TelegramAdapter.OFFLINE_RECOVERY_TIMEOUT_MS);
+        if (this.offlineWatchdog.unref) this.offlineWatchdog.unref();
+    }
+
+    private clearOfflineWatchdog(): void {
+        if (!this.offlineWatchdog) return;
+        clearTimeout(this.offlineWatchdog);
+        this.offlineWatchdog = null;
+    }
+
+    private async rebuildAfterStall(): Promise<void> {
+        try {
+            await this.teardownClient("offline recovery timeout");
+            await this.start();
+        } catch (err) {
+            log.warn("Telegram 重建 client 失败，等待自动重连", { error: String(err) });
+        }
+    }
+
+    /** 销毁当前 client，但不进入 stopped 状态（用于重连） */
+    private async teardownClient(reason: string): Promise<void> {
+        this.clearOfflineWatchdog();
+        const client = this.client;
+        this.client = null;
+        this.selfUser = null;
+        if (!client) return;
+
+        try {
+            if (this.messageHandler) {
+                client.onNewMessage?.remove?.(this.messageHandler);
+            }
+            await client.destroy?.();
+        } catch (err) {
+            log.warn("Telegram client 销毁失败", { reason, error: String(err) });
+        }
+        this.messageHandler = null;
+    }
+
+    private scheduleReconnect(reason: string): void {
+        if (this.stopRequested || this.reconnectTimer) return;
+        this.reconnectAttempts++;
+        const delay = Math.min(
+            TelegramAdapter.RECONNECT_BASE_MS * Math.pow(2, this.reconnectAttempts - 1),
+            TelegramAdapter.RECONNECT_MAX_MS,
+        );
+        this.connection.markRetryScheduled(this.reconnectAttempts, delay);
+        log.info(`TelegramAdapter 将在 ${delay}ms 后重连 (第 ${this.reconnectAttempts} 次)`, { reason });
+        this.reconnectTimer = setTimeout(async () => {
+            this.reconnectTimer = null;
+            if (this.stopRequested) return;
+            try {
+                await this.teardownClient("reconnect");
+                await this.start();
+            } catch (err) {
+                log.warn("TelegramAdapter 重连失败", { error: String(err) });
+            }
+        }, delay);
+        if (this.reconnectTimer.unref) this.reconnectTimer.unref();
+    }
+
+    private clearReconnectTimer(): void {
+        if (!this.reconnectTimer) return;
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
     }
 
     canHandle(method: string): boolean {

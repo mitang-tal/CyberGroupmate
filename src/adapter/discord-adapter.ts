@@ -8,7 +8,8 @@
 
 import type { NotificationCenter } from "../event/notification-center.js";
 import type { DiscordConfig } from "../core/config.js";
-import type { PlatformAdapter } from "./platform-adapter.js";
+import type { AdapterConnectionStatus, PlatformAdapter } from "./platform-adapter.js";
+import { ConnectionTracker } from "./connection-tracker.js";
 import type { IMemoryStoreV2 } from "../memory-v2/types.js";
 import { composeChatId } from "../core/chat-id.js";
 import { createLogger } from "../core/logger.js";
@@ -72,6 +73,7 @@ export class DiscordAdapter implements PlatformAdapter {
     private reconnectTimer: NodeJS.Timeout | null = null;
     private gatewayRecoveryTimer: NodeJS.Timeout | null = null;
     private reconnectAttempts = 0;
+    private readonly connection = new ConnectionTracker("discord");
 
     constructor(
         private config: DiscordConfig,
@@ -102,7 +104,33 @@ export class DiscordAdapter implements PlatformAdapter {
         const client = this.client;
         this.client = null;
         this.selfUserId = null;
+        this.connection.markStopped();
         if (client) await this.destroyClient(client, "stop");
+    }
+
+    getConnectionStatus(): AdapterConnectionStatus {
+        return this.connection.snapshot();
+    }
+
+    /** 手动重连：销毁当前 client 并立即重建，重置退避计数 */
+    async reconnect(): Promise<void> {
+        log.info("DiscordAdapter 手动重连");
+        this.stopRequested = false;
+        this.clearReconnectTimer();
+        this.clearGatewayRecoveryWatchdog();
+        this.reconnectAttempts = 0;
+        this.connection.resetAttempts();
+
+        const oldClient = this.client;
+        this.client = null;
+        this.selfUserId = null;
+        if (oldClient) await this.destroyClient(oldClient, "manual reconnect");
+
+        // 等待可能在途的 connect 结束，避免两个 client 同时登录
+        if (this.connecting) {
+            await this.connecting.catch(() => undefined);
+        }
+        await this.connect(true);
     }
 
     private connect(isReconnect: boolean): Promise<void> {
@@ -115,6 +143,7 @@ export class DiscordAdapter implements PlatformAdapter {
     }
 
     private async createAndLoginClient(isReconnect: boolean): Promise<void> {
+        this.connection.markConnecting();
         const client = await this.createClient();
         this.attachClientLifecycle(client);
         this.attachMessageListener(client);
@@ -123,17 +152,22 @@ export class DiscordAdapter implements PlatformAdapter {
             await this.loginAndWaitForReady(client);
         } catch (err) {
             await this.destroyClient(client, "failed login");
+            this.connection.markDisconnected(String(err));
             throw err;
         }
 
         if (this.stopRequested) {
             await this.destroyClient(client, "stopped before ready");
+            this.connection.markStopped();
             return;
         }
 
         this.client = client;
         this.selfUserId = client.user?.id ?? null;
         this.reconnectAttempts = 0;
+        this.connection.markConnected(
+            `${client.user?.username ?? "?"} (${this.selfUserId ?? "?"}), guilds ${client.guilds?.cache?.size ?? 0}`,
+        );
         log.info(isReconnect ? "DiscordAdapter 重连成功" : "Discord client ready", {
             username: client.user?.username,
             id: this.selfUserId,
@@ -172,20 +206,24 @@ export class DiscordAdapter implements PlatformAdapter {
     private attachClientLifecycle(client: any): void {
         client.on("shardReconnecting", (shardId: number) => {
             log.warn("Discord shard 正在重连", { shardId });
+            if (this.client === client) this.connection.markConnecting();
             this.armGatewayRecoveryWatchdog(client, shardId);
         });
         client.on("shardResume", (shardId: number, replayedEvents: number) => {
             this.clearGatewayRecoveryWatchdog();
+            if (this.client === client) this.connection.markConnected();
             log.info("Discord shard 已恢复", { shardId, replayedEvents });
         });
         client.on("shardReady", (shardId: number) => {
             this.clearGatewayRecoveryWatchdog();
+            if (this.client === client) this.connection.markConnected();
             log.info("Discord shard ready", { shardId });
         });
         client.on("shardError", (err: Error, shardId: number) => {
             log.warn("Discord shard error", { shardId, error: String(err) });
         });
         client.on("error", (err: Error) => {
+            if (this.client === client) this.connection.noteError(String(err));
             log.warn("Discord client error", { error: String(err) });
         });
         client.on("invalidated", () => {
@@ -302,6 +340,7 @@ export class DiscordAdapter implements PlatformAdapter {
 
         this.reconnectAttempts++;
         const delay = this.getReconnectDelayMs(this.reconnectAttempts);
+        this.connection.markRetryScheduled(this.reconnectAttempts, delay);
         log.info(`DiscordAdapter 将在 ${delay}ms 后重连 (第 ${this.reconnectAttempts} 次)`, {
             reason,
             ...details,
@@ -316,6 +355,7 @@ export class DiscordAdapter implements PlatformAdapter {
                 this.scheduleReconnect("connectFailed", { error: String(err) });
             }
         }, delay);
+        if (this.reconnectTimer.unref) this.reconnectTimer.unref();
     }
 
     private getReconnectDelayMs(attempt: number): number {
