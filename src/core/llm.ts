@@ -632,6 +632,31 @@ async function _callLLMSingleKeyInner(
     }
 }
 
+/** 统计消息里的图片数量 */
+function countImageParts(messages: ChatMessage[]): number {
+    return messages.reduce((sum, m) => sum + (m.imageParts?.length ?? 0), 0);
+}
+
+/**
+ * 去掉多模态图片，改为文字占位，供不支持 vision 的 profile 使用。
+ *
+ * 图片内容确实丢失了，但明确告诉模型"这里原本有图"，
+ * 比让它对着不存在的图硬答、或者整条请求 400 失败要好。
+ */
+export function stripImagePartsForNonVisionModel(messages: ChatMessage[]): ChatMessage[] {
+    return messages.map((message) => {
+        const count = message.imageParts?.length ?? 0;
+        if (count === 0) return message;
+
+        const { imageParts: _dropped, ...rest } = message;
+        const note = `[图片 ×${count}：当前模型不支持图片输入，图片已省略。不要凭猜测描述图片内容]`;
+        return {
+            ...rest,
+            content: message.content ? `${message.content}\n\n${note}` : note,
+        };
+    });
+}
+
 /**
  * 带 Profile Fallback 的 LLM 调用。
  *
@@ -641,6 +666,17 @@ async function _callLLMSingleKeyInner(
  * - 最后一个 config 失败 → 抛出原始错误
  *
  * 每个 config 内部仍走 callLLM 的 3 次指数退避重试。
+ *
+ * ─── 多模态降级 ───
+ * 调用方（如 message-enricher 的 Path A）是按 configs[0] 决定要不要塞图片的，
+ * 但 fallback 之后的 profile 可能根本不支持 vision —— 带着 imageParts 打过去
+ * 必然继续失败，fallback 形同虚设。所以这里对声明了 vision !== true 的 profile
+ * 自动把图片降级成文字占位。
+ *
+ * 仅当 chain 里至少有一个 profile 显式声明 `vision: true` 时才启用降级：
+ * 说明这份配置确实在维护该标记。若整条 chain 都没声明（例如 vision 路由的
+ * profile 忘了写 vision: true），则不动载荷，保持原行为，避免把真正能看图的
+ * 模型误降级成瞎子。
  */
 export async function callLLMWithFallback(
     messages: ChatMessage[],
@@ -650,14 +686,38 @@ export async function callLLMWithFallback(
     if (configs.length === 0) {
         throw new Error("callLLMWithFallback: no LLM configs provided");
     }
+
+    const imageCount = countImageParts(messages);
+    const chainDeclaresVision = configs.some((config) => config.vision === true);
+    const degradeEnabled = imageCount > 0 && chainDeclaresVision;
+    let degradedMessages: ChatMessage[] | null = null;
+
+    const payloadFor = (config: LLMConfig): ChatMessage[] => {
+        if (!degradeEnabled || config.vision === true) return messages;
+        if (!degradedMessages) {
+            degradedMessages = stripImagePartsForNonVisionModel(messages);
+        }
+        return degradedMessages;
+    };
+
     if (configs.length === 1) {
-        return callLLM(messages, configs[0], options);
+        return callLLM(payloadFor(configs[0]), configs[0], options);
     }
 
     let lastError: Error | null = null;
     for (let i = 0; i < configs.length; i++) {
+        const config = configs[i];
+        const payload = payloadFor(config);
+        if (payload !== messages) {
+            log.warn("callLLMWithFallback: 目标 profile 不支持 vision，图片已降级为文字占位", {
+                model: config.model,
+                attempt: i + 1,
+                total: configs.length,
+                imageCount,
+            });
+        }
         try {
-            return await callLLM(messages, configs[i], options);
+            return await callLLM(payload, config, options);
         } catch (err) {
             if (isLLMInterruptedByPendingMessage(err)) {
                 throw err;
