@@ -64,6 +64,17 @@ Meta Trigger / Decision Event
 - 将沙盒推演纳入 Meta Decision Engine 前置决策链（设计稿 Commit 3 中提及，当前仅独立 API）。
 - 真实成本/延迟的在线校准（当前为启发式常量估值）。
 
+## Review 约束落地（本轮）
+
+| review 项 | 决策 / 落地 |
+|-----------|------------|
+| #11 热路径缓存（漏项） | 新增 `src/experience/query-cache.ts`（`TTLQueryCache`，默认 TTL 5s，浅拷贝防污染）；`FailureExtractor.queryRelevantExperience` 走缓存，`extractFromFailure` / `runDecay` 后 `invalidate()`；Dispatch/Replan/推演共用同一缓存层 |
+| #14 评分权重 | 拆出 `src/simulation/scorer.ts`：`SimulationScorer` 接口 + `StaticWeightedScorer`（权重可注入，默认 10/0.01/5），预留动态 ROI 回归 scorer 切换位 |
+| #15 State Rollback | `src/simulation/state-virtualizer.ts`（`SandboxStateVirtualizer` 快照/恢复）；`runSimulation` 在 `finally` 中 restore，确保推演无副作用 |
+| #17 决策推演延迟分档 | `runSimulation(context, {mode})`：`full` 3 候选 / `fast` 单候选快速路径；`POST /simulation/run` 透传 `mode` |
+
+验收：`npx tsx scripts/phase72-sandbox-verify.ts` → **18/18 通过**；`npx tsc --noEmit` 通过；`vite build` 通过。
+
 ## 回滚指南
 
 ```bash

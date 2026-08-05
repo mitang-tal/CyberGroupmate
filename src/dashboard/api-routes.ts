@@ -875,12 +875,15 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
 
     if (se) {
         router.post("/simulation/run", (req, res) => {
-            const { triggerContext, taskType, category, failedComponent } = (req.body || {}) as any;
+            const { triggerContext, taskType, category, failedComponent, mode } = (req.body || {}) as any;
             if (!triggerContext) {
                 res.status(400).json({ error: "triggerContext required" });
                 return;
             }
-            const result = se.runSimulation({ triggerContext, taskType, category, failedComponent });
+            const result = se.runSimulation(
+                { triggerContext, taskType, category, failedComponent },
+                { mode: mode === "fast" ? "fast" : "full" },
+            );
             res.json(result);
         });
 

@@ -24,6 +24,22 @@ export interface SimulationResult {
     createdAtMs: number;
 }
 
+export type SimulationMode = "full" | "fast";
+
+export interface SimulationWeights {
+    success: number;
+    cost: number;
+    risk: number;
+}
+
+export interface SimulationRunOptions {
+    /**
+     * #17 决策推演延迟分档：high-stakes 走 full（完整多方案），low-risk 走 fast（快速单候选）。
+     * 默认 full。可在配置层通过 decideMode(stakes) 辅助换算。
+     */
+    mode?: SimulationMode;
+}
+
 export interface ExperienceHitRecord {
     hitId: string;
     experienceId: string;

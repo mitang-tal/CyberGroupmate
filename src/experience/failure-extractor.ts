@@ -13,6 +13,7 @@
 import crypto from "node:crypto";
 import { FailurePattern, FailureCategory, ExperienceItem, ExperienceStatus } from "./types";
 import type { ExperienceStore } from "./experience-store";
+import type { TTLQueryCache } from "./query-cache";
 
 const CONFIDENCE_BY_FREQUENCY = [0, 0.35, 0.55, 0.75, 0.85, 0.92, 0.96];
 const EXPERIENCE_TTL_MS = 30 * 24 * 3600_000; // 30 days default
@@ -20,9 +21,11 @@ const MIN_CONFIDENCE_FOR_EXPERIENCE = 0.6;
 
 export class FailureExtractor {
     private store: ExperienceStore;
+    private queryCache?: TTLQueryCache;
 
-    constructor(store: ExperienceStore) {
+    constructor(store: ExperienceStore, queryCache?: TTLQueryCache) {
         this.store = store;
+        this.queryCache = queryCache;
     }
 
     /**
@@ -60,6 +63,7 @@ export class FailureExtractor {
             };
 
             this.store.updatePattern(existing.patternId, updatedPattern);
+            this.queryCache?.invalidate();
             const pattern = { ...existing, ...updatedPattern };
 
             // If confidence crossed threshold, create/update experience
@@ -86,6 +90,7 @@ export class FailureExtractor {
         };
 
         this.store.insertPattern(pattern);
+        this.queryCache?.invalidate();
 
         // Only create experience if confidence is high enough
         if (pattern.confidence >= MIN_CONFIDENCE_FOR_EXPERIENCE) {
@@ -102,6 +107,7 @@ export class FailureExtractor {
     runDecay(): { expired: number; decayed: number } {
         const decayed = this.store.decayExperiences();
         const expired = this.store.listExpiredExperiences().length;
+        this.queryCache?.invalidate();
         return { expired, decayed };
     }
 
@@ -114,13 +120,21 @@ export class FailureExtractor {
         agentId?: string;
         minConfidence?: number;
     }): ExperienceItem[] {
-        return this.store.queryExperiences({
+        const minConfidence = context.minConfidence ?? MIN_CONFIDENCE_FOR_EXPERIENCE;
+        const key = `exp:${context.tool ?? ""}|${context.capability ?? ""}|${context.agentId ?? ""}|${minConfidence}`;
+
+        const cached = this.queryCache?.get<ExperienceItem[]>(key);
+        if (cached) return cached;
+
+        const result = this.store.queryExperiences({
             tool: context.tool,
             capability: context.capability,
             agentId: context.agentId,
-            minConfidence: context.minConfidence ?? MIN_CONFIDENCE_FOR_EXPERIENCE,
+            minConfidence,
             status: "active",
         });
+        this.queryCache?.set(key, result);
+        return result;
     }
 
     // ─── Private ───

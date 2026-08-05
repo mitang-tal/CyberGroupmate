@@ -2,75 +2,99 @@
  * SimulationEngine — 沙盒推演引擎
  *
  * 流程：
- * 1. 生成候选方案 (≥2 个)
- * 2. 加载 7.1 经验过滤
- * 3. 评分：Score = (P * Ws) - (C * Wc) - (R * Wr)
- * 4. 选最优方案
+ * 1. 生成候选方案（full: 3 方案 / fast: 单候选）
+ * 2. 加载 7.1 经验过滤（经 ExperienceInjector，共享热路径缓存）
+ * 3. 评分：Score = (P * Ws) - (C * Wc) - (R * Wr)，scorer 可替换、权重可配置
+ * 4. 选最优方案；推演在内存沙盒内 apply，最后由 StateVirtualizer 整体 restore 保持无副作用
  */
 
 import crypto from "node:crypto";
-import { SimulationOption, SimulationResult, ExperienceHitRecord } from "./types";
+import { SimulationOption, SimulationResult, ExperienceHitRecord, SimulationRunOptions, SimulationWeights } from "./types";
 import type { FailureExtractor } from "../experience/failure-extractor";
 import type { ExperienceInjector, InjectionResult } from "../experience/experience-injector";
+import type { SimulationScorer } from "./scorer";
+import { StaticWeightedScorer } from "./scorer";
+import type { SandboxStateVirtualizer } from "./state-virtualizer";
 
-// 权重配置
-const W_SUCCESS = 10.0;
-const W_COST = 0.01;
-const W_RISK = 5.0;
+export interface SimulationEngineConfig {
+    scorer?: SimulationScorer;
+    weights?: Partial<SimulationWeights>;
+    virtualizer?: SandboxStateVirtualizer;
+}
 
 export class SimulationEngine {
     private extractor: FailureExtractor;
     private injector: ExperienceInjector;
+    private scorer: SimulationScorer;
+    private virtualizer?: SandboxStateVirtualizer;
     private hitRecords: ExperienceHitRecord[] = [];
     private totalSimulations = 0;
 
-    constructor(extractor: FailureExtractor, injector: ExperienceInjector) {
+    constructor(extractor: FailureExtractor, injector: ExperienceInjector, config: SimulationEngineConfig = {}) {
         this.extractor = extractor;
         this.injector = injector;
+        this.scorer = config.scorer ?? new StaticWeightedScorer(config.weights);
+        this.virtualizer = config.virtualizer;
     }
 
     /**
-     * 推演入口：传入决策上下文，生成方案并评分
+     * 推演入口：传入决策上下文，生成方案并评分。
+     * mode：full 完整多方案；fast 单候选快速路径（low-risk 决策）。
      */
-    runSimulation(context: {
-        triggerContext: string;
-        taskType?: string;
-        category?: string;
-        failedComponent?: string;
-    }): SimulationResult {
-        // 1. 加载经验约束
-        const experienceConstraints = this.injector.getConstraintsForDispatch({
-            taskType: context.taskType || context.triggerContext,
-            category: context.category,
-        });
+    runSimulation(
+        context: {
+            triggerContext: string;
+            taskType?: string;
+            category?: string;
+            failedComponent?: string;
+        },
+        runOptions: SimulationRunOptions = {},
+    ): SimulationResult {
+        const mode: "full" | "fast" = runOptions.mode ?? "full";
+        const snapshot = this.virtualizer?.snapshot();
 
-        // 2. 生成候选方案
-        const options = this.generateOptions(context, experienceConstraints);
+        try {
+            // 1. 加载经验约束（走共用热路径缓存）
+            const experienceConstraints = this.injector.getConstraintsForDispatch({
+                taskType: context.taskType || context.triggerContext,
+                category: context.category,
+            });
 
-        // 3. 评分
-        const scored = this.scoreOptions(options, experienceConstraints);
+            // 2. 生成候选方案
+            const options = mode === "fast"
+                ? this.generateFastOption(context, experienceConstraints)
+                : this.generateOptions(context, experienceConstraints);
 
-        // 4. 选择最优
-        scored.sort((a, b) => b.overallScore - a.overallScore);
-        const selected = scored[0];
+            // 3. 评分（scorer 可替换 / 权重可配置）
+            const scored = this.scorer.score(options, experienceConstraints);
 
-        // 5. 构建推演结果
-        const result: SimulationResult = {
-            simulationId: crypto.randomUUID(),
-            triggerContext: context.triggerContext,
-            optionsEvaluated: scored,
-            selectedOptionId: selected.optionId,
-            reasoningText: this.buildReasoning(scored, selected, experienceConstraints),
-            createdAtMs: Date.now(),
-        };
+            // 4. 选择最优
+            scored.sort((a, b) => b.overallScore - a.overallScore);
+            const selected = scored[0];
 
-        // 6. 记录经验命中（按真实 simulationId 与选中方案）
-        this.recordHits(scored, selected, result.simulationId);
+            // 5. 构建推演结果
+            const result: SimulationResult = {
+                simulationId: crypto.randomUUID(),
+                triggerContext: context.triggerContext,
+                optionsEvaluated: scored,
+                selectedOptionId: selected.optionId,
+                reasoningText: this.buildReasoning(scored, selected, experienceConstraints, mode),
+                createdAtMs: Date.now(),
+            };
 
-        // 仅在即将成功返回前累加推演计数，避免中途 throw / early return 被误计入
-        this.totalSimulations += 1;
+            // 6. 记录经验命中（按真实 simulationId 与选中方案）
+            this.recordHits(scored, selected, result.simulationId);
 
-        return result;
+            // 7. 仅在即将成功返回前累加推演计数，避免中途 throw / early return 被误计入
+            this.totalSimulations += 1;
+
+            return result;
+        } finally {
+            // 8. 沙盒推演对真实运行态无副作用：restore 到推演前状态
+            if (this.virtualizer && snapshot) {
+                this.virtualizer.restore(snapshot);
+            }
+        }
     }
 
     /**
@@ -151,67 +175,38 @@ export class SimulationEngine {
         return options;
     }
 
-    private scoreOptions(
-        options: SimulationOption[],
-        constraints: InjectionResult,
-    ): SimulationOption[] {
-        return options.map((opt) => {
-            const matchedIds: string[] = [];
-            const riskFactors = [...opt.riskFactors];
-            let riskPenalty = 0;
+    private generateFastOption(context: {
+        triggerContext: string;
+        taskType?: string;
+        category?: string;
+        failedComponent?: string;
+    }, constraints: InjectionResult): SimulationOption[] {
+        const base = context.triggerContext;
+        const hasAvoid = constraints.constraints.avoid.length > 0;
 
-            // Check each experience constraint against this option
-            for (const exp of constraints.experiences) {
-                if (exp.rule.avoid && opt.name.toLowerCase().includes(exp.rule.avoid.toLowerCase())) {
-                    matchedIds.push(exp.experienceId);
-                    riskPenalty += (1 - exp.confidence) * 2;
-                    riskFactors.push(`Experience: avoid "${exp.rule.avoid}" (confidence ${Math.round(exp.confidence * 100)}%)`);
-                }
-                if (exp.rule.prefer) {
-                    const preferOverrides = opt.params?.preferOverrides as string[] | undefined;
-                    if (preferOverrides?.includes(exp.rule.prefer)) {
-                        matchedIds.push(exp.experienceId);
-                        opt.predictedSuccessRate = Math.min(opt.predictedSuccessRate + 0.1, 0.99);
-                    }
-                }
-            }
-
-            const riskScore = riskPenalty + riskFactors.length * 0.5;
-            const score = (opt.predictedSuccessRate * W_SUCCESS)
-                - (opt.estimatedCostToken / 1000 * W_COST)
-                - (riskScore * W_RISK);
-
-            return {
-                ...opt,
-                matchedExperienceIds: matchedIds,
-                riskFactors,
-                overallScore: Math.round(score * 100) / 100,
-            };
-        });
-    }
-
-    private recordHits(options: SimulationOption[], selected: SimulationOption, simulationId: string): void {
-        for (const opt of options) {
-            for (const expId of opt.matchedExperienceIds) {
-                this.hitRecords.push({
-                    hitId: crypto.randomUUID(),
-                    experienceId: expId,
-                    simulationId,
-                    matched: true,
-                    avoidedError: opt.optionId === selected.optionId,
-                    createdAtMs: Date.now(),
-                });
-            }
-        }
+        // 快速路径：仅评估基准 retry，命中经验则直接规避
+        return [{
+            optionId: crypto.randomUUID(),
+            name: `Option A: Expedited Retry — ${base}`,
+            actionType: "retry",
+            params: { strategy: "fast", target: base, maxRetries: hasAvoid ? 0 : 3 },
+            predictedSuccessRate: hasAvoid ? 0.4 : 0.7,
+            estimatedCostToken: 2500,
+            estimatedLatencyMs: 800,
+            matchedExperienceIds: [],
+            overallScore: 0,
+            riskFactors: hasAvoid ? ["History indicates this approach has failed before"] : [],
+        }];
     }
 
     private buildReasoning(
         options: SimulationOption[],
         selected: SimulationOption,
         constraints: InjectionResult,
+        mode: "full" | "fast",
     ): string {
         const parts: string[] = [];
-        parts.push(`Evaluated ${options.length} options for "${selected.actionType}".`);
+        parts.push(`[${mode}] Evaluated ${options.length} option(s) for "${selected.actionType}".`);
         parts.push(`Selected: "${selected.name}" (score=${selected.overallScore}, success=${Math.round(selected.predictedSuccessRate * 100)}%, cost=${selected.estimatedCostToken}tokens).`);
 
         if (constraints.experiences.length > 0) {
@@ -227,5 +222,20 @@ export class SimulationEngine {
         }
 
         return parts.join(" ");
+    }
+
+    private recordHits(options: SimulationOption[], selected: SimulationOption, simulationId: string): void {
+        for (const opt of options) {
+            for (const expId of opt.matchedExperienceIds) {
+                this.hitRecords.push({
+                    hitId: crypto.randomUUID(),
+                    experienceId: expId,
+                    simulationId,
+                    matched: true,
+                    avoidedError: opt.optionId === selected.optionId,
+                    createdAtMs: Date.now(),
+                });
+            }
+        }
     }
 }

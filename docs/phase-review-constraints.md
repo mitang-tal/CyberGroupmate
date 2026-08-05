@@ -22,7 +22,7 @@
 ### Cache（热路径缓存漏项，无编号）
 - **约束**：Dispatch / Replan 前置注入是高频热路径，`queryRelevantExperience` 无缓存会拖累调度。
 - **归属**：Phase 7.2 Sandbox Simulation 与 sandbox 共用同一 cache 层实现。
-- 状态：`[待办]`
+- 状态：`[已落地-7.2]`（`TTLQueryCache` 5s TTL，`extractFromFailure`/`runDecay` 后 invalidate；见 `scripts/phase72-sandbox-verify.ts`）
 
 ### Revoke Audit（手动 Revoke 无审计漏项，无编号）
 - **约束**：目前只有 `GET /api/experience/patterns`，无 PUT/DELETE；手动改经验规则无 log = 安全后门。
@@ -31,10 +31,10 @@
 
 ## 二、Phase 7.2 Sandbox Simulation 顾虑
 
-- **#14 评分权重 W_s/W_c/W_r**：静态 vs 动态 ROI 回归校准。动态更精准但需数据积累。状态：`[选型待定]`（当前为静态常量 10/0.01/5）。
-- **#15 State Rollback Virtualizer 路线**：纯逻辑模拟（快、依赖模型准）vs 轻量隔离副本执行（慢但准）。状态：`[选型待定]`。
+- **#14 评分权重 W_s/W_c/W_r**：静态 vs 动态 ROI 回归校准。动态更精准但需数据积累。状态：`[已定-7.2]`（静态可配置 + 预留 `SimulationScorer` 接口，默认 10/0.01/5）。
+- **#15 State Rollback Virtualizer 路线**：纯逻辑模拟（快、依赖模型准）vs 轻量隔离副本执行（慢但准）。状态：`[已定-7.2]`（纯逻辑模拟 + `SandboxStateVirtualizer` 快照/恢复，推演无副作用）。
 - **#16 avoided_error_count 反事实**：无法直接验证"没这经验必然出错"，需 A/B 或定期 control run。状态：`[选型待定]`（当前仅计数，未做 control）。
-- **#17 接入 6.2 Decision Engine 的延迟**：每次决策跑推演有延迟，需可配阈值（high-stakes 走完整 / low-risk 走快速路径）。状态：`[选型待定]`。
+- **#17 接入 6.2 Decision Engine 的延迟**：每次决策跑推演有延迟，需可配阈值（high-stakes 走完整 / low-risk 走快速路径）。状态：`[已定-7.2]`（`mode: full|fast` 分档，threshold 由调用方/配置注入，`POST /simulation/run` 透传）。
 - **#18 Commit 2 过重拆分**：沙盒引擎 + 多方案评分算法应拆两个 commit。状态：`[已记录]`（后续拆分规格时执行）。
 
 ## 三、Phase 7.3 Agent Reputation 约束

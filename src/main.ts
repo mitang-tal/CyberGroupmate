@@ -551,8 +551,10 @@ async function main(): Promise<void> {
 	const { SqliteExperienceStore } = await import("./experience/sqlite-experience-store.js");
 	const { FailureExtractor } = await import("./experience/failure-extractor.js");
 	const { ExperienceInjector } = await import("./experience/experience-injector.js");
+	const { TTLQueryCache } = await import("./experience/query-cache.js");
 	const experienceStore = new SqliteExperienceStore(join(DATA_DIR, "experience.db"));
-	const failureExtractor = new FailureExtractor(experienceStore);
+	// 热路径缓存：Dispatch/Replan/推演共用 queryRelevantExperience 缓存层
+	const failureExtractor = new FailureExtractor(experienceStore, new TTLQueryCache());
 	const experienceInjector = new ExperienceInjector(failureExtractor);
 
 	// ─── Audit Fix Phase 1.1：真实失败 → 失败经验（policy_denied 被服务层过滤） ───
@@ -560,7 +562,10 @@ async function main(): Promise<void> {
 
 	// ─── Phase 7: Simulation Engine ───
 	const { SimulationEngine } = await import("./simulation/simulation-engine.js");
-	const simulationEngine = new SimulationEngine(failureExtractor, experienceInjector);
+	const { SandboxStateVirtualizer } = await import("./simulation/state-virtualizer.js");
+	const simulationEngine = new SimulationEngine(failureExtractor, experienceInjector, {
+	    virtualizer: new SandboxStateVirtualizer(),
+	});
 
 	// ─── Phase 7: Agent Reputation ───
 	const { SqliteReputationStore } = await import("./reputation/sqlite-reputation-store.js");
