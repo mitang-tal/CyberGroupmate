@@ -11,7 +11,7 @@ import type { NotificationCenter } from "../event/notification-center.js";
 import { loadConfig, type TelegramConfig } from "../core/config.js";
 import type { AdapterConnectionStatus, BackfillOptions, BackfillResult, PlatformAdapter } from "./platform-adapter.js";
 import { ConnectionTracker } from "./connection-tracker.js";
-import { BACKFILL_FLAG, BACKFILL_STALE_FLAG, isNewerThanWatermark, resolveBackfillConfig } from "./backfill.js";
+import { BACKFILL_FLAG, BACKFILL_STALE_FLAG, isNewerThanWatermark, resolveBackfillConfig, summarizeBackfillNotes } from "./backfill.js";
 import { composeChatId, parseChatId, isTelegram, isValidCompositeChatId, ensureCompositeId, getPlatform } from "../core/chat-id.js";
 import { createLogger } from "../core/logger.js";
 import { userGate } from "./user-gate.js";
@@ -694,7 +694,7 @@ export class TelegramAdapter implements PlatformAdapter {
             }
         }
 
-        return { chats: chatsTouched, messages: delivered, notes: notes.length > 0 ? notes : undefined };
+        return { chats: chatsTouched, messages: delivered, notes: summarizeBackfillNotes(notes) };
     }
 
     private async rebuildAfterStall(): Promise<void> {

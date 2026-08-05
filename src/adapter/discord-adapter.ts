@@ -10,7 +10,7 @@ import type { NotificationCenter } from "../event/notification-center.js";
 import type { DiscordConfig } from "../core/config.js";
 import type { AdapterConnectionStatus, BackfillOptions, BackfillResult, PlatformAdapter } from "./platform-adapter.js";
 import { ConnectionTracker } from "./connection-tracker.js";
-import { isNewerThanWatermark } from "./backfill.js";
+import { isNewerThanWatermark, summarizeBackfillNotes } from "./backfill.js";
 import type { IMemoryStoreV2 } from "../memory-v2/types.js";
 import { composeChatId } from "../core/chat-id.js";
 import { createLogger } from "../core/logger.js";
@@ -413,7 +413,7 @@ export class DiscordAdapter implements PlatformAdapter {
             }
         }
 
-        return { chats: chatsTouched, messages: delivered, notes: notes.length > 0 ? notes : undefined };
+        return { chats: chatsTouched, messages: delivered, notes: summarizeBackfillNotes(notes) };
     }
 
     private scheduleReconnect(reason: string, details: Record<string, unknown> = {}, sourceClient?: any): void {

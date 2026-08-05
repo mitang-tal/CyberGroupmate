@@ -44,6 +44,16 @@ export const DEFAULT_BACKFILL: Required<BackfillConfig> = {
     downloadMedia: false,
 };
 
+/**
+ * 收敛 notes：只保留前若干条 + 省略计数。
+ * 会话多的时候逐条报错会把单行日志刷成几千字符。
+ */
+export function summarizeBackfillNotes(notes: string[], keep = 5): string[] | undefined {
+    if (notes.length === 0) return undefined;
+    if (notes.length <= keep) return notes;
+    return [...notes.slice(0, keep), `...（另有 ${notes.length - keep} 条同类错误已省略）`];
+}
+
 export function resolveBackfillConfig(config?: BackfillConfig): Required<BackfillConfig> {
     if (!config) return { ...DEFAULT_BACKFILL };
     return {

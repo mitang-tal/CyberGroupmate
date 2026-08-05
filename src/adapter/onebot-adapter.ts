@@ -9,7 +9,7 @@ import type { NotificationCenter } from "../event/notification-center.js";
 import type { OneBotConfig } from "../core/config.js";
 import type { AdapterConnectionStatus, BackfillOptions, BackfillResult, PlatformAdapter } from "./platform-adapter.js";
 import { ConnectionTracker } from "./connection-tracker.js";
-import { isNewerThanWatermark } from "./backfill.js";
+import { isNewerThanWatermark, summarizeBackfillNotes } from "./backfill.js";
 import type { MediaDownloader } from "../core/media-downloader.js";
 import { ensureSupportedFormat } from "../core/vision-processor.js";
 import { composeChatId, ensureCompositeId, getRawId, parseChatId } from "../core/chat-id.js";
@@ -307,6 +307,12 @@ export class OneBotAdapter implements PlatformAdapter {
                 }
             } catch (err) {
                 notes.push(`${chatId} 拉历史失败: ${String(err).slice(0, 120)}`);
+                // 连接已断开就别继续遍历剩下的会话了：每个都会立刻失败，
+                // 只是把日志刷满并拖长整轮耗时。等重连后的触发再补。
+                if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+                    notes.push("websocket 已断开，放弃本轮剩余会话（重连后会重新触发）");
+                    break;
+                }
                 continue;
             }
 
@@ -317,7 +323,7 @@ export class OneBotAdapter implements PlatformAdapter {
             }
         }
 
-        return { chats: chatsTouched, messages: delivered, notes: notes.length > 0 ? notes : undefined };
+        return { chats: chatsTouched, messages: delivered, notes: summarizeBackfillNotes(notes) };
     }
 
     /** 手动重连：立即断开重连，重置退避计数 */
