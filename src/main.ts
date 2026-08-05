@@ -1640,13 +1640,13 @@ async function main(): Promise<void> {
     // 启动后补一次（进程重启期间的消息），之后每次连接从 disconnected 恢复到
     // connected 也补一次（掉线重连比"重启"更常见，也更该补）。
     const backfillTimers: NodeJS.Timeout[] = [];
-    const scheduleBackfill = (platforms: string[], reason: string): void => {
+    const scheduleBackfill = (platforms: string[], reason: string, force = false): void => {
         if (!backfillCoordinator) return;
         const delay = resolveBackfillConfig(loadConfig().backfill).delayMs;
         const timer = setTimeout(() => {
             if (shuttingDown) return;
-            log.info("触发离线补抓", { platforms, reason });
-            backfillCoordinator!.run(platforms).catch((err) => {
+            log.info("触发离线补抓", { platforms, reason, force });
+            backfillCoordinator!.run(platforms, { force }).catch((err) => {
                 log.warn("离线补抓异常", { platforms, reason, error: String(err) });
             });
         }, delay);
@@ -1657,7 +1657,8 @@ async function main(): Promise<void> {
     if (resolveBackfillConfig(loadConfig().backfill).enabled) {
         const readyPlatforms = adapterStatuses.filter(a => a.status === "ok").map(a => a.platform);
         if (readyPlatforms.length > 0) {
-            scheduleBackfill(readyPlatforms, "startup");
+            // 启动补抓 force：这是进程生命周期内的第一次，不该被节流挡掉
+            scheduleBackfill(readyPlatforms, "startup", true);
         }
 
         // 监视连接状态：disconnected/connecting/error → connected 视为一次恢复

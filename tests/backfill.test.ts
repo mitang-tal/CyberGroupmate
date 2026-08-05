@@ -261,6 +261,45 @@ describe("BackfillCoordinator 合并唤醒", () => {
         assert.equal(pushed[0][BACKFILL_FLAG], true, "补抓消息必须带 backfill 标记");
     });
 
+    it("自动触发有最小间隔，防止「补抓弄崩连接 → 重连 → 再补抓」自激循环", async () => {
+        let calls = 0;
+        const adapter: PlatformAdapter = {
+            platform: "onebot",
+            start: async () => {},
+            stop: async () => {},
+            canHandle: () => false,
+            handleCall: async () => null,
+            getWriteMethods: () => [],
+            formatMention: () => undefined,
+            fetchMissedMessages: async () => {
+                calls++;
+                return { chats: 0, messages: 0 };
+            },
+        };
+        const coordinator = new BackfillCoordinator({
+            nc: makeNC(),
+            adapters: [adapter],
+            getWatermark: () => null,
+            listKnownChatIds: () => [],
+            onConsolidatedWake: () => {},
+            getConfig: () => ({ enabled: true }),
+        });
+
+        // 首次（模拟 startup）force 通过
+        await coordinator.run(undefined, { force: true });
+        assert.equal(calls, 1);
+
+        // 紧接着的自动触发（模拟 reconnected）应被节流挡掉
+        await coordinator.run();
+        assert.equal(calls, 1, "自动触发应被最小间隔挡掉");
+
+        // 手动 force 仍然可以立刻补
+        await coordinator.run(undefined, { force: true });
+        assert.equal(calls, 2, "force 应绕过节流");
+
+        coordinator.dispose();
+    });
+
     it("adapter 未连接时跳过", async () => {
         let called = false;
         const adapter: PlatformAdapter = {

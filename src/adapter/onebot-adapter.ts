@@ -181,6 +181,10 @@ export class OneBotAdapter implements PlatformAdapter {
     private static readonly HEARTBEAT_INTERVAL_MS = 30_000;
     /** 超过该时长没有任何回应（pong 或消息）即认为连接已死 */
     private static readonly HEARTBEAT_TIMEOUT_MS = 90_000;
+    /** 某会话拉历史失败后的冷却时长（避免反复触发会弄崩连接的 action） */
+    private static readonly HISTORY_FAILURE_COOLDOWN_MS = 60 * 60_000;
+    /** chatId → 冷却截止时间 */
+    private readonly historyFailureCooldown = new Map<string, number>();
     private readonly pending = new Map<string, { resolve: (v: unknown) => void; reject: (err: Error) => void; timer: NodeJS.Timeout }>();
     private readonly mutedChats = new Map<string, number>();
     /** 缓存群名：groupId → group_name
@@ -247,6 +251,14 @@ export class OneBotAdapter implements PlatformAdapter {
         const chatIds = options.knownChatIds.slice(0, options.maxChats);
 
         for (const chatId of chatIds) {
+            // 曾经拉挂过的会话进入冷却：NapCat 对某些会话的 get_group_msg_history
+            // 会超时并把 ws 带崩，反复重试等于反复自杀。
+            const cooldownUntil = this.historyFailureCooldown.get(chatId) ?? 0;
+            if (cooldownUntil > Date.now()) {
+                notes.push(`${chatId} 处于拉历史冷却中（上次失败），跳过`);
+                continue;
+            }
+
             const watermark = options.getWatermark(chatId);
             const rawId = getRawId(chatId);
             const isGroup = rawId.startsWith("group:");
@@ -307,6 +319,7 @@ export class OneBotAdapter implements PlatformAdapter {
                 }
             } catch (err) {
                 notes.push(`${chatId} 拉历史失败: ${String(err).slice(0, 120)}`);
+                this.historyFailureCooldown.set(chatId, Date.now() + OneBotAdapter.HISTORY_FAILURE_COOLDOWN_MS);
                 // 连接已断开就别继续遍历剩下的会话了：每个都会立刻失败，
                 // 只是把日志刷满并拖长整轮耗时。等重连后的触发再补。
                 if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {

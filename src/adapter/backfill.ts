@@ -116,11 +116,22 @@ const ID_ORDERING: Record<string, "numeric-id" | "timestamp"> = {
  */
 const WAKE_FLUSH_DEBOUNCE_MS = 5000;
 
+/**
+ * 同一平台两次「自动」补抓之间的最小间隔。
+ *
+ * 防自激循环：补抓用到的平台 API 本身可能弄崩连接（实测 NapCat 的
+ * get_group_msg_history 对某个群会超时并带崩 ws），连接恢复又会触发补抓，
+ * 于是无限循环。手动触发和启动时的首次补抓不受此限制。
+ */
+const MIN_AUTO_RUN_INTERVAL_MS = 10 * 60_000;
+
 export class BackfillCoordinator {
     private readonly pendingWakes = new Map<string, PendingWake>();
     private running = false;
     private lastRunAt = 0;
     private flushTimer: NodeJS.Timeout | null = null;
+    /** 每个平台上次补抓时间（自动触发的节流依据） */
+    private readonly lastRunByPlatform = new Map<string, number>();
 
     constructor(private readonly deps: BackfillCoordinatorDeps) {}
 
@@ -238,7 +249,10 @@ export class BackfillCoordinator {
      *
      * @param platforms 只补抓这些平台；不传则全部
      */
-    async run(platforms?: string[]): Promise<{ results: Record<string, BackfillResult>; wakes: BackfillWakeSummary[] }> {
+    async run(
+        platforms?: string[],
+        options?: { force?: boolean },
+    ): Promise<{ results: Record<string, BackfillResult>; wakes: BackfillWakeSummary[] }> {
         const config = this.config();
         if (!config.enabled) {
             log.debug("补抓已禁用，跳过");
@@ -263,6 +277,21 @@ export class BackfillCoordinator {
                     log.info("跳过未连接的 adapter", { platform: adapter.platform, state });
                     continue;
                 }
+
+                // 自动触发的补抓要遵守最小间隔，避免"补抓弄崩连接 → 重连 → 再补抓"的自激循环
+                if (!options?.force) {
+                    const lastRun = this.lastRunByPlatform.get(adapter.platform) ?? 0;
+                    const elapsed = Date.now() - lastRun;
+                    if (lastRun > 0 && elapsed < MIN_AUTO_RUN_INTERVAL_MS) {
+                        log.info("距上次补抓过近，跳过本次自动触发", {
+                            platform: adapter.platform,
+                            elapsedMs: elapsed,
+                            minIntervalMs: MIN_AUTO_RUN_INTERVAL_MS,
+                        });
+                        continue;
+                    }
+                }
+                this.lastRunByPlatform.set(adapter.platform, Date.now());
 
                 const ordering = ID_ORDERING[adapter.platform] ?? "timestamp";
                 let delivered = 0;

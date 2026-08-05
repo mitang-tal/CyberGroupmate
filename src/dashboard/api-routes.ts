@@ -1888,7 +1888,8 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
 
         try {
             log.info("Dashboard 手动触发离线补抓", { platforms: platforms ?? "all" });
-            const outcome = await deps.backfillCoordinator.run(platforms);
+            // 手动触发绕过自动节流（用户明确要求补一次）
+            const outcome = await deps.backfillCoordinator.run(platforms, { force: true });
             res.json({ ok: true, ...outcome });
         } catch (err) {
             log.warn("Dashboard 手动补抓失败", { error: String(err) });
