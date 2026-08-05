@@ -619,22 +619,6 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             res.json(mde.getDecisionHistory({ decisionType, status, limit, offset }));
         });
 
-        router.get("/meta-decisions/:id", (req, res) => {
-            const decision = mde.getDecisionHistory({ limit: 1 }).find((d: any) => d.decisionId === req.params.id);
-            if (!decision) { res.status(404).json({ error: "not found" }); return; }
-            res.json(decision);
-        });
-
-        router.post("/meta-decisions/:id/execute", (req, res) => {
-            const ok = mde.executeDecision(req.params.id);
-            res.json({ ok });
-        });
-
-        router.post("/meta-decisions/:id/reject", (req, res) => {
-            const ok = mde.rejectDecision(req.params.id);
-            res.json({ ok });
-        });
-
         router.post("/meta-decisions/evaluate", (_req, res) => {
             const decisions = mde.evaluateSystemState();
             res.json({ decisions, count: decisions.length });
@@ -642,6 +626,39 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
 
         router.get("/meta-decisions/policy-state", (_req, res) => {
             res.json(mde.getPolicyState());
+        });
+
+        router.get("/meta-decisions/:id", (req, res) => {
+            const decision = mde.getDecision(req.params.id);
+            if (!decision) { res.status(404).json({ error: "not found" }); return; }
+            res.json(decision);
+        });
+
+        router.post("/meta-decisions/:id/execute", (req, res) => {
+            try {
+                const outcome = mde.executeDecision(req.params.id);
+                res.json({ ok: outcome.ok, status: outcome.status, executionId: outcome.executionId ?? null });
+            } catch (err) {
+                res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+            }
+        });
+
+        router.post("/meta-decisions/:id/verify", (req, res) => {
+            try {
+                const verification = mde.verifyDecision(req.params.id);
+                res.json({ ok: verification.verified, verification });
+            } catch (err) {
+                res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+            }
+        });
+
+        router.post("/meta-decisions/:id/reject", (req, res) => {
+            try {
+                const ok = mde.rejectDecision(req.params.id);
+                res.json({ ok });
+            } catch (err) {
+                res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+            }
         });
     }
 
@@ -664,12 +681,17 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         });
 
         router.post("/task-planner/apply-patch/:patchId", (req, res) => {
-            const plan = dr.applyTaskPatch(req.params.patchId);
-            if (!plan) {
-                res.status(400).json({ error: "could not apply patch" });
-                return;
+            try {
+                const plan = dr.applyTaskPatch(req.params.patchId);
+                if (!plan) {
+                    res.status(400).json({ error: "could not apply patch" });
+                    return;
+                }
+                res.json(plan);
+            } catch (err) {
+                // Phase 3.3：Loop Prevention 阻断 replan 时返回明确错误
+                res.status(409).json({ error: err instanceof Error ? err.message : String(err) });
             }
-            res.json(plan);
         });
 
         router.get("/task-planner/patches", (req, res) => {
@@ -692,29 +714,20 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
     const gg = deps.globalGuardrail;
 
     if (gg) {
-        // Kill Switch
+        // Kill Switch（兼容读：状态已收敛至 /governance-v2/kill-switch，写操作见该端点）
         router.get("/governance/kill-switch", (_req, res) => {
             res.json({ active: gg.isKillSwitchActive() });
         });
 
-        router.post("/governance/kill-switch", (req, res) => {
-            const { active } = (req.body || {}) as any;
-            if (typeof active !== "boolean") {
-                res.status(400).json({ error: "active (boolean) required" });
-                return;
-            }
-            gg.toggleKillSwitch(active);
-            res.json({ ok: true, active: gg.isKillSwitchActive() });
-        });
-
         // Evaluation
         router.post("/governance/evaluate", (req, res) => {
-            const { sourceType, sourceId, executionId, stepId, replanCount } = (req.body || {}) as any;
+            // Phase 3.3：replanCount 不再接受调用方传入（replan 计数由系统维护）
+            const { sourceType, sourceId, executionId, stepId } = (req.body || {}) as any;
             if (!sourceType || !sourceId) {
                 res.status(400).json({ error: "sourceType and sourceId required" });
                 return;
             }
-            const result = gg.evaluateGuardrails({ sourceType, sourceId, executionId, stepId, replanCount });
+            const result = gg.evaluateGuardrails({ sourceType, sourceId, executionId, stepId });
             res.json(result);
         });
 
@@ -2693,8 +2706,6 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         }
     });
 
-    return router;
-}
 
     // ─── Ecosystem Governance ───
     const eg = deps.ecosystemGovernor;
@@ -2716,13 +2727,6 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             res.json(eg.evaluateCandidate({ originTrustScore, category, frequency: frequency || 1, confidence: confidence || 0.5 }));
         });
 
-        router.post("/ecosystem/kill-switch", (req, res) => {
-            const { active } = (req.body || {}) as any;
-            if (typeof active !== "boolean") { res.status(400).json({ error: "active (boolean) required" }); return; }
-            if (active) eg.engageKillSwitch(); else eg.disengageKillSwitch();
-            res.json({ ok: true, active: eg.isKillSwitchActive() });
-        });
-
         router.post("/ecosystem/reset", (_req, res) => {
             eg.reset();
             res.json({ ok: true });
@@ -2730,33 +2734,33 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
     }
 
     // ─── Experience Federation ───
-    const fs = deps.federationStore;
+    const fed = deps.federationStore;
 
-    if (fs) {
+    if (fed) {
         router.post("/federation/promote", (req, res) => {
             const { experienceId, agentId } = (req.body || {}) as any;
             if (!experienceId) { res.status(400).json({ error: "experienceId required" }); return; }
-            const result = fs.promote(experienceId, agentId);
+            const result = fed.promote(experienceId, agentId);
             res.json(result);
         });
 
         router.get("/federation/items", (_req, res) => {
-            res.json(fs.getFederatedItems());
+            res.json(fed.getFederatedItems());
         });
 
         router.get("/federation/quarantine", (_req, res) => {
-            res.json(fs.getQuarantinedItems());
+            res.json(fed.getQuarantinedItems());
         });
 
         router.get("/federation/candidates", (_req, res) => {
-            res.json(fs.getCandidateItems());
+            res.json(fed.getCandidateItems());
         });
     }
 
     // ─── Conflict Resolution ───
-    const cr = deps.conflictResolver;
+    const conflictResolver = deps.conflictResolver;
 
-    if (cr) {
+    if (conflictResolver) {
         router.post("/conflict/resolve", (req, res) => {
             const caseData = (req.body || {}) as any;
             if (!caseData.resourceId || !caseData.conflictType || !Array.isArray(caseData.proposals) || caseData.proposals.length === 0) {
@@ -2771,7 +2775,7 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
                 createdAtMs: Date.now(),
                 complexContext: caseData.complexContext === true,
             };
-            const verdict = cr.resolve(conflictCase);
+            const verdict = conflictResolver.resolve(conflictCase);
             res.json(verdict);
         });
 
@@ -2781,16 +2785,16 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
                 res.status(400).json({ error: "cases[] required" });
                 return;
             }
-            const results = cr.resolveBatch(cases);
+            const results = conflictResolver.resolveBatch(cases);
             res.json(results);
         });
 
         router.get("/conflict/history", (_req, res) => {
-            res.json(cr.getHistory());
+            res.json(conflictResolver.getHistory());
         });
 
         router.get("/conflict/stats", (_req, res) => {
-            res.json(cr.getStats());
+            res.json(conflictResolver.getStats());
         });
     }
 
@@ -2903,6 +2907,21 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             res.json(eg2.getCurrent());
         });
 
+        // ═══ Phase 4.1：Kill-Switch 唯一写入口（收敛 /governance/kill-switch 与 /ecosystem/kill-switch） ═══
+        router.get("/governance-v2/kill-switch", (_req, res) => {
+            res.json({ active: eg2.getCurrent().values.killSwitch === true });
+        });
+
+        router.post("/governance-v2/kill-switch", (req, res) => {
+            const { active, origin, reason } = (req.body || {}) as any;
+            if (typeof active !== "boolean") {
+                res.status(400).json({ error: "active (boolean) required" });
+                return;
+            }
+            const snapshot = eg2.setKillSwitch(active, origin || "dashboard", reason || "manual kill-switch toggle");
+            res.json({ ok: true, snapshot, current: eg2.getCurrent() });
+        });
+
         router.post("/governance-v2/update", (req, res) => {
             const { values, origin, reason } = (req.body || {}) as any;
             if (!values || !origin || !reason) {
@@ -2935,3 +2954,6 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             res.json(eg2.getAuditLogs());
         });
     }
+
+    return router;
+}

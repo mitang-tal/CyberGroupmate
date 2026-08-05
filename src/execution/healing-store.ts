@@ -2,7 +2,7 @@ import { ExecutionHealingAction, HealingStrategy, HealingActionStatus } from "./
 
 export interface HealingStore {
     insert(action: ExecutionHealingAction): void;
-    updateStatus(actionId: string, status: HealingActionStatus, error?: string, completedAtMs?: number): void;
+    updateStatus(actionId: string, status: HealingActionStatus, error?: string, completedAtMs?: number, actionDetails?: Record<string, unknown>): void;
     getById(actionId: string): ExecutionHealingAction | undefined;
     query(options: {
         alertId?: string;

@@ -35,6 +35,31 @@ export class ReputationEvaluator {
     evaluate(input: ReputationEvaluationInput): AgentReputation {
         const now = Date.now();
         const total = input.capabilityExecutions.length;
+        const existing = this.store.getByAgentId(input.agentId);
+
+        // 无任何执行历史 → 中性声誉（normal / 0.5），
+        // 避免全新 agent 因空数据被错误归类为 untrusted/probation。
+        // 与 getDispatchWeight 无记录默认（normal / 0.5）保持一致。
+        if (total === 0) {
+            const neutral: AgentReputation = {
+                agentId: input.agentId,
+                agentName: input.agentName,
+                trustScore: 0.5,
+                trustState: "normal",
+                reliability: 0.5,
+                riskProbability: 0,
+                avgLatencyMs: 0,
+                totalExecutions: existing?.totalExecutions ?? 0,
+                totalFailures: existing?.totalFailures ?? 0,
+                capabilityScores: existing?.capabilityScores ?? [],
+                probationUntilMs: undefined,
+                lastEvaluatedAtMs: now,
+                updatedAtMs: now,
+            };
+            this.store.upsert(neutral);
+            return neutral;
+        }
+
         const successes = input.capabilityExecutions.filter((e) => e.success).length;
         const failures = total - successes;
 
@@ -75,7 +100,6 @@ export class ReputationEvaluator {
         const probationUntilMs = trustState === "probation" ? now + PROBATION_PERIOD_MS : undefined;
 
         // Check probation recovery
-        const existing = this.store.getByAgentId(input.agentId);
         if (existing?.trustState === "probation" && existing.probationUntilMs && now > existing.probationUntilMs) {
             // Probation period expired — check if behavior improved
             if (trustScore >= 0.55) {
@@ -156,9 +180,11 @@ export class ReputationEvaluator {
     // ─── Private ───
 
     private calculateTrustScore(reliability: number, riskProbability: number, failures: number, total: number): number {
-        const relScore = reliability * 0.5;               // reliability contributes 50%
-        const riskPenalty = riskProbability * 0.3;        // risk contributes -30%
-        const failureRatePenalty = total > 0 ? (failures / total) * 0.2 : 0; // failure rate -20%
+        if (total === 0) return 0.5; // 无历史数据 → 中性分数，避免空数据算成 0.25
+
+        const relScore = reliability;                        // reliability 满分基数 1.0
+        const riskPenalty = riskProbability * 0.3;           // risk 最高扣 -30%
+        const failureRatePenalty = (failures / total) * 0.2; // failure rate 最高扣 -20%
 
         const score = relScore - riskPenalty - failureRatePenalty;
         return Math.max(0, Math.min(1, Math.round(score * 100) / 100));

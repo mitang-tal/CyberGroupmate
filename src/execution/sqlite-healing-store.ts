@@ -62,7 +62,7 @@ export class SqliteHealingStore implements HealingStore {
         );
     }
 
-    updateStatus(actionId: string, status: HealingActionStatus, error?: string, completedAtMs?: number): void {
+    updateStatus(actionId: string, status: HealingActionStatus, error?: string, completedAtMs?: number, actionDetails?: Record<string, unknown>): void {
         const now = completedAtMs ?? Date.now();
         const patch: Record<string, unknown> = { status };
         if (status === "succeeded" || status === "failed") {
@@ -70,6 +70,9 @@ export class SqliteHealingStore implements HealingStore {
         }
         if (error !== undefined) {
             patch.error = error;
+        }
+        if (actionDetails !== undefined) {
+            patch.action_details = JSON.stringify(actionDetails);
         }
 
         const sets: string[] = [];

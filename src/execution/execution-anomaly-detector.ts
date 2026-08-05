@@ -120,11 +120,13 @@ export class ExecutionAnomalyDetector {
         const threshold = this.config.continuousFailureThreshold - 1; // current failure counts as 1
         if (threshold <= 0) return;
 
-        // Count recent consecutive failures for the same method
+        // Count recent consecutive failures for the same method.
+        // 当前 record 已入库（detector 在 complete() 后调用），query 会包含它，
+        // 因此 limit 用 threshold + 1，排除当前记录后仍能凑够 threshold 个先前失败。
         const recent = this.store.query({
             method: record.method,
             status: "failure" as ExecutionStatus,
-            limit: threshold,
+            limit: threshold + 1,
         });
 
         // Exclude current record, check if we have `threshold` consecutive failures
@@ -198,9 +200,10 @@ export class ExecutionAnomalyDetector {
         const windowStart = Date.now() - this.config.errorClusterWindowMs;
 
         // Count same error type in the window
+        // 当前 record 已入库，limit 用 threshold + 1 避免当前记录挤掉真实历史
         const recentErrors = this.store.query({
             status: "failure" as ExecutionStatus,
-            limit: this.config.errorClusterThreshold,
+            limit: this.config.errorClusterThreshold + 1,
         }).filter(r =>
             r.id !== record.id &&
             r.createdAtMs > windowStart &&

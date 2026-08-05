@@ -15,6 +15,19 @@ export type ExecutionSource =
     | "agent"
     | "host_call";
 
+/**
+ * 失败分类（Audit Fix Phase 1.1）
+ * - policy_denied: 治理拦截（Kill Switch / 护栏）——不进入失败经验库
+ * - execution_error: 真实执行错误
+ * - timeout: 超时
+ * - capability_error: 能力/方法不存在或不可用
+ */
+export type FailureCategoryCode =
+    | "policy_denied"
+    | "execution_error"
+    | "timeout"
+    | "capability_error";
+
 export interface ExecutionRecord {
     id: string;
     runId?: string;
@@ -25,11 +38,25 @@ export interface ExecutionRecord {
     parentId?: string;
     sequence?: number;
 
+    /** Meta 决策执行关联的决策 id（decisionId → execution 端到端可回溯） */
+    decisionId?: string;
+    /** Meta 决策真实验证结果（真实回读 ExecutionRecord 状态后产出，非标志位） */
+    verificationResult?: {
+        verifiedAtMs: number;
+        executionId: string;
+        executionStatus: string;
+        verified: boolean;
+        detail: string;
+    };
+
     source: ExecutionSource;
 
     method: string;
 
     status: ExecutionStatus;
+
+    /** 失败分类（用于区分治理拦截与真实执行错误，policy_denied 不进入失败经验库） */
+    failureCategory?: FailureCategoryCode;
 
     durationMs?: number;
     timeoutMs?: number;

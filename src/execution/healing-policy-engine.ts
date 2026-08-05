@@ -9,7 +9,7 @@
  */
 
 import crypto from "node:crypto";
-import type { ExecutionAlert, HealingStrategy, ExecutionHealingAction } from "./execution-record.types";
+import type { ExecutionAlert, HealingStrategy, ExecutionHealingAction, ExecutionRecord } from "./execution-record.types";
 import type { HealingStore } from "./healing-store";
 import type { ExecutionRecordService } from "./execution-record-service";
 
@@ -17,9 +17,20 @@ const MAX_RETRIES = 3;
 const GUARDRAIL_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 const GUARDRAIL_MAX_ATTEMPTS = 2;
 
+/**
+ * 真实重试执行器契约（Audit Fix Phase 2.2）
+ * 由宿主注入真实 executor，重新执行原 execution 路径并等待真实结果。
+ * 返回真实结果状态——禁止把模拟执行标记为成功。
+ */
+export type RetryExecutor = (
+    original: ExecutionRecord,
+    action: ExecutionHealingAction,
+) => Promise<{ status: "success" | "failure"; error?: string; durationMs?: number }>;
+
 export class HealingPolicyEngine {
     private healingStore: HealingStore;
     private service: ExecutionRecordService;
+    private retryExecutor?: RetryExecutor;
 
     constructor(
         healingStore: HealingStore,
@@ -27,6 +38,11 @@ export class HealingPolicyEngine {
     ) {
         this.healingStore = healingStore;
         this.service = service;
+    }
+
+    /** 注入真实重试执行器（无执行器时 retry 明确失败，绝不伪造成功） */
+    setRetryExecutor(executor: RetryExecutor): void {
+        this.retryExecutor = executor;
     }
 
     /**
@@ -59,46 +75,55 @@ export class HealingPolicyEngine {
 
     /**
      * 执行重试 Handler（指数退避）
+     *
+     * Audit Fix Phase 2.2：禁止伪造成功。
+     * 原实现 start → markRunning → complete(success) 没有任何真实执行，
+     * 是假成功。现在必须通过注入的真实 executor 重新执行并等待真实结果：
+     *
+     *   pending → in_progress → succeeded / failed
+     *
+     * 没有注入 executor 时明确失败（不伪造），并说明原因。
      */
     async applyRetry(executionId: string, action: ExecutionHealingAction): Promise<boolean> {
         this.updateAction(action.actionId, "in_progress");
+
+        const record = this.service.getById(executionId);
+        if (!record) {
+            this.updateAction(action.actionId, "failed", "Original execution not found", Date.now());
+            return false;
+        }
+
+        if (!this.retryExecutor) {
+            // 没有真实执行器：禁止伪造成功。真实重试需要持久化的调用参数与宿主 executor，
+            // 未注入时宁可标记失败也不 fake success。
+            this.updateAction(action.actionId, "failed",
+                "Retry blocked: no real retry executor available. Original execution parameters are not persisted, cannot re-execute honestly.",
+                Date.now());
+            return false;
+        }
 
         for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
             const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 30_000);
             await this.sleep(backoffMs);
 
             try {
-                // Re-execute via service — the service.start/markRunning/complete lifecycle
-                const record = this.service.getById(executionId);
-                if (!record) {
-                    this.updateAction(action.actionId, "failed", "Original execution not found");
+                // 真实重试：executor 负责重新执行原 execution path 并返回真实结果
+                const result = await this.retryExecutor(record, action);
+                if (result.status === "success") {
+                    this.updateAction(action.actionId, "succeeded", undefined, Date.now());
+                    return true;
+                }
+                if (attempt >= MAX_RETRIES) {
+                    this.updateAction(action.actionId, "failed", result.error ?? "Retry failed", Date.now());
                     return false;
                 }
-
-                // Create a new execution with the same parameters
-                const newId = this.service.start({
-                    runId: record.runId,
-                    sessionId: record.sessionId,
-                    taskId: record.taskId,
-                    agentId: record.agentId,
-                    source: record.source,
-                    method: record.method,
-                    timeoutMs: record.timeoutMs,
-                    parentId: record.parentId,
-                });
-                this.service.markRunning(newId);
-                this.service.complete(newId, "success");
-
-                // Record the healing action as succeeded
-                this.updateAction(action.actionId, "succeeded", undefined, Date.now());
-                return true;
+                // 失败但未到上限 → 继续退避重试
             } catch (err) {
                 const errMsg = err instanceof Error ? err.message : String(err);
                 if (attempt >= MAX_RETRIES) {
                     this.updateAction(action.actionId, "failed", errMsg, Date.now());
                     return false;
                 }
-                // Continue to next retry
             }
         }
 
@@ -119,15 +144,25 @@ export class HealingPolicyEngine {
                 return undefined;
             }
 
-            // Build structured diagnosis result (simulated — real Meta integration in Phase 6)
+            // Build structured diagnosis result
+            // Audit Fix Phase 2.3：当前为关键词/上下文启发式诊断（真实 Meta 推理在后续 Phase），
+            // 必须显式标记 diagnosisSource，禁止 Dashboard 把 heuristic 显示成真实诊断。
             const diagnosis = {
+                diagnosisSource: "heuristic" as "heuristic" | "meta" | "llm",
                 rootCause: (ctx as any).contextSummary?.message || "Unknown",
                 recommendedAction: this.buildRecommendedAction(ctx),
                 affectedComponent: (ctx as any).sourceComponent,
                 severity: (ctx as any).severity,
+                executionContext: (ctx as any).contextSummary,
             };
 
-            this.updateAction(action.actionId, "succeeded", undefined, Date.now());
+            const actionDetails = {
+                diagnosis,
+                contextSummary: (ctx as any).contextSummary,
+                sourceComponent: (ctx as any).sourceComponent,
+                executionId: action.executionId,
+            };
+            this.updateAction(action.actionId, "succeeded", undefined, Date.now(), actionDetails);
             return diagnosis;
         } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -193,8 +228,8 @@ export class HealingPolicyEngine {
         return action;
     }
 
-    private updateAction(actionId: string, status: ExecutionHealingAction["status"], error?: string, completedAtMs?: number): void {
-        this.healingStore.updateStatus(actionId, status, error, completedAtMs);
+    private updateAction(actionId: string, status: ExecutionHealingAction["status"], error?: string, completedAtMs?: number, actionDetails?: Record<string, unknown>): void {
+        this.healingStore.updateStatus(actionId, status, error, completedAtMs, actionDetails);
     }
 
     private sleep(ms: number): Promise<void> {

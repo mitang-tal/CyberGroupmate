@@ -11,6 +11,7 @@
  */
 
 import { NotificationCenter, type NotificationEvent } from "./event/notification-center.js";
+import { llmEvents, type LLMResponseEvent } from "./core/llm.js";
 import { ensureCompositeId, getRawId, getPlatform, getGroupModelKey } from "./core/chat-id.js";
 import { SandboxPool } from "./sandbox/sandbox-pool.js";
 import type { ShellWakeEvent } from "./sandbox/sandbox.js";
@@ -405,6 +406,8 @@ async function main(): Promise<void> {
                         return sandboxDispatchApi.listTasks(options);
                     },
                 },
+                // Audit Fix Phase 1：所有 tool / host call 执行前经过护栏（闭包安全：onAcquire 运行时才执行）
+                guardrail: globalGuardrail,
                 buildEnvPlan,
                 getCurrentEnvPlan: () => currentEnvPlan,
                 setCurrentEnvPlan: (plan) => {
@@ -438,9 +441,164 @@ async function main(): Promise<void> {
     join(DATA_DIR, "execution-records.db")
 );
 
+	// ─── Phase 5-8 仪表盘组件装配（Execution Analytics / Governance / Intelligence） ───
+	const { SqliteAlertStore } = await import("./execution/sqlite-alert-store.js");
+	const { SqliteHealingStore } = await import("./execution/sqlite-healing-store.js");
+	const executionAlertStore = new SqliteAlertStore(join(DATA_DIR, "execution-alerts.db"));
+	const executionHealingStore = new SqliteHealingStore(join(DATA_DIR, "execution-healing.db"));
 	const executionRecordService = new ExecutionRecordService(
-    executionRecordStore
-);
+	    executionRecordStore,
+	    executionAlertStore,
+	    executionHealingStore
+	);
+
+	// ─── Audit Fix Phase 2.1：实例化 ExecutionAnomalyDetector 并接入真实执行完成链路 ───
+	// 执行完成后自动检测异常并生成 Alert（不再依赖 Dashboard 手动创建）
+	const { ExecutionAnomalyDetector } = await import("./execution/execution-anomaly-detector.js");
+	const executionAnomalyDetector = new ExecutionAnomalyDetector(
+	    executionRecordStore,
+	    executionRecordService,
+	);
+	executionRecordService.setAnomalyDetector(executionAnomalyDetector);
+
+	// ─── Phase 6: Capability Registry / Dispatcher ───
+	const { CapabilityRegistry } = await import("./capability-registry/capability-registry.js");
+	const { CapabilityDispatcher } = await import("./capability-registry/capability-dispatcher.js");
+	const capabilityRegistry = new CapabilityRegistry();
+	const capabilityDispatcher = new CapabilityDispatcher(capabilityRegistry);
+
+	// 注册一组默认 Agent（供 Dashboard 查看能力拓扑 / 派发测试）
+	capabilityRegistry.register({
+	    name: "main-agent",
+	    capabilities: [
+	        { name: "code_execution", category: "coding", tags: ["python", "shell", "code"], description: "执行 Python / Shell 代码" },
+	        { name: "file_operations", category: "filesystem", tags: ["read", "write", "fs"], description: "文件读写与目录操作" },
+	        { name: "web_search", category: "research", tags: ["search", "web"], description: "网络信息检索" },
+	        { name: "memory_query", category: "memory", tags: ["memory", "query"], description: "长期记忆查询" },
+	    ],
+	});
+	capabilityRegistry.register({
+	    name: "subagent-worker",
+	    capabilities: [
+	        { name: "task_execution", category: "tasks", tags: ["subagent", "task"], description: "子代理任务执行" },
+	        { name: "media_processing", category: "media", tags: ["image", "media"], description: "媒体文件处理" },
+	    ],
+	});
+	capabilityRegistry.register({
+	    name: "meta-overseer",
+	    capabilities: [
+	        { name: "system_governance", category: "governance", tags: ["meta", "guardrail"], description: "系统治理与护栏" },
+	        { name: "task_replanning", category: "planning", tags: ["replan", "plan"], description: "任务重规划" },
+	    ],
+	});
+
+	// 保持注册 Agent 在线（心跳保活，供 Dashboard 派发测试使用）
+	const agentHeartbeatTimer = setInterval(() => {
+	    for (const agent of capabilityRegistry.listAgents()) {
+	        capabilityRegistry.heartbeat(agent.agentId);
+	    }
+	}, 30_000);
+	if (agentHeartbeatTimer.unref) agentHeartbeatTimer.unref();
+
+	// ─── Phase 6: Meta Decision Engine ───
+	const { SqliteDecisionStore } = await import("./meta-decision/sqlite-decision-store.js");
+	const { MetaDecisionEngine } = await import("./meta-decision/meta-decision-engine.js");
+	const metaDecisionStore = new SqliteDecisionStore(join(DATA_DIR, "meta-decisions.db"));
+	const metaDecisionEngine = new MetaDecisionEngine(metaDecisionStore, {
+	    capabilityRegistry,
+	    capabilityDispatcher,
+	    executionRecordService,
+	});
+
+	// ─── Phase 6: Dynamic Task Planner ───
+	const { SqliteTaskPatchStore } = await import("./task-planner/sqlite-task-patch-store.js");
+	const { DynamicReplanner } = await import("./task-planner/dynamic-replanner.js");
+	const taskPatchStore = new SqliteTaskPatchStore(join(DATA_DIR, "task-planner.db"));
+	const dynamicReplanner = new DynamicReplanner(taskPatchStore, executionRecordService, capabilityDispatcher);
+
+	// ─── Phase 6: Governance & Guardrails ───
+	const { SqliteGovernanceStore } = await import("./governance/sqlite-governance-store.js");
+	const { GlobalGuardrailEvaluator } = await import("./governance/global-guardrail-evaluator.js");
+	    const governanceStore = new SqliteGovernanceStore(join(DATA_DIR, "governance.db"));
+	    const globalGuardrail = new GlobalGuardrailEvaluator(governanceStore);
+
+	    // Audit Fix Phase 1：所有自主派发入口经过护栏（Kill Switch / Loop Prevention / Rate Limit）
+	    capabilityDispatcher.setGuardrailEvaluator(globalGuardrail);
+
+	    // Audit Fix Phase 3.3：Loop Prevention 系统侧计数 + replan 入口护栏
+	    // 计数来源：ReplanPlan 持久化记录（同一 execution_id 的真实 replan 事件数）
+	    globalGuardrail.setReplanCounterProvider((executionId) => dynamicReplanner.getReplanCount(executionId));
+	    dynamicReplanner.setGuardrailEvaluator(globalGuardrail);
+
+	// ─── Phase 7: Stability Validation ───
+	const { ChaosEngine } = await import("./validation/chaos-engine.js");
+	const { RecoveryValidator } = await import("./validation/recovery-validator.js");
+	const { CostGuard } = await import("./validation/cost-guard.js");
+	const { StabilityTestSuite } = await import("./validation/stability-test-suite.js");
+	const chaosEngine = new ChaosEngine();
+	const recoveryValidator = new RecoveryValidator();
+	const costGuard = new CostGuard();
+	const stabilityTestSuite = new StabilityTestSuite(chaosEngine, recoveryValidator, costGuard);
+
+	// ─── Audit Fix P0-2：CostGuard 接入真实 LLM usage 回调 ───
+	// 免费 LLM（无 pricing）也计数 token / 调用次数；错误调用不计数（与 event-bridge 语义一致）
+	llmEvents.on("llm:response", (data: LLMResponseEvent) => {
+	    if (data.error || !data.usage) return;
+	    costGuard.recordLLMUsage(data.usage);
+	});
+
+	// ─── Phase 7: Failure Intelligence / Experience ───
+	const { SqliteExperienceStore } = await import("./experience/sqlite-experience-store.js");
+	const { FailureExtractor } = await import("./experience/failure-extractor.js");
+	const { ExperienceInjector } = await import("./experience/experience-injector.js");
+	const experienceStore = new SqliteExperienceStore(join(DATA_DIR, "experience.db"));
+	const failureExtractor = new FailureExtractor(experienceStore);
+	const experienceInjector = new ExperienceInjector(failureExtractor);
+
+	// ─── Audit Fix Phase 1.1：真实失败 → 失败经验（policy_denied 被服务层过滤） ───
+	executionRecordService.setFailureExtractor(failureExtractor);
+
+	// ─── Phase 7: Simulation Engine ───
+	const { SimulationEngine } = await import("./simulation/simulation-engine.js");
+	const simulationEngine = new SimulationEngine(failureExtractor, experienceInjector);
+
+	// ─── Phase 7: Agent Reputation ───
+	const { SqliteReputationStore } = await import("./reputation/sqlite-reputation-store.js");
+	const { ReputationEvaluator } = await import("./reputation/reputation-evaluator.js");
+	const reputationStore = new SqliteReputationStore(join(DATA_DIR, "reputation.db"));
+	const reputationEvaluator = new ReputationEvaluator(reputationStore);
+	capabilityDispatcher.setReputationProvider((agentId) => reputationEvaluator.getDispatchWeight(agentId));
+
+	// ─── Phase 7: Meta Self-Test ───
+	const { SqliteSelfTestStore } = await import("./meta-test/sqlite-self-test-store.js");
+	const { MetaSelfTestEngine } = await import("./meta-test/meta-self-test-engine.js");
+	const selfTestStore = new SqliteSelfTestStore(join(DATA_DIR, "meta-self-test.db"));
+	const metaSelfTestEngine = new MetaSelfTestEngine(selfTestStore, {
+	    guardrail: globalGuardrail,
+	    extractor: failureExtractor,
+	    reputation: reputationEvaluator,
+	});
+
+	// ─── Phase 8: Ecosystem（生态中心） ───
+	const { EcosystemGovernor } = await import("./ecosystem/ecosystem-governor.js");
+	const { FederationStore } = await import("./ecosystem/federation-store.js");
+	const { ConflictResolver } = await import("./conflict/conflict-resolver.js");
+	const { NegotiationEngine } = await import("./negotiation/negotiation-engine.js");
+	const { EvolutionAnalyzer } = await import("./evolution/evolution-analyzer.js");
+	const { EcosystemGovernance } = await import("./governance-v2/ecosystem-governance.js");
+	const { SqliteGovernanceV2Store } = await import("./governance-v2/sqlite-governance-v2-store.js");
+	const ecosystemGovernance = new EcosystemGovernance(new SqliteGovernanceV2Store(join(DATA_DIR, "governance.db")));
+	const ecosystemGovernor = new EcosystemGovernor(ecosystemGovernance);
+
+	// ═══ Phase 4.1 治理收敛：Gov2 为唯一配置源，广播 kill-switch / rate limit / quarantine ═══
+	ecosystemGovernance.attachTargets({
+	    governor: ecosystemGovernor,
+	    guardrail: { setKillSwitch: (active) => globalGuardrail.toggleKillSwitch(active) },
+	});
+	const federationStore = new FederationStore(experienceStore, ecosystemGovernor, simulationEngine);
+	const conflictResolver = new ConflictResolver();
+	const negotiationEngine = new NegotiationEngine({ dispatcher: capabilityDispatcher, conflictResolver });
+	const evolutionAnalyzer = new EvolutionAnalyzer(reputationEvaluator);
 
     const { createInterface: createRL } = await import("node:readline");
     const hostRL = createRL({ input: process.stdin, output: process.stdout });
@@ -1045,6 +1203,7 @@ async function main(): Promise<void> {
             sharedMediaDownloader,
             formatMention,
             globalState,
+            globalGuardrail,
         );
     }
 
@@ -1206,6 +1365,25 @@ async function main(): Promise<void> {
                 imageCatalog,
                 adapters,
                 metaSandbox,
+                capabilityRegistry,
+                capabilityDispatcher,
+                metaDecisionEngine,
+                dynamicReplanner,
+                globalGuardrail,
+                stabilityTestSuite,
+                chaosEngine,
+                costGuard,
+                failureExtractor,
+                experienceInjector,
+                simulationEngine,
+                reputationEvaluator,
+                metaSelfTestEngine,
+                ecosystemGovernor,
+                federationStore,
+                conflictResolver,
+                negotiationEngine,
+                evolutionAnalyzer,
+                ecosystemGovernance,
                 onConfigSaved: async (config) => {
                     tokenStats.setProfiles(config.llmProfiles ?? {});
                     if (config.rateLimiting) {
@@ -1758,6 +1936,7 @@ process.once("SIGTERM", () => {
 });
 
 main().catch((err) => {
-    log.error("Fatal error", { error: err instanceof Error ? err.message : String(err) });
+    // 打印完整 stack trace 以便定位 ReferenceError
+    console.error("Fatal error", err);
     process.exit(1);
 });

@@ -22,12 +22,45 @@ import type { GovernanceStore } from "./governance-store";
 
 const VIOLATION_WINDOW_MS = 300_000; // 5 min window for rate limit
 
+/** 环境变量阈值（优先级低于 governance policy config） */
+const ENV_MAX_REPLAN = "CG_MAX_REPLAN_PER_EXECUTION";
+
+/** 默认 replan 阈值 */
+const DEFAULT_MAX_REPLAN = 3;
+
 export class GlobalGuardrailEvaluator {
     private store: GovernanceStore;
     private killSwitchEngaged: boolean = false;
+    /** Phase 3.3：系统侧 replan 计数提供者（execution_id → 真实 replan 事件次数） */
+    private replanCounterProvider?: (executionId: string) => number;
 
     constructor(store: GovernanceStore) {
         this.store = store;
+    }
+
+    /**
+     * Phase 3.3：注入系统侧 replan 计数提供者。
+     * 计数必须来自系统记录（如 ReplanPlan / ExecutionRecord history），不可信任调用方自报。
+     */
+    setReplanCounterProvider(provider: ((executionId: string) => number) | undefined): void {
+        this.replanCounterProvider = provider;
+    }
+
+    /** 当前 replan 计数提供者（供自检探针保存/恢复） */
+    getReplanCounterProvider(): ((executionId: string) => number) | undefined {
+        return this.replanCounterProvider;
+    }
+
+    /**
+     * 当前 replan 阈值（policy config > 环境变量 > 默认 3）
+     */
+    getLoopPreventionLimit(): number {
+        const policies = this.store.listPolicies("loop_prevention", "active");
+        if (policies.length > 0) {
+            const fromPolicy = this.resolveMaxReplan(policies[0]);
+            if (fromPolicy.priority === "policy") return fromPolicy.value;
+        }
+        return this.resolveMaxReplan().value;
     }
 
     /**
@@ -39,7 +72,6 @@ export class GlobalGuardrailEvaluator {
             sourceId: string;
             executionId?: string;
             stepId?: string;
-            replanCount?: number;
         },
     ): GuardrailEvaluation {
         const violations: GuardrailViolation[] = [];
@@ -83,7 +115,12 @@ export class GlobalGuardrailEvaluator {
     }
 
     isKillSwitchActive(): boolean {
-        return this.killSwitchEngaged;
+        // 内存状态与持久化状态必须一致（Audit Fix Phase 1.1）
+        // 重启后 killSwitchEngaged 会重置为 false，但持久化的 policy config 仍可能是 active，
+        // 若只返回内存状态，会出现 UI 显示 inactive 但 evaluateGuardrails 实际仍在阻断。
+        if (this.killSwitchEngaged) return true;
+        const policies = this.store.listPolicies("kill_switch");
+        return policies.some((p) => p.config.isKillSwitchActive === true);
     }
 
     /**
@@ -114,7 +151,6 @@ export class GlobalGuardrailEvaluator {
             sourceId: string;
             executionId?: string;
             stepId?: string;
-            replanCount?: number;
         },
     ): GuardrailViolation | undefined {
         switch (policy.ruleType) {
@@ -145,30 +181,35 @@ export class GlobalGuardrailEvaluator {
 
     private evaluateLoopPrevention(
         policy: GovernancePolicy,
-        payload: { sourceType: ViolationSourceType; sourceId: string; executionId?: string; replanCount?: number },
+        payload: { sourceType: ViolationSourceType; sourceId: string; executionId?: string },
     ): GuardrailViolation | undefined {
-        const maxReplan = policy.config.maxReplanPerExecution ?? 3;
-        const currentCount = payload.replanCount ?? 0;
+        // Phase 3.3：replan 计数由系统维护，忽略调用方传入值（payload 类型已移除 replanCount）
+        const maxReplan = this.resolveMaxReplan(policy).value;
+        const currentCount =
+            payload.executionId && this.replanCounterProvider
+                ? this.replanCounterProvider(payload.executionId)
+                : 0;
 
         if (currentCount >= maxReplan) {
             return this.createViolation(policy, payload.sourceType, payload.sourceId, "terminated",
-                `Loop prevention triggered: ${currentCount} replans detected (max ${maxReplan}). Execution ${payload.executionId || "unknown"} terminated.`);
-        }
-
-        // Check recent violations for the same executionId
-        if (payload.executionId) {
-            const recent = this.store.queryViolations({
-                ruleType: "loop_prevention",
-                limit: 10,
-            });
-            const sameExec = recent.filter((v) => v.sourceId === payload.executionId);
-            if (sameExec.length >= maxReplan) {
-                return this.createViolation(policy, payload.sourceType, payload.sourceId, "terminated",
-                    `Loop prevention: ${sameExec.length} violations for execution ${payload.executionId}. Auto-terminated.`);
-            }
+                `Loop prevention triggered: ${currentCount} replans detected for execution ${payload.executionId || "unknown"} (max ${maxReplan}). Replanning terminated.`);
         }
 
         return undefined;
+    }
+
+    /**
+     * 阈值解析：governance policy config > 环境变量 > 默认 3
+     */
+    private resolveMaxReplan(policy?: GovernancePolicy): { value: number; priority: "policy" | "env" | "default" } {
+        if (policy && typeof policy.config.maxReplanPerExecution === "number" && policy.config.maxReplanPerExecution > 0) {
+            return { value: policy.config.maxReplanPerExecution, priority: "policy" };
+        }
+        const fromEnv = Number(process.env[ENV_MAX_REPLAN]);
+        if (Number.isFinite(fromEnv) && fromEnv > 0) {
+            return { value: fromEnv, priority: "env" };
+        }
+        return { value: DEFAULT_MAX_REPLAN, priority: "default" };
     }
 
     private evaluateRateLimit(
@@ -176,7 +217,8 @@ export class GlobalGuardrailEvaluator {
         payload: { sourceType: ViolationSourceType; sourceId: string },
     ): GuardrailViolation | undefined {
         const cooldown = (policy.config.cooldownPeriodSec ?? 60) * 1000;
-        const recent = this.store.countViolationsSince(cooldown);
+        // 只统计同类型（rate_limit）违规，避免 kill_switch/loop_prevention 违规级联触发限流
+        const recent = this.store.countViolationsSince(cooldown, policy.ruleType);
 
         // Rate limit: if more than 10 violations in the cooldown window, block
         if (recent > 10) {

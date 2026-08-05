@@ -12,6 +12,10 @@
   import DecisionsPanel from './panels/DecisionsPanel.svelte';
   import CodeActPanel from './panels/CodeActPanel.svelte';
   import SubagentTasksPanel from './panels/SubagentTasksPanel.svelte';
+  import ExecutionPanel from './panels/ExecutionPanel.svelte';
+  import GovernancePanel from './panels/GovernancePanel.svelte';
+  import IntelligencePanel from './panels/IntelligencePanel.svelte';
+  import StabilityPanel from './panels/StabilityPanel.svelte';
   import McpPanel from './panels/McpPanel.svelte';
   import RecordingPanel from './panels/RecordingPanel.svelte';
   import LLMLogPanel from './panels/LLMLogPanel.svelte';
@@ -23,6 +27,7 @@
   import SystemPanel from './panels/SystemPanel.svelte';
   import ConfigPanel from './panels/ConfigPanel.svelte';
   import BackgroundAgentPanel from './panels/BackgroundAgentPanel.svelte';
+  import EcosystemPanel from './panels/EcosystemPanel.svelte';
   import TopicDetailPanel from './panels/TopicDetailPanel.svelte';
   import EnqueueModal from './panels/EnqueueModal.svelte';
 
@@ -66,6 +71,10 @@
     <div class:hidden={$activeTab !== 'decisions'}><DecisionsPanel /></div>
     <div class:hidden={$activeTab !== 'codeact'}><CodeActPanel /></div>
     <div class:hidden={$activeTab !== 'subagent-tasks'}><SubagentTasksPanel /></div>
+    <div class:hidden={$activeTab !== 'execution'}><ExecutionPanel /></div>
+    <div class:hidden={$activeTab !== 'governance'}><GovernancePanel /></div>
+    <div class:hidden={$activeTab !== 'intelligence'}><IntelligencePanel /></div>
+    <div class:hidden={$activeTab !== 'stability'}><StabilityPanel /></div>
     <div class:hidden={$activeTab !== 'mcp'}><McpPanel /></div>
     <div class:hidden={$activeTab !== 'recording'}><RecordingPanel /></div>
     <div class:hidden={$activeTab !== 'llm-log'}><LLMLogPanel /></div>
@@ -76,6 +85,7 @@
     <div class:hidden={$activeTab !== 'scheduler'}><SchedulerPanel /></div>
     <div class:hidden={$activeTab !== 'system'}><SystemPanel /></div>
     <div class:hidden={$activeTab !== 'background-agent'}><BackgroundAgentPanel /></div>
+    <div class:hidden={$activeTab !== 'ecosystem'}><EcosystemPanel /></div>
     <div class:hidden={$activeTab !== 'config'}><ConfigPanel /></div>
     <div class:hidden={$activeTab !== 'topic-detail'}><TopicDetailPanel /></div>
 

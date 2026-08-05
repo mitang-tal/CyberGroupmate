@@ -9,7 +9,8 @@
  */
 
 import crypto from "node:crypto";
-import { MetaDecision, MetaPolicyState, DecisionTriggerEvent, DecisionType, DecisionStatus } from "./types";
+import { MetaDecision, MetaPolicyState, DecisionTriggerEvent, DecisionType, DecisionStatus, DecisionVerificationResult, DecisionExecutionOutcome } from "./types";
+import { assertTransition } from "./state-machine";
 import type { DecisionStore } from "./decision-store";
 import type { CapabilityRegistry } from "../capability-registry/capability-registry";
 import type { CapabilityDispatcher } from "../capability-registry/capability-dispatcher";
@@ -137,51 +138,153 @@ export class MetaDecisionEngine {
     }
 
     /**
-     * 执行决策
+     * 执行决策 — Phase 3.1：强制状态机 + execution_id 绑定 + 真实验证
+     *
+     * proposed → approved → executing → executed → verified
+     * 执行动作并产出真实 ExecutionRecord；真实执行失败 → failed。
+     * 验证阶段真实回读 ExecutionRecord 状态，产出 verificationResult。
+     * 违规 transition / 无 execution_id 的 executed 均抛错（store 层同时强制）。
      */
-    executeDecision(decisionId: string): boolean {
+    executeDecision(decisionId: string): DecisionExecutionOutcome {
         const decision = this.decisionStore.getById(decisionId);
-        if (!decision || decision.status !== "proposed") return false;
+        if (!decision) throw new Error(`decision not found: ${decisionId}`);
+        assertTransition(decisionId, decision.status, "approved");
 
         const now = Date.now();
 
-        switch (decision.decisionType) {
-            case "degrade":
-                this.applyDegrade(decision.targetComponent);
-                break;
-            case "redispatch":
-                // Redispatch is advisory — the caller re-calls dispatcher with different params
-                break;
-            case "switch_policy":
-                this.applyPolicySwitch(decision.targetComponent, decision.actionParams);
-                break;
-            case "scale_agent":
-                // Scale is advisory — logged for human intervention
-                break;
+        this.decisionStore.updateStatus(decisionId, "approved");
+        this.decisionStore.updateStatus(decisionId, "executing");
+
+        // 真实执行：创建 ExecutionRecord 并真实完成（禁止伪造成功）
+        if (!this.service) {
+            throw new Error("meta decision engine has no executionRecordService — cannot execute");
+        }
+        const executionId = this.service.start({
+            source: "system",
+            method: `meta.${decision.decisionType}`,
+            taskId: decision.targetComponent,
+            parentId: decision.decisionId,
+            timeoutMs: 30_000,
+        });
+        this.service.markRunning(executionId);
+
+        const outcome = this.runAction(decision);
+
+        this.service.complete(
+            executionId,
+            outcome.status === "success" ? "success" : "failure",
+            {
+                durationMs: Date.now() - now,
+                error: outcome.error,
+            },
+        );
+
+        const executionResult = JSON.stringify({
+            outcome: outcome.status,
+            detail: outcome.detail,
+            executionId,
+        });
+
+        if (outcome.status !== "success") {
+            this.decisionStore.updateStatus(decisionId, "failed", {
+                executedAtMs: now,
+                executionId,
+                executionResult,
+            });
+            // 端到端闭环：失败执行记录同样落 decisionId（可回溯到哪笔决策）
+            this.service.attachDecisionMeta(executionId, decisionId);
+            return { ok: false, decisionId, status: "failed", executionId };
         }
 
-        this.decisionStore.updateStatus(decisionId, "executed", now);
-
-        // Update global policy state
-        this.globalPolicyState.activeDecisions.push({
-            decisionId: decision.decisionId,
-            decisionType: decision.decisionType,
-            targetComponent: decision.targetComponent,
-            appliedAtMs: now,
+        // executed：必须绑定 execution_id（store 层同步强制）
+        this.decisionStore.updateStatus(decisionId, "executed", {
+            executedAtMs: now,
+            executionId,
+            executionResult,
         });
-        this.globalPolicyState.lastEvaluatedAtMs = now;
 
+        // 真实验证：重新从 store 回读 ExecutionRecord，确认 status=success（不是标志位）
+        const record = this.service.getById(executionId);
+        const verified = !!record && record.status === "success";
+        const verificationResult: DecisionVerificationResult = {
+            verifiedAtMs: Date.now(),
+            executionId,
+            executionStatus: record?.status ?? "missing",
+            verified,
+            detail: verified
+                ? `execution record verified: status=success`
+                : `execution record status=${record?.status ?? "missing"} (expected success)`,
+        };
+
+        this.decisionStore.updateStatus(decisionId, verified ? "verified" : "failed", {
+            executedAtMs: now,
+            executionId,
+            executionResult,
+            verificationResult,
+        });
+
+        // 端到端闭环：验证结果随执行记录落库（decisionId + verificationResult）
+        this.service.attachDecisionMeta(executionId, decisionId, verificationResult);
+
+        return {
+            ok: verified,
+            decisionId,
+            status: verified ? "verified" : "failed",
+            executionId,
+        };
+    }
+
+    /**
+     * 验证已执行决策（executed → verified / failed）
+     * 真实回读 ExecutionRecord 状态；无 execution_id 视为验证失败。
+     */
+    verifyDecision(decisionId: string): DecisionVerificationResult {
+        const decision = this.decisionStore.getById(decisionId);
+        if (!decision) throw new Error(`decision not found: ${decisionId}`);
+        assertTransition(decisionId, decision.status, "verified");
+
+        if (!decision.executionId) {
+            throw new Error(`cannot verify decision without execution_id: ${decisionId}`);
+        }
+
+        const record = this.service?.getById(decision.executionId);
+        const verified = !!record && record.status === "success";
+        const verificationResult: DecisionVerificationResult = {
+            verifiedAtMs: Date.now(),
+            executionId: decision.executionId,
+            executionStatus: record?.status ?? "missing",
+            verified,
+            detail: verified
+                ? `execution record verified: status=success`
+                : `execution record status=${record?.status ?? "missing"} (expected success)`,
+        };
+
+        this.decisionStore.updateStatus(decisionId, verified ? "verified" : "failed", {
+            executedAtMs: decision.executedAtMs ?? Date.now(),
+            executionId: decision.executionId,
+            executionResult: decision.executionResult,
+            verificationResult,
+        });
+
+        return verificationResult;
+    }
+
+    /**
+     * 拒绝决策（proposed → rejected）
+     */
+    rejectDecision(decisionId: string): boolean {
+        const decision = this.decisionStore.getById(decisionId);
+        if (!decision) throw new Error(`decision not found: ${decisionId}`);
+        assertTransition(decisionId, decision.status, "rejected");
+        this.decisionStore.updateStatus(decisionId, "rejected");
         return true;
     }
 
     /**
-     * 拒绝决策
+     * 获取单个决策
      */
-    rejectDecision(decisionId: string): boolean {
-        const decision = this.decisionStore.getById(decisionId);
-        if (!decision || decision.status !== "proposed") return false;
-        this.decisionStore.updateStatus(decisionId, "rejected");
-        return true;
+    getDecision(decisionId: string): MetaDecision | undefined {
+        return this.decisionStore.getById(decisionId);
     }
 
     /**
@@ -270,14 +373,45 @@ export class MetaDecisionEngine {
         };
     }
 
-    private applyDegrade(component: string): void {
-        if (!this.globalPolicyState.degradedComponents.includes(component)) {
-            this.globalPolicyState.degradedComponents.push(component);
+    /**
+     * 执行决策动作 — 产出真实执行结果（禁止伪造成功）
+     */
+    private runAction(decision: MetaDecision): {
+        status: "success" | "failure";
+        detail: string;
+        error?: { type: string; message: string };
+    } {
+        switch (decision.decisionType) {
+            case "redispatch": {
+                // 真实重新派发：经过 dispatcher（含 Phase 1 guardrail + Phase 3.2 trust gate）
+                const match = this.dispatcher?.dispatch({ taskType: decision.targetComponent });
+                if (!match) {
+                    return {
+                        status: "failure",
+                        detail: "no trusted online agent matched for redispatch",
+                        error: {
+                            type: "NoSuitableAgent",
+                            message: `redispatch failed: no trusted online agent matched for "${decision.targetComponent}"`,
+                        },
+                    };
+                }
+                return {
+                    status: "success",
+                    detail: `redispatch target: ${match.agentName} (${match.capabilityId}) via ${match.matchType}`,
+                };
+            }
+            case "degrade":
+            case "switch_policy":
+            case "scale_agent":
+                // 当前无真实执行器 → 真实失败，禁止伪造成功
+                return {
+                    status: "failure",
+                    detail: `no real executor wired for decision type "${decision.decisionType}"`,
+                    error: {
+                        type: "NoExecutor",
+                        message: `decision type ${decision.decisionType} has no real executor`,
+                    },
+                };
         }
-    }
-
-    private applyPolicySwitch(component: string, params: Record<string, unknown>): void {
-        // Policy switch is recorded in the decision log
-        // Actual policy change is handled by the component's policy manager
     }
 }

@@ -8,3 +8,11 @@ config.yaml
 
 # runtime data
 workspace/
+
+# misc scratch / backup / generated
+*.bak
+nohup.out
+diff.txt
+query_records.sh
+Commit.md
+docs/

@@ -55,6 +55,7 @@ import { fileURLToPath } from "node:url";
 import { shouldCompact, compact as contextManagerCompact } from "../memory-v2/context-manager.js";
 import { DEFAULT_BANNED_WORDS } from "../core/banned-words.js";
 import { registerPendingMessageSignal, type PendingMessageSignal } from "../sandbox/send-interrupt.js";
+import type { GuardrailEvaluatorLike } from "../governance/types.js";
 
 const log = createLogger("code-act-executor");
 
@@ -466,6 +467,8 @@ export class CodeActExecutor {
     private memory: MemoryStoreV2 | null = null;
     /** GlobalState 引用（用于同步 Meta Session Digest 与任务历史） */
     private globalState: Pick<GlobalState, "getSessionDigests" | "updateDispatchedSubagentTask"> | null = null;
+    /** Audit Fix Phase 1：自主执行入口护栏（Kill Switch / Loop Prevention / Rate Limit） */
+    private guardrailEvaluator?: GuardrailEvaluatorLike;
 
     constructor(chatId: string, config?: Partial<CodeActExecutorConfig>) {
         this.chatId = chatId;
@@ -531,6 +534,7 @@ export class CodeActExecutor {
         mediaDownloader?: MediaDownloader,
         formatMention?: (rawUserId: string, username?: string) => string | undefined,
         globalState?: Pick<GlobalState, "getSessionDigests" | "updateDispatchedSubagentTask">,
+        guardrail?: GuardrailEvaluatorLike,
     ): void {
         this.sandboxPool = sandboxPool;
         this.nc = nc;
@@ -547,7 +551,8 @@ export class CodeActExecutor {
         this.mediaDownloader = mediaDownloader;
         this.formatMentionFn = formatMention;
         this.globalState = globalState ?? this.globalState;
-        log.info("setDependencies", { chatId: this.chatId, hasSandboxPool: true, hasVision: !!visionConfig, hasVisionLlm: !!visionLlmConfig, hasDownload: !!downloadFn, hasTyping: !!sendTyping, hasMediaDownloader: !!mediaDownloader, hasMention: !!formatMention, hasGlobalState: !!this.globalState });
+        this.guardrailEvaluator = guardrail;
+        log.info("setDependencies", { chatId: this.chatId, hasSandboxPool: true, hasVision: !!visionConfig, hasVisionLlm: !!visionLlmConfig, hasDownload: !!downloadFn, hasTyping: !!sendTyping, hasMediaDownloader: !!mediaDownloader, hasMention: !!formatMention, hasGlobalState: !!this.globalState, hasGuardrail: !!guardrail });
     }
 
     /**
@@ -631,6 +636,23 @@ export class CodeActExecutor {
         let callback: SubagentCallback;
 
         try {
+            // ═══ Guardrail Runtime Check (Phase 1) ═══
+            // 自主执行入口（agent turn）必须经过护栏；被拦则任务失败并回报 Meta
+            if (this.guardrailEvaluator) {
+                const evaluation = this.guardrailEvaluator.evaluateGuardrails({
+                    sourceType: "dispatch",
+                    sourceId: task.taskId,
+                    executionId: agentTurnExecutionId,
+                });
+                if (!evaluation.allowed) {
+                    const guardrailError = new Error(
+                        `Agent task blocked by guardrail: ${evaluation.reasoning || "policy violation"}. Submit follow-up to Meta instead.`,
+                    ) as Error & { guardrailBlocked?: boolean };
+                    guardrailError.guardrailBlocked = true;
+                    throw guardrailError;
+                }
+            }
+
             // ═══ Fix 9: 实际的 Sandbox 执行逻辑 ═══
             if (this.hasDependencies()) {
                 callback = await this.executeWithSandbox(task, startTime, runId, agentTurnExecutionId);
@@ -640,15 +662,25 @@ export class CodeActExecutor {
             }
 
             // ═══ Complete agent turn (success) ═══
+            // Audit Fix Phase 1.1 补充：sandbox 内检测到的 policy violation
+            // （callback.failureType === "policy_denied"）必须记录为 policy_denied，
+            // 不能落入普通 failure（否则 failureCategory 会变成 execution_error）。
             if (agentTurnExecutionId) {
                 this.executionRecordService?.markRunning(agentTurnExecutionId);
+                const completedStatus =
+                    callback.failureType === "policy_denied"
+                        ? "policy_denied"
+                        : callback.status === "COMPLETED" ? "success"
+                            : callback.status === "ERROR" ? "failure"
+                                : "interrupted";
                 this.executionRecordService?.complete(agentTurnExecutionId,
-                    callback.status === "COMPLETED" ? "success"
-                        : callback.status === "ERROR" ? "failure"
-                            : "interrupted",
+                    completedStatus,
                     {
                         durationMs: callback.durationMs,
-                        error: callback.error ? { message: callback.error } : undefined,
+                        error: callback.error ? {
+                            type: callback.failureType === "policy_denied" ? "PolicyViolation" : undefined,
+                            message: callback.error,
+                        } : undefined,
                     }
                 );
             }
@@ -656,6 +688,7 @@ export class CodeActExecutor {
         } catch (err) {
             const durationMs = Date.now() - startTime;
             const cancelledByUser = this.cancelRequested;
+            const guardrailBlocked = !!(err as { guardrailBlocked?: boolean })?.guardrailBlocked;
             const thinkingSummary = cancelledByUser
                 ? formatThinkingPlaceholder("执行已被用户取消，未保留可用的思考记录")
                 : formatThinkingPlaceholder("执行在 session 外层异常中断，未保留可用的思考记录");
@@ -684,12 +717,16 @@ export class CodeActExecutor {
             });
 
             // ═══ Complete agent turn (failure) ═══
+            // Audit Fix Phase 1.1：护栏拦截的 agent turn 记录为 policy_denied（非普通 failure）
             if (agentTurnExecutionId) {
                 this.executionRecordService?.complete(agentTurnExecutionId,
-                    cancelledByUser ? "interrupted" : "failure",
+                    cancelledByUser ? "interrupted" : guardrailBlocked ? "policy_denied" : "failure",
                     {
                         durationMs,
-                        error: cancelledByUser ? undefined : { message: String(err) },
+                        error: cancelledByUser ? undefined : {
+                            type: guardrailBlocked ? "GuardrailDenied" : undefined,
+                            message: String(err),
+                        },
                     }
                 );
             }

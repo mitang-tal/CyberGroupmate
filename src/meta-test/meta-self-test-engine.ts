@@ -142,14 +142,17 @@ export class MetaSelfTestEngine {
 
                 const killSwitchWorks = !killResult.allowed;
 
-                // Test 2: Loop prevention
+                // Test 2: Loop prevention（Phase 3.3：计数由系统侧提供，调用方无法自报）
+                // 探针模拟系统已记录 5 次 replan（provider 注入），验证 evaluateGuardrails 阻断
+                const prevReplanProvider = this.guardrail.getReplanCounterProvider();
+                this.guardrail.setReplanCounterProvider(() => 5); // 模拟系统侧已记录 5 次 replan（超过默认 max 3）
                 const loopResult = this.guardrail.evaluateGuardrails({
                     sourceType: "task_patch",
                     sourceId: "self-test-loop",
                     executionId: "self-test",
                     stepId: "step-1",
-                    replanCount: 5, // exceeds max 3
                 });
+                this.guardrail.setReplanCounterProvider(prevReplanProvider);
 
                 const loopPreventionWorks = !loopResult.allowed;
 

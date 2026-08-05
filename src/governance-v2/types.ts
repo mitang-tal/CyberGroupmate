@@ -8,6 +8,8 @@ export interface GovernancePolicyValues {
     evolutionCoolingDays: number;
     governorRateLimit: number;
     quarantineCategories: string[];
+    /** 生态治理全局 Kill-Switch（唯一事实源，广播到 Guardrail 与 Governor） */
+    killSwitch: boolean;
 }
 
 export interface PolicySnapshot {
@@ -21,7 +23,7 @@ export interface PolicySnapshot {
 
 export interface GovernanceAuditLog {
     logId: string;
-    action: "create" | "update" | "rollback";
+    action: "create" | "update" | "rollback" | "kill_switch";
     fromVersion?: string;
     toVersion: string;
     changeDiff: string;
@@ -36,4 +38,5 @@ export const DEFAULT_POLICY_VALUES: GovernancePolicyValues = {
     evolutionCoolingDays: 14,
     governorRateLimit: 10,
     quarantineCategories: ["resource_exhausted", "logic_deadlock"],
+    killSwitch: false,
 };

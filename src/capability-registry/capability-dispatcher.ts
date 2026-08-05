@@ -9,9 +9,14 @@
 
 import { CapabilityRegistry } from "./capability-registry";
 import { DispatchRequest, DispatchMatch, AgentRegistration } from "./types";
+import type { GuardrailEvaluatorLike } from "../governance/types.js";
+import { createLogger } from "../core/logger.js";
+
+const log = createLogger("capability-dispatcher");
 
 export class CapabilityDispatcher {
     private reputationProvider?: (agentId: string) => { trustScore: number; trustState: string; reliability: number };
+    private guardrailEvaluator?: GuardrailEvaluatorLike;
 
     constructor(private registry: CapabilityRegistry) {}
 
@@ -22,12 +27,35 @@ export class CapabilityDispatcher {
         this.reputationProvider = provider;
     }
 
+    /** 注入护栏评估器（Audit Fix Phase 1：所有自主派发入口必须经过护栏） */
+    setGuardrailEvaluator(evaluator: GuardrailEvaluatorLike): void {
+        this.guardrailEvaluator = evaluator;
+    }
+
     /**
      * 根据任务需求分发到最合适的 Agent
      */
     dispatch(request: DispatchRequest): DispatchMatch | undefined {
+        // ═══ Guardrail Runtime Check (Phase 1) ═══
+        // 任何自主派发入口必须经过护栏（Kill Switch / Loop Prevention / Rate Limit）
+        if (this.guardrailEvaluator) {
+            const evaluation = this.guardrailEvaluator.evaluateGuardrails({
+                sourceType: "dispatch",
+                sourceId: request.taskType,
+                stepId: request.category ?? request.taskType,
+            });
+            if (!evaluation.allowed) {
+                log.warn("dispatch blocked by guardrail", {
+                    taskType: request.taskType,
+                    category: request.category,
+                    reasoning: evaluation.reasoning,
+                });
+                return undefined;
+            }
+        }
+
         const agents = this.registry.listAgents().filter(
-            (a) => a.status === "online" || a.status === "busy",
+            (a) => (a.status === "online" || a.status === "busy") && this.isTrustedAgent(a),
         );
 
         if (agents.length === 0) return undefined;
@@ -53,7 +81,7 @@ export class CapabilityDispatcher {
      */
     listCandidates(request: DispatchRequest): DispatchMatch[] {
         const agents = this.registry.listAgents().filter(
-            (a) => a.status === "online" || a.status === "busy",
+            (a) => (a.status === "online" || a.status === "busy") && this.isTrustedAgent(a),
         );
 
         const results: DispatchMatch[] = [];
@@ -110,6 +138,8 @@ export class CapabilityDispatcher {
 
     private tryExactMatch(agents: AgentRegistration[], tags: string[]): DispatchMatch | undefined {
         for (const agent of agents) {
+            // Phase 3.2 硬过滤：untrusted agent 不允许通过 exact match 获得任务
+            if (!this.isTrustedAgent(agent)) continue;
             for (const cap of agent.capabilities) {
                 const hasAllTags = tags.every((t) => cap.tags.includes(t));
                 if (hasAllTags) {
@@ -127,8 +157,12 @@ export class CapabilityDispatcher {
     }
 
     private tryRuleMatch(agents: AgentRegistration[], category: string): DispatchMatch | undefined {
+        // Phase 3.2 硬过滤：untrusted agent 不允许通过 rule match 获得任务
+        const trusted = agents.filter((a) => this.isTrustedAgent(a));
+        if (trusted.length === 0) return undefined;
+
         // Sort by reputation weight desc, then active task count asc
-        const sorted = [...agents].sort(
+        const sorted = [...trusted].sort(
             (a, b) => {
                 const wa = this.getReputationWeight(a.agentId);
                 const wb = this.getReputationWeight(b.agentId);
@@ -154,7 +188,11 @@ export class CapabilityDispatcher {
     }
 
     private tryFallbackMatch(agents: AgentRegistration[], taskType: string): DispatchMatch | undefined {
-        const sorted = [...agents].sort(
+        // Phase 3.2 硬过滤：untrusted agent 不允许通过 fallback match 获得任务
+        const trusted = agents.filter((a) => this.isTrustedAgent(a));
+        if (trusted.length === 0) return undefined;
+
+        const sorted = [...trusted].sort(
             (a, b) => {
                 const wa = this.getReputationWeight(a.agentId);
                 const wb = this.getReputationWeight(b.agentId);
@@ -198,6 +236,17 @@ export class CapabilityDispatcher {
         }
 
         return undefined;
+    }
+
+    /**
+     * Phase 3.2 硬过滤：untrusted agent 直接排除，不允许通过任何匹配路径获得任务。
+     * trustState 来源：reputationProvider（main.ts 注入，按 agentId 查询）。
+     * 未注入 reputationProvider 时保持原行为（不启用过滤，避免误伤无信任系统的环境）。
+     */
+    private isTrustedAgent(agent: AgentRegistration): boolean {
+        if (!this.reputationProvider) return true;
+        const rep = this.reputationProvider(agent.agentId);
+        return rep.trustState !== "untrusted";
     }
 
     private getReputationWeight(agentId: string): number {

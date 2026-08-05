@@ -5,6 +5,8 @@
  * 在 Execution start 前检查预算，超出则拦截。
  */
 
+import type { LLMResponse } from "../core/llm.js";
+
 export interface CostBudget {
     /** 24h Token 上限（input+output） */
     maxTokenBudget24h: number;
@@ -96,6 +98,20 @@ export class CostGuard {
         this.usage.tokenUsed24h += tokenUsed;
         this.usage.apiCalls24h += 1;
         this.usage.dailyCostCents += costCents;
+    }
+
+    /**
+     * 记录一次真实 LLM 调用的 token 用量。
+     * 免费模型（无 pricing）也计数 token 与调用次数，costCents 传 0。
+     */
+    recordLLMUsage(usage: LLMResponse["usage"], costCents = 0): void {
+        if (!usage) return;
+        const tokenUsed =
+            (usage.promptTokens ?? 0)
+            + (usage.completionTokens ?? 0)
+            + (usage.cachedTokens ?? 0)
+            + (usage.cacheCreationTokens ?? 0);
+        this.recordUsage(tokenUsed, costCents);
     }
 
     /**

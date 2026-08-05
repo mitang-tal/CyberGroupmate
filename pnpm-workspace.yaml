@@ -1,0 +1,6 @@
+allowBuilds:
+  '@google/genai': false
+  better-sqlite3: false
+  esbuild: false
+  node-pty: false
+  protobufjs: false

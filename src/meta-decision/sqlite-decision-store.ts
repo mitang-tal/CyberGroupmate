@@ -1,7 +1,8 @@
 import Database from "better-sqlite3";
 import crypto from "node:crypto";
-import { MetaDecision, DecisionStatus, DecisionType, DecisionTriggerEventType } from "./types";
-import { DecisionStore } from "./decision-store";
+import { MetaDecision, DecisionStatus, DecisionType, DecisionTriggerEventType, DecisionVerificationResult } from "./types";
+import { DecisionStore, DecisionStatusUpdate } from "./decision-store";
+import { assertTransition, IllegalDecisionTransitionError } from "./state-machine";
 
 export class SqliteDecisionStore implements DecisionStore {
     private db: Database.Database;
@@ -38,6 +39,29 @@ export class SqliteDecisionStore implements DecisionStore {
             CREATE INDEX IF NOT EXISTS idx_md_target
             ON meta_decisions(target_component);
         `);
+
+        // Add execution_result column if it doesn't exist (migration for existing tables)
+        try {
+            this.db.exec("ALTER TABLE meta_decisions ADD COLUMN execution_result TEXT");
+        } catch {
+            // Column already exists — safe to ignore
+        }
+        // Phase 3.1 migration：decision → execution 链路与验证结果字段
+        try {
+            this.db.exec("ALTER TABLE meta_decisions ADD COLUMN execution_id TEXT");
+        } catch {
+            // Column already exists — safe to ignore
+        }
+        try {
+            this.db.exec("ALTER TABLE meta_decisions ADD COLUMN verification_result TEXT");
+        } catch {
+            // Column already exists — safe to ignore
+        }
+        try {
+            this.db.exec("ALTER TABLE meta_decisions ADD COLUMN transition_error TEXT");
+        } catch {
+            // Column already exists — safe to ignore
+        }
     }
 
     insert(decision: MetaDecision): void {
@@ -45,9 +69,10 @@ export class SqliteDecisionStore implements DecisionStore {
             INSERT INTO meta_decisions (
                 decision_id, trigger_event_type, trigger_source_id, trigger_detail,
                 decision_type, target_component, action_params, confidence_score,
-                reasoning_text, status, created_at_ms, executed_at_ms
+                reasoning_text, status, created_at_ms, executed_at_ms, execution_result,
+                execution_id, verification_result, transition_error
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
             decision.decisionId,
             decision.triggerEvent.eventType,
@@ -61,19 +86,53 @@ export class SqliteDecisionStore implements DecisionStore {
             decision.status,
             decision.createdAtMs,
             decision.executedAtMs ?? null,
+            decision.executionResult ?? null,
+            decision.executionId ?? null,
+            decision.verificationResult ? JSON.stringify(decision.verificationResult) : null,
+            decision.transitionError ?? null,
         );
     }
 
-    updateStatus(decisionId: string, status: DecisionStatus, executedAtMs?: number): void {
-        const now = executedAtMs ?? Date.now();
-        if (status === "executed" || status === "failed") {
+    updateStatus(decisionId: string, status: DecisionStatus, meta?: DecisionStatusUpdate): void {
+        const current = this.getById(decisionId);
+        if (!current) throw new Error(`decision not found: ${decisionId}`);
+
+        // ═══ Phase 3.1 状态机强制：非法 transition 抛错并记录 ═══
+        try {
+            assertTransition(decisionId, current.status, status);
+            if (status === "executed" && !meta?.executionId) {
+                throw new Error(`executed requires execution_id (decision ${decisionId})`);
+            }
+        } catch (err) {
+            // 记录非法尝试（不改变当前状态）
+            const msg = err instanceof Error ? err.message : String(err);
             this.db.prepare(
-                "UPDATE meta_decisions SET status = ?, executed_at_ms = ? WHERE decision_id = ?"
-            ).run(status, now, decisionId);
-        } else {
+                "UPDATE meta_decisions SET transition_error = ? WHERE decision_id = ?"
+            ).run(`${msg} (attempted at ${Date.now()})`, decisionId);
+            throw err;
+        }
+
+        const now = meta?.executedAtMs ?? Date.now();
+        const executionId = meta?.executionId ?? null;
+        const verificationResult = meta?.verificationResult
+            ? JSON.stringify(meta.verificationResult)
+            : null;
+        const executionResult = meta?.executionResult ?? null;
+
+        if (status === "executed" || status === "verified" || status === "failed") {
+            this.db.prepare(`
+                UPDATE meta_decisions
+                SET status = ?, executed_at_ms = ?, execution_result = ?, execution_id = ?,
+                    verification_result = ?
+                WHERE decision_id = ?
+            `).run(status, now, executionResult, executionId, verificationResult, decisionId);
+        } else if (status === "approved" || status === "executing") {
             this.db.prepare(
-                "UPDATE meta_decisions SET status = ? WHERE decision_id = ?"
+                "UPDATE meta_decisions SET status = ?, transition_error = NULL WHERE decision_id = ?"
             ).run(status, decisionId);
+        } else {
+            this.db.prepare("UPDATE meta_decisions SET status = ? WHERE decision_id = ?")
+                .run(status, decisionId);
         }
     }
 
@@ -157,6 +216,10 @@ export class SqliteDecisionStore implements DecisionStore {
             status: row.status,
             createdAtMs: row.created_at_ms,
             executedAtMs: row.executed_at_ms ?? undefined,
+            executionResult: row.execution_result ?? undefined,
+            executionId: row.execution_id ?? undefined,
+            verificationResult: row.verification_result ? JSON.parse(row.verification_result) : undefined,
+            transitionError: row.transition_error ?? undefined,
         };
     }
 }

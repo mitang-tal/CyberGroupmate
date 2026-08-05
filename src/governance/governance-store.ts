@@ -16,5 +16,5 @@ export interface GovernanceStore {
         limit?: number;
         offset?: number;
     }): GuardrailViolation[];
-    countViolationsSince(windowMs: number): number;
+    countViolationsSince(windowMs: number, ruleType?: GuardrailRuleType): number;
 }

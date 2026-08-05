@@ -11,6 +11,7 @@ export class SqliteExecutionRecordStore
         this.db = new Database(dbPath);
         this.db.pragma("journal_mode = WAL");
         this.initTables();
+        this.migrateTables();
     }
 
     private initTables() {
@@ -30,6 +31,7 @@ export class SqliteExecutionRecordStore
                 timeout_ms INTEGER,
                 error_type TEXT,
                 error_message TEXT,
+                failure_category TEXT,
                 created_at INTEGER NOT NULL,
                 started_at_ms INTEGER,
                 completed_at_ms INTEGER
@@ -58,6 +60,44 @@ export class SqliteExecutionRecordStore
         `);
     }
 
+    /**
+     * Migrate an existing database that may be missing columns added in later
+     * versions of the schema.  Each missing column is added via
+     * ALTER TABLE … ADD COLUMN.
+     */
+    private migrateTables() {
+        const columns = this.db.pragma("table_info(execution_records)") as {
+            cid: number;
+            name: string;
+            type: string;
+            notnull: number;
+            dflt_value: string | null;
+            pk: number;
+        }[];
+
+        const existing = new Set(columns.map((c) => c.name));
+
+        const migrations: { name: string; def: string }[] = [
+            { name: "parent_id", def: "parent_id TEXT" },
+            { name: "agent_id", def: "agent_id TEXT" },
+            { name: "sequence", def: "sequence INTEGER" },
+            { name: "timeout_ms", def: "timeout_ms INTEGER" },
+            { name: "started_at_ms", def: "started_at_ms INTEGER" },
+            { name: "completed_at_ms", def: "completed_at_ms INTEGER" },
+            { name: "failure_category", def: "failure_category TEXT" },
+            { name: "decision_id", def: "decision_id TEXT" },
+            { name: "verification_result", def: "verification_result TEXT" },
+        ];
+
+        for (const col of migrations) {
+            if (!existing.has(col.name)) {
+                this.db.exec(
+                    `ALTER TABLE execution_records ADD COLUMN ${col.def}`
+                );
+            }
+        }
+    }
+
     insert(record: ExecutionRecord) {
         this.db.prepare(`
             INSERT INTO execution_records (
@@ -75,11 +115,14 @@ export class SqliteExecutionRecordStore
                 timeout_ms,
                 error_type,
                 error_message,
+                failure_category,
+                decision_id,
+                verification_result,
                 created_at,
                 started_at_ms,
                 completed_at_ms
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
             record.id,
             record.runId ?? null,
@@ -95,6 +138,9 @@ export class SqliteExecutionRecordStore
             record.timeoutMs ?? null,
             record.error?.type ?? null,
             record.error?.message ?? null,
+            record.failureCategory ?? null,
+            record.decisionId ?? null,
+            record.verificationResult ? JSON.stringify(record.verificationResult) : null,
             record.createdAtMs,
             record.startedAtMs ?? null,
             record.completedAtMs ?? null
@@ -122,6 +168,9 @@ export class SqliteExecutionRecordStore
                     message: row.error_message ?? undefined,
                 }
                 : undefined,
+            failureCategory: row.failure_category ?? undefined,
+            decisionId: row.decision_id ?? undefined,
+            verificationResult: row.verification_result ? JSON.parse(row.verification_result) : undefined,
             createdAtMs: row.created_at,
             startedAtMs: row.started_at_ms ?? undefined,
             completedAtMs: row.completed_at_ms ?? undefined,
@@ -147,6 +196,18 @@ export class SqliteExecutionRecordStore
         if (patch.error !== undefined) {
             sets.push("error_type = ?", "error_message = ?");
             params.push(patch.error?.type ?? null, patch.error?.message ?? null);
+        }
+        if (patch.failureCategory !== undefined) {
+            sets.push("failure_category = ?");
+            params.push(patch.failureCategory);
+        }
+        if (patch.decisionId !== undefined) {
+            sets.push("decision_id = ?");
+            params.push(patch.decisionId);
+        }
+        if (patch.verificationResult !== undefined) {
+            sets.push("verification_result = ?");
+            params.push(patch.verificationResult ? JSON.stringify(patch.verificationResult) : null);
         }
         if (patch.startedAtMs !== undefined) {
             sets.push("started_at_ms = ?");
@@ -247,6 +308,9 @@ export class SqliteExecutionRecordStore
             timeout_ms,
             error_type,
             error_message,
+            failure_category,
+            decision_id,
+            verification_result,
             created_at,
             started_at_ms,
             completed_at_ms
@@ -338,11 +402,11 @@ export class SqliteExecutionRecordStore
         const overviewRow = this.db.prepare(`
             SELECT
                 COUNT(*) as total,
-                SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as success_count,
-                SUM(CASE WHEN status = 'failure' THEN 1 ELSE 0 END) as failure_count,
-                SUM(CASE WHEN status = 'interrupted' THEN 1 ELSE 0 END) as interrupted_count,
-                SUM(CASE WHEN status = 'timed_out' THEN 1 ELSE 0 END) as timed_out_count,
-                SUM(CASE WHEN status = 'policy_denied' THEN 1 ELSE 0 END) as policy_denied_count,
+                COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) as success_count,
+                COALESCE(SUM(CASE WHEN status = 'failure' THEN 1 ELSE 0 END), 0) as failure_count,
+                COALESCE(SUM(CASE WHEN status = 'interrupted' THEN 1 ELSE 0 END), 0) as interrupted_count,
+                COALESCE(SUM(CASE WHEN status = 'timed_out' THEN 1 ELSE 0 END), 0) as timed_out_count,
+                COALESCE(SUM(CASE WHEN status = 'policy_denied' THEN 1 ELSE 0 END), 0) as policy_denied_count,
                 AVG(CASE WHEN duration_ms IS NOT NULL THEN duration_ms ELSE 0 END) as avg_duration,
                 MAX(CASE WHEN duration_ms IS NOT NULL THEN duration_ms ELSE 0 END) as max_duration
             FROM execution_records
@@ -360,7 +424,7 @@ export class SqliteExecutionRecordStore
             interruptedCount: overviewRow.interrupted_count,
             timedOutCount: overviewRow.timed_out_count,
             policyDeniedCount: overviewRow.policy_denied_count,
-            successRate: terminalCount > 0 ? Math.round((successCount / terminalCount) * 10000) / 100 : 0,
+            successRate: terminalCount > 0 ? Math.round((successCount / terminalCount) * 10000) / 10000 : 0,
             avgDurationMs: Math.round(overviewRow.avg_duration),
             maxDurationMs: overviewRow.max_duration,
         };
@@ -389,7 +453,7 @@ export class SqliteExecutionRecordStore
                 source: row.source,
                 count: sTotal,
                 failureCount: sFailures,
-                successRate: sTotal > 0 ? Math.round(((sTotal - sFailures) / sTotal) * 10000) / 100 : 0,
+                successRate: sTotal > 0 ? Math.round(((sTotal - sFailures) / sTotal) * 10000) / 10000 : 0,
                 avgDurationMs: Math.round(row.avg_duration),
             };
         });
@@ -415,7 +479,7 @@ export class SqliteExecutionRecordStore
                 source: row.source,
                 count: mTotal,
                 failureCount: mFailures,
-                successRate: mTotal > 0 ? Math.round(((mTotal - mFailures) / mTotal) * 10000) / 100 : 0,
+                successRate: mTotal > 0 ? Math.round(((mTotal - mFailures) / mTotal) * 10000) / 10000 : 0,
                 avgDurationMs: Math.round(row.avg_duration),
             };
         });

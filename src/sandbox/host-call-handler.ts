@@ -28,6 +28,7 @@ import { prefixedShortUuid } from "../core/ids.js";
 import { SandboxPool } from "./sandbox-pool.js";
 import { type Sandbox } from "./sandbox.js";
 import { getPendingMessageSignal, SendInterruptedError, type InterruptedSendPayload } from "./send-interrupt.js";
+import type { GuardrailEvaluationPayload, GuardrailEvaluatorLike } from "../governance/types.js";
 
 
 const log = createLogger("sandbox-host-calls");
@@ -55,6 +56,7 @@ interface DispatchApiLike {
     listTasks(options?: unknown): Promise<unknown>;
 }
 
+/** 护栏评估器最小契约（结构上兼容 GlobalGuardrailEvaluator） */
 interface CreateSandboxHostCallHandlerDeps {
     appConfig: AppConfig;
     globalState: GlobalState;
@@ -69,6 +71,8 @@ interface CreateSandboxHostCallHandlerDeps {
     sandboxPool: SandboxPool;
     mcpBridge: McpBridgeLike;
     dispatchApi?: DispatchApiLike;
+    /** Audit Fix Phase 1：所有 tool / host call 执行前的护栏检查 */
+    guardrail?: GuardrailEvaluatorLike;
     buildEnvPlan: (envVars?: EnvironmentVariable[]) => ManagedEnvPlan;
     getCurrentEnvPlan: () => ManagedEnvPlan;
     setCurrentEnvPlan: (plan: ManagedEnvPlan) => void;
@@ -997,6 +1001,11 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
     function classifyHostCallError(error: unknown): { type: string; isPolicyDenied: boolean } {
         const message = error instanceof Error ? error.message : String(error);
 
+        // Guardrail denial (kill switch / rate limit / loop prevention)
+        if ((error as { guardrailBlocked?: boolean } | undefined)?.guardrailBlocked || message.includes("blocked by guardrail")) {
+            return { type: "GuardrailDenied", isPolicyDenied: true };
+        }
+
         // Policy violations (sandbox security restrictions)
         if (
             message.includes("not permitted from sandbox") ||
@@ -1066,6 +1075,25 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
                     "(previously denied in this run). " +
                     "Submit follow-up to Meta instead."
                 );
+            }
+
+            // ═══ Guardrail Runtime Check (Phase 1) ═══
+            // 所有 tool / host call 执行前必须经过护栏（Kill Switch / Loop Prevention / Rate Limit）
+            if (deps.guardrail) {
+                const evaluation = deps.guardrail.evaluateGuardrails({
+                    sourceType: "host_call",
+                    sourceId: method,
+                    executionId,
+                    stepId: method,
+                });
+                if (!evaluation.allowed) {
+                    const guardrailError = new Error(
+                        method + " blocked by guardrail: " + (evaluation.reasoning || "policy violation") + ". " +
+                        "Submit follow-up to Meta instead."
+                    ) as Error & { guardrailBlocked?: boolean };
+                    guardrailError.guardrailBlocked = true;
+                    throw guardrailError;
+                }
             }
 
             executionRecordService.markRunning(executionId);

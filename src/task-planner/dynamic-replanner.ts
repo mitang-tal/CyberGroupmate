@@ -11,11 +11,20 @@ import { TaskPatch, ExecutionReplanPlan, ReplacementStep, PatchType } from "./ty
 import type { TaskPatchStore } from "./task-patch-store";
 import type { ExecutionRecordService } from "../execution/execution-record-service";
 import type { CapabilityDispatcher } from "../capability-registry/capability-dispatcher";
+import type { GuardrailEvaluatorLike } from "../governance/types.js";
+import { LoopPreventionError } from "../governance/loop-prevention-error.js";
+
+/** Phase 3.3：replan 入口需要的护栏最小契约（含 replan 阈值查询） */
+type GuardrailWithLoopLimit = GuardrailEvaluatorLike & {
+    getLoopPreventionLimit?: () => number;
+};
 
 export class DynamicReplanner {
     private patchStore: TaskPatchStore;
     private service: ExecutionRecordService;
     private dispatcher?: CapabilityDispatcher;
+    /** Phase 3.3：replan 入口护栏（Loop Prevention / Kill Switch / Rate Limit） */
+    private guardrail?: GuardrailWithLoopLimit;
 
     constructor(
         patchStore: TaskPatchStore,
@@ -25,6 +34,11 @@ export class DynamicReplanner {
         this.patchStore = patchStore;
         this.service = service;
         this.dispatcher = dispatcher;
+    }
+
+    /** Phase 3.3：注入护栏评估器（replan 入口强制经过） */
+    setGuardrailEvaluator(evaluator: GuardrailWithLoopLimit): void {
+        this.guardrail = evaluator;
     }
 
     /**
@@ -75,6 +89,21 @@ export class DynamicReplanner {
         const patch = this.patchStore.getPatch(patchId);
         if (!patch || patch.status !== "draft") return undefined;
 
+        // ═══ Phase 3.3：replan 入口必须经过护栏（系统侧计数，调用方无法绕过） ═══
+        if (this.guardrail) {
+            const evaluation = this.guardrail.evaluateGuardrails({
+                sourceType: "task_patch",
+                sourceId: patch.executionId,
+                executionId: patch.executionId,
+                stepId: patch.failedStepId,
+            });
+            if (!evaluation.allowed) {
+                const replanCount = this.getReplanCount(patch.executionId);
+                const maxReplan = this.guardrail.getLoopPreventionLimit?.() ?? replanCount;
+                throw new LoopPreventionError(patch.executionId, replanCount, maxReplan);
+            }
+        }
+
         const trace = this.service.getTrace(patch.executionId);
         if (!trace) return undefined;
 
@@ -112,6 +141,14 @@ export class DynamicReplanner {
             patches: this.patchStore.queryPatches(executionId),
             plans: this.patchStore.queryPlans(executionId),
         };
+    }
+
+    /**
+     * Phase 3.3：系统侧 replan 计数（同一 execution_id 的 ReplanPlan 记录数）。
+     * 计数唯一来源是系统持久化的 replan 事件，调用方无法自报。
+     */
+    getReplanCount(executionId: string): number {
+        return this.patchStore.queryPlans(executionId).length;
     }
 
     getPatch(patchId: string): TaskPatch | undefined {

@@ -161,8 +161,14 @@ export class SqliteGovernanceStore implements GovernanceStore {
         return rows.map((row: any) => this.mapViolation(row));
     }
 
-    countViolationsSince(windowMs: number): number {
+    countViolationsSince(windowMs: number, ruleType?: GuardrailRuleType): number {
         const cutoff = Date.now() - windowMs;
+        if (ruleType) {
+            const row = this.db.prepare(
+                "SELECT COUNT(*) as cnt FROM guardrail_violations WHERE created_at_ms > ? AND rule_type = ?"
+            ).get(cutoff, ruleType) as any;
+            return row.cnt;
+        }
         const row = this.db.prepare(
             "SELECT COUNT(*) as cnt FROM guardrail_violations WHERE created_at_ms > ?"
         ).get(cutoff) as any;

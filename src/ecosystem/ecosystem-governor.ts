@@ -8,24 +8,41 @@
  */
 
 import type { FederationStatus } from "../experience/types";
+import type { EcosystemGovernance } from "../governance-v2/ecosystem-governance";
 
 interface RateLimitEntry {
     count: number;
     windowStartMs: number;
 }
 
-const DEFAULT_RATE_LIMIT = 10; // 10 submissions per minute per agent
+const DEFAULT_RATE_LIMIT = 10; // 10 submissions per minute per agent（仅无 DI 时回退）
 const RATE_WINDOW_MS = 60_000;
 const QUARANTINE_TRUST_THRESHOLD = 0.55;
 
 export class EcosystemGovernor {
     private rateLimitMap: Map<string, RateLimitEntry> = new Map();
-    private rateLimitPerMinute: number;
+    private rateLimitPerMinute: number = DEFAULT_RATE_LIMIT;
     private killSwitchEngaged: boolean = false;
     private quarantineCategories: Set<string> = new Set(["resource_exhausted", "logic_deadlock"]);
 
-    constructor(rateLimitPerMinute?: number) {
-        this.rateLimitPerMinute = rateLimitPerMinute ?? DEFAULT_RATE_LIMIT;
+    constructor(private governance?: EcosystemGovernance) {
+        // ═══ Phase 4.1 DI：rate limit / quarantine / kill-switch 从 Gov2 读取（单一事实源） ═══
+        if (governance) {
+            this.syncFromGovernance();
+        } else {
+            this.rateLimitPerMinute = DEFAULT_RATE_LIMIT;
+        }
+    }
+
+    /**
+     * 从 Gov2 当前策略热同步本地配置（构造时 + setter 热更新共用）
+     */
+    private syncFromGovernance(): void {
+        if (!this.governance) return;
+        const values = this.governance.getCurrent().values;
+        this.rateLimitPerMinute = values.governorRateLimit ?? DEFAULT_RATE_LIMIT;
+        this.quarantineCategories = new Set(values.quarantineCategories ?? []);
+        this.killSwitchEngaged = values.killSwitch === true;
     }
 
     /**
@@ -140,6 +157,11 @@ export class EcosystemGovernor {
         return this.killSwitchEngaged;
     }
 
+    /** Phase 4.1 sync 热更新：从 Gov2 广播 kill-switch 状态 */
+    setKillSwitch(active: boolean): void {
+        this.killSwitchEngaged = active;
+    }
+
     // ─── Quarantine categories ───
 
     addQuarantineCategory(category: string): void {
@@ -152,6 +174,11 @@ export class EcosystemGovernor {
 
     getQuarantineCategories(): string[] {
         return Array.from(this.quarantineCategories);
+    }
+
+    /** Phase 4.1 sync 热更新：从 Gov2 广播隔离分类（覆盖本地） */
+    setQuarantineCategories(categories: string[]): void {
+        this.quarantineCategories = new Set(categories ?? []);
     }
 
     // ─── Rate limit management ───
@@ -176,10 +203,14 @@ export class EcosystemGovernor {
         return { activeAgents: this.rateLimitMap.size, totalSubmissions };
     }
 
-    /** 重置所有限流和隔离状态 */
+    /** 重置所有限流和隔离状态（Phase 4.1：从 Gov2 当前策略恢复，而非硬编码） */
     reset(): void {
         this.rateLimitMap.clear();
-        this.quarantineCategories = new Set(["resource_exhausted", "logic_deadlock"]);
-        this.killSwitchEngaged = false;
+        if (this.governance) {
+            this.syncFromGovernance();
+        } else {
+            this.quarantineCategories = new Set(["resource_exhausted", "logic_deadlock"]);
+            this.killSwitchEngaged = false;
+        }
     }
 }
