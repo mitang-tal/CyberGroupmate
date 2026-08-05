@@ -1,0 +1,473 @@
+# CyberGroupmate 配置文件示例
+# 复制为 config.yaml 后修改使用
+
+# ─── LLM Profiles ───
+# 定义多个 LLM 配置 profile，每个 profile 有独立的 provider/key/model
+# 在 llm_routing 中通过名称引用
+llm_profiles:
+  # 示例：Google Gemini
+  gemini-flash:
+    provider: openai
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    api_key: "sk-test"
+    model: gemini-3-flash-preview
+    temperature: 0.7
+    max_tokens: 8192            # 输出 token 上限
+    # max_context_tokens: 200000  # 可选，模型允许的最大上下文输入 token 数。
+                                  # 设置后 compact 按此值触发，而非全局默认的 32000。
+                                  # 建议设为模型实际上下文窗口减去 max_tokens 的值。
+    vision: true  # 启用后此 profile 支持多模态图片输入
+    # supports_prefill: true   # 是否支持 assistant prefill（预填充回复开头引导思考方向）。默认 true。
+                               # 不支持的模型（如原版 OpenAI）设为 false 以避免报错
+    # pricing:                 # 可选，每百万 token USD，用于 Dashboard 费用统计
+    #   input: 0.15
+    #   output: 0.60
+    #   cached_input: 0.0375
+    #
+    # ── 多 Key 负载均衡池 ──
+    # 当拥有多个 API key（不同 Google Cloud 项目）时，可配置 pool 实现请求级负载均衡
+    # 配置 pool 后，上方的 api_key 字段会被忽略
+    # pool:
+    #   strategy: round_robin  # round_robin | least_pending | random
+    #   keys:
+    #     - api_key: "AIzaSy...key1"
+    #       # base_url: "..."  # 可选，不同 key 可用不同 base_url（如 AI Studio vs Vertex AI）
+    #       # weight: 1        # 可选，权重（用于区分不同 key 的配额差异）
+    #     - api_key: "AIzaSy...key2"
+    #     - api_key: "AIzaSy...key3"
+
+  gemini-pro:
+    provider: openai
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    api_key: "sk-test"
+    model: gemini-3.1-pro-preview
+    temperature: 1
+    max_tokens: 8192
+    # max_context_tokens: 500000
+    thinking_level: medium  # none | low | medium | high（Gemini 特有）
+    # pricing:
+    #   input: 1.25
+    #   output: 10.00
+    #   cached_input: 0.3125
+
+  # 示例：Anthropic Claude
+  # claude:
+  #   provider: anthropic
+  #   base_url: https://api.anthropic.com/v1
+  #   api_key: ""
+  #   model: claude-sonnet-4-20250514
+  #   temperature: 0.7
+  #   max_context_tokens: 180000  # Claude 200K 窗口，预留输出空间
+  #   max_tokens: 4096
+  #   pricing:
+  #     input: 3.00
+  #     output: 15.00
+  #     cached_input: 0.30
+  #     cache_creation: 3.75
+
+  # 示例：OpenAI
+  # openai:
+  #   provider: openai
+  #   base_url: https://api.openai.com/v1
+  #   api_key: ""
+  #   model: gpt-4o
+  #   temperature: 0.7
+  #   max_context_tokens: 120000  # GPT-4o 128K 窗口
+  #   max_tokens: 4096
+  #   pricing:
+  #     input: 2.50
+  #     output: 10.00
+  #     cached_input: 1.25
+
+  # 示例：Moonshot (OpenAI 兼容)
+  # moonshot:
+  #   provider: openai
+  #   base_url: https://api.moonshot.ai/v1
+  #   api_key: ""
+  #   model: kimi-k2.5
+  #   temperature: 1
+  #   max_context_tokens: 120000  # Moonshot 128K 窗口
+  #   max_tokens: 8192
+
+# ─── 组件级 LLM 路由 ───
+# 为每个组件指定使用的 LLM profile（引用 llm_profiles 名称）
+# 支持单个字符串或数组（fallback chain），未配置的组件使用第一个 profile
+# 数组模式下，第一个 profile 失败（配额耗尽/429）时自动切换到下一个
+llm_routing:
+  # meta — Meta-CodeAct 主循环编排
+  meta: gemini-flash
+  # session — CodeAct 多轮交互（实际生成回复）
+  # 单个 profile:
+  session: gemini-pro
+  # 或使用数组，配额耗尽时自动 fallback:
+  # session:
+  #   - gemini-pro
+  #   - gemini-flash
+  # recording — 话题聚类 + Triage（后台分析）
+  recording: gemini-flash
+  # post_task_followup — Post-task window 内 5 秒批量追问判定（建议用很便宜的小模型）
+  post_task_followup: gemini-flash
+  # reflection — 反思引擎（人物画像/话题总结）
+  reflection: gemini-flash
+  # compact — 上下文压缩（对话历史摘要）
+  compact: gemini-flash
+  # memory — Deep recall / 意图解析（记忆检索辅助）
+  memory: gemini-flash
+  # vision — 图片/贴纸描述（独立 vision 模型）
+  vision: gemini-flash
+
+# ─── Vision 看图设置 ───
+# 控制图片和贴纸的处理行为。需要配合 llm_routing.vision 或 llm_profiles 中设置 vision: true 使用。
+# 所有字段可选，缺省使用括号内默认值
+# vision:
+#   # Attend/Meta 媒体策略（默认 disable）：
+#   #   vision   — 看图（内联 imageParts 给 attend LLM，需 attend profile 设置 vision: true）
+#   #   describe — 仅做媒体文字描述，不内联图片
+#   #   enrich   — 只读已有缓存描述，不调用 Vision；缓存未命中时退回媒体标签/贴纸 emoji
+#   #   disable  — 禁用媒体富化（只保留媒体标签）
+#   attend_mode: disable
+#   # 以 file 形式发送的大图压缩阈值（长边像素）(1024)
+#   max_image_size: 1024
+#   # 单轮上下文最多内联几张图片，超出走 vision 描述 (3)
+#   max_images_per_context: 3
+#   # Sticker 处理模式:
+#   #   emoji_only — 仅显示 emoji 代表含义（默认，不消耗 LLM）
+#   #   vision_cache — 首次识别后缓存描述，相同贴纸复用
+#   #   vision_each — 每次发送都用 vision 模型识别
+#   sticker_mode: emoji_only
+#   # 动态贴纸（WebM 视频贴纸 / TGS 动画贴纸）抽帧数量上限 (3)
+#   # 多帧会按时间均匀采样后一并送 Vision LLM，帮助理解动画含义
+#   # 设为 0 可完全禁用动态贴纸的 vision 识别（仅显示 emoji）
+#   animated_sticker_frames: 3
+#   # 聊天媒体/文件自动下载到 workspace/Downloads/ 的大小上限 (MB) (20)
+#   max_media_download_size: 20
+#   # 已下载媒体文件的保留天数，超期自动清理 (3)
+#   media_retention_days: 3
+
+# ─── 人格设置 ───
+persona:
+  # Agent 的名字
+  name: 赛博群友
+
+  # 人格描述（注入到 system prompt 中）
+  description: |
+    你是一个友好、幽默的群友。你喜欢二次元、技术和有趣的话题。
+    你说话风格轻松随意，偶尔会用一些网络梗。
+    你有自己的观点和偏好，不会无脑附和。
+
+# ─── 全局时区 ───
+# Agent 所处时区 (IANA 标识符)，影响 LLM prompt 中的时间展示和作息判断
+# timezone: "Asia/Shanghai"
+
+# ─── 通知唤醒设置 ───
+notification:
+  # 触发 Q3 即时入队（Main Agent 介入）+ Observer 提权的关键字
+  # 当消息文本包含这些关键字时，会立即触发 Main Agent 处理
+  # 无默认值，必须显式配置
+  mention_keywords:
+    - "赛博群友"
+    - "@赛博群友"
+
+# ─── Telegram 设置 ───
+# 可选。telegram 和 discord 至少配置一个。
+telegram:
+  # 连接模式: "bot" | "userbot"
+  mode: bot
+  # Bot Token (bot 模式下使用)
+  bot_token: "8639316511:AAHdSg8MWuOEldlRzkoz1dXTJmJR3KamteQ"
+  # API ID (bot / userbot 都需要)
+  api_id: "30701804"
+  # API Hash (bot / userbot 都需要)
+  api_hash: "3a872a2497def00bc4ae05fbfb81e513"
+  # 手机号 (userbot 模式下使用；首次登录时会在终端提示输入 OTP / 2FA)
+  phone: ""
+  # 入站白名单（可选）：enabled 为 true 时仅处理下列群组或私聊
+  # whitelist:
+  #   enabled: false
+  #   # 群组 / 超级群 / 频道 chat ID，每行一个（如 -1001234567890）
+  #   groups: []
+  #   # 私聊：对方用户 ID，每行一个
+  #   users: []
+  # 拟人化发送延迟（多条消息连续发送时模拟打字速度）
+  # humanized_delay:
+  #   enabled: true
+  #   ms_per_char: 50       # 每字符延迟（ms），默认 50
+  #   min_delay: 500        # 最短延迟（ms），默认 500
+  #   max_delay: 5000       # 最长延迟（ms），默认 5000
+
+# ─── Discord 设置 ───
+# 可选。telegram 和 discord 至少配置一个。
+# 在 https://discord.com/developers/applications 创建应用，
+# 获取 Bot Token 并开启 MESSAGE CONTENT Intent。
+# discord:
+#   # Bot Token（在 Bot 页面点击 Reset Token 获取）
+#   bot_token: ""
+#   # Application ID（在 General Information 页面，可选，用于 slash commands 注册等）
+#   application_id: ""
+
+# ─── OneBot / NapCat 设置 ───
+# 可选。用于接入 NapCat / LLOneBot / 其他 OneBot v11 实现。
+# onebot:
+#   # WebSocket 地址（NapCat 反向 WS 不适用，这里是 bot 主动连过去的正向 WS）
+#   ws_url: "ws://127.0.0.1:6099/onebot/v11/ws"
+#   # 机器人 QQ 号
+#   self_id: "1234567890"
+#   # 是否将本地文件编码为 data URL 后发送（跨机器部署建议开启）
+#   # 开启后，发送图片时会使用 data:image/png;base64,... 这类 payload，避免 file:// 路径不可达
+#   send_file_as_data_url: true
+#   # 入站白名单（可选）
+#   # whitelist:
+#   #   enabled: true
+#   #   groups: ["123456789"]
+#   #   users: []
+#   # 拟人化发送延迟（可选）
+#   # humanized_delay:
+#   #   enabled: true
+#   #   ms_per_char: 50
+#   #   min_delay: 500
+#   #   max_delay: 5000
+
+# ─── Reflection 设置 ───
+# 控制反思引擎的行为参数
+reflection:
+  # 使用的 LLM profile（引用 llm_profiles 中的名称）
+  # 若设置，优先于 llm_routing.reflection
+  # 如需自定义 temperature/max_tokens，请在 llm_profiles 中新建专用 profile
+  profile: gemini-flash
+
+  # 冷场触发阈值（秒），群沉默多久后自动触发反思
+  silence_threshold: 7200    # 2h
+
+  # 最大反思间隔（秒），即使群一直活跃也至少每此间隔反思一次
+  max_interval: 86400        # 24h
+
+  # 冷场检查间隔（秒），多久检测一次是否冷场
+  check_interval: 300        # 5min
+
+  # 渐进合并阈值（天）
+  merge_thresholds:
+    episode_to_week: 7       # >7天的 episode → week
+    week_to_month: 30        # >30天的 week → month
+    month_to_quarter: 90     # >90天的 month → quarter
+    quarter_to_year: 365     # >365天的 quarter → year
+
+  # 邦巴分层精度限制（按 Tier）
+  tier_limits:
+    1:                        # Tier 1 (5人): 亲密圈
+      max_traits: 10
+      max_interests: 15
+      episode_days: 14
+    2:                        # Tier 2 (15人): 好友圈
+      max_traits: 6
+      max_interests: 10
+      episode_days: 7
+    3:                        # Tier 3 (50人): 社交圈
+      max_traits: 3
+      max_interests: 5
+      episode_days: 3
+    4:                        # Tier 4 (150人): 认识
+      max_traits: 1
+      max_interests: 2
+      episode_days: 1
+
+  # 作息时间 [起始小时, 结束小时]（24h 格式），在此范围外触发"睡前反思"
+  # awake_hours: [8, 24]
+
+# ─── Context Compaction 预算 ───
+# 控制上下文压缩的 token 预算分配
+# 所有字段可选，缺省使用括号内默认值
+# context_budget:
+#   # 模型有效上下文窗口 token 数 (32000)
+#   effective_context_window: 32000
+#   # system prompt 预算比例 (0.20)
+#   system_prompt_ratio: 0.20
+#   # context briefing 预算比例 (0.15)
+#   briefing_ratio: 0.15
+#   # 近期消息预算比例 (0.50)
+#   recent_history_ratio: 0.50
+#   # 输出预留 token 数 (4096)
+#   output_reserve: 4096
+#   # 最少保留近期消息条数 (6)
+#   min_recent_messages: 6
+#   # Context Briefing 最大 token 数 (3000)
+#   max_briefing_tokens: 3000
+
+# ─── Embedding 向量化 ───
+# 控制文本向量化和向量搜索的行为
+# 所有字段可选，缺省使用括号内默认值
+embedding:
+  # 提供者: openai (OpenAI 兼容 API) | local (本地 hash-based)
+  provider: local
+
+  # API base URL（OpenAI 兼容）
+  # base_url: https://api.openai.com/v1
+
+  # API key
+  # api_key: ""
+
+  # 模型名称
+  # model: text-embedding-3-small
+
+  # 向量维度（local 默认 128，openai 默认 1536）
+  # dimensions: 128
+
+  # 相似度度量方法: cosine | dot_product | euclidean | manhattan
+  similarity_metric: cosine
+
+  # ─── 示例：OpenAI 官方 ───
+  # provider: openai
+  # base_url: https://api.openai.com/v1
+  # api_key: "sk-..."
+  # model: text-embedding-3-small
+  # dimensions: 1536
+  # similarity_metric: cosine
+
+  # ─── 示例：自部署 embedding 服务（OpenAI 兼容） ───
+  # provider: openai
+  # base_url: http://localhost:8080/v1
+  # model: bge-base-zh-v1.5
+  # dimensions: 768
+  # similarity_metric: dot_product
+
+# ─── Dashboard 监控仪表盘 ───
+# 实时可视化系统状态、消息流、队列、决策等
+dashboard:
+  # 是否启用（默认 true）
+  enabled: true
+  # HTTP 监听地址。默认 127.0.0.1（仅本机可访问）。
+  # 若需从公网或其他机器访问，可设为 0.0.0.0 监听所有网卡；此时必须设置非空的 token，否则进程会拒绝启动。
+  host: "127.0.0.1"
+  # HTTP 端口（默认 6767）
+  port: 6767
+  # 认证 Token（访问时需携带 ?token=xxx）
+  token: "your-secret-token"
+
+# ─── Prometheus Metrics Exporter ───
+# 对外暴露 Prometheus 兼容的 /metrics 端点，供 Grafana / Prometheus 抓取
+# 所有字段可选，缺省使用括号内安全默认值
+metrics:
+  # 是否启用（默认 true）
+  enabled: true
+  # ⚠️ 绑定地址（默认 "127.0.0.1" = 仅本机可访问）
+  # 强烈建议保持此值。若需要远端 Prometheus 抓取，请使用 nginx/Caddy 反向代理
+  # 并配置 IP allowlist，而非直接修改此字段为 0.0.0.0。
+  host: "127.0.0.1"
+  # HTTP 监听端口（默认 9091）
+  port: 9091
+  # scrape 路径（默认 "/metrics"，通常不需要修改）
+  path: "/metrics"
+
+# ─── Subagent / CodeAct 设置 ───
+# 控制 CodeAct 交互引擎的行为参数
+# 所有字段可选，缺省使用括号内默认值
+# subagent:
+#   # 是否限制 Sandbox 只能通过平台 adapter 向当前绑定的 chatId 执行写操作 (false)
+#   restrict_adapter_writes_to_bound_chat: false
+#   # 是否启用 session 内重复消息拦截；仅真正发送成功后才记录 (true)
+#   deduplicate_sent_messages: true
+#   # Subagent 发言前禁用词检查列表。包含任一词语的文字消息将被拦截，
+#   # 并向 LLM 上下文发出警告，要求修改措辞后重新发送。
+#   # 传空列表（[]）可完全禁用此检查。
+#   # 不填时使用内置默认词表（"确实"、"笑死"、"接住" 等口癖词）。
+#   banned_words:
+#     - 确实
+#     - 笑死
+#     - 还真是
+#     - 接住
+#     - 抓住
+#     - 你说得对
+#     - 说得对
+#     - 不绕
+#     - 我认了
+#   # Subagent 发言后的发酵窗口。窗口内 L0 追问交给 subagent，结束后 callback 回 Meta (120000)
+#   post_task_window_ms: 120000
+#   # 常驻模块清单：始终全量注入子代理运行时的底层基础模块和指定扩展。
+#   # 平台 adapter (例如 telegram/discord) 会在实际生成时自动混入此列表，不需要在此处填写。
+#   # 默认情况下包含以下必备的核心模块，如需精简可自行删改。
+#   base_skills:
+#     - runtime
+#     - memory
+#     - fs
+#     - actions
+#     - skills
+#     - mcp
+#     - cron
+#     - events
+#     - kv
+#     - http
+#     - vision
+#     - shell
+#   code_act:
+#     # 最大交互轮次 (30)
+#     max_turns: 30
+#   meta_history:
+#     # 超过该字符数后，Meta 历史触发批量裁剪 (18000)
+#     soft_char_limit: 18000
+#     # 命中软上限后回落到的字符窗口 (10000)
+#     trim_target_chars: 10000
+#     # 无论如何至少保留多少条消息 (8)
+#     min_messages: 8
+#     # 极端短消息场景下的硬上限条数 (48)
+#     hard_message_limit: 48
+#     # 命中硬上限后回落到的消息条数 (32)
+#     trim_target_messages: 32
+
+# ─── MCP Servers 预配置 ───
+# 在 Sandbox 启动时自动连接的 MCP Server 列表。
+# 每个条目必须指定 name，并提供 command（stdio）或 url（Streamable HTTP）。
+# auto_connect 默认 true，设为 false 则不自动连接（需手动通过 mcp.connect 连接）。
+# mcp_servers:
+#   - name: filesystem
+#     transport: stdio
+#     command: npx
+#     args: ["-y", "@anthropic/mcp-filesystem"]
+#     auto_connect: true
+#   - name: remote-github
+#     transport: streamable-http
+#     url: https://example.com/mcp
+#     headers:
+#       Authorization: "Bearer xxx"
+
+# ─── Recording Pipeline 缓冲/触发 ───
+# 话题聚类 Pipeline 的消息缓冲和 flush 触发参数
+# 控制消息积攒到什么程度才进行一次 LLM 话题分析
+# 所有字段可选，缺省使用括号内默认值
+# recording_pipeline:
+#   # 静默到期时 buffer 至少需要多少条消息才 flush (10)
+#   min_flush_size: 10
+#   # 正常缓冲阈值：消息积攒到此数立即 flush，不等静默 (50)
+#   normal_threshold: 50
+#   # 加速缓冲阈值：检测到强信号（问句/长消息等）后降低的阈值 (15)
+#   eager_threshold: 15
+#   # 正常静默触发时间（ms）：最后一条消息后多久无新消息触发 flush (120000 = 2min)
+#   normal_silence_ms: 120000
+#   # 加速静默触发时间（ms）：强信号模式下的静默触发 (30000 = 30s)
+#   eager_silence_ms: 30000
+
+# ─── 环境变量 ───
+# 自定义环境变量，通过 Dashboard 管理面板可视化编辑。
+# 每个变量可设置作用域 (scope):
+#   both    — 同时注入主进程和沙盒环境
+#   host    — 仅注入主进程，沙盒不可见（适用于敏感密钥）
+#   sandbox — 仅注入沙盒环境，主进程不可见（适用于 Skill 第三方 API Key）
+# env_vars:
+#   - key: TAVILY_API_KEY
+#     value: "tvly-your-api-key"
+#     scope: sandbox
+#   - key: DATABASE_URL
+#     value: "postgres://..."
+#     scope: host
+
+# ─── Background Agent (做梦系统) ───
+# background_agent:
+#   enabled: true               # 是否启用 MCP Server（默认 true）
+#   mcp_port: 3100              # MCP Server 监听端口（默认 3100，仅本机 127.0.0.1）
+#   mcp_token: "your-token"     # 认证 token（不设则每次启动随机生成）
+#   harness: "claude-code"      # harness 类型："claude-code" 或 "copilot"
+#   claude_code_path: "claude"  # Claude CLI 路径（harness=claude-code 时，默认 PATH 中的 claude）
+#   copilot_path: "copilot"     # Copilot CLI 路径（harness=copilot 时，默认 PATH 中的 copilot）
+#   harness_model: "sonnet"     # harness 使用的模型名称
+#   max_budget_usd: 5           # 单次做梦的最大花费（美元，仅 Claude Code 支持）
+#   schedule: "0 3 * * *"       # 定时做梦的 cron 表达式（默认凌晨 3 点）
+#   extra_args:                 # 自定义启动参数（传给 harness CLI）
+#     - "--verbose"
