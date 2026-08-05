@@ -190,6 +190,54 @@ describe("callLLMWithFallback 多模态降级", () => {
         }
     });
 
+    it("chain 首个 profile 没写 vision:true 时照常发图（真实 vision 路由形状）", async () => {
+        // 线上实测配置：vision 路由第一个 describer 是没写 vision:true 的通用模型
+        // （claude-opus 其实完全支持图片），后面才跟着一串写了标记的。
+        // 按"chain 里有人声明过"判断会把主 describer 的图剥掉，直接废掉图片描述。
+        const recorded: RecordedRequest[] = [];
+        const { server, port } = await startFakeApi(recorded);
+        try {
+            await callLLMWithFallback(
+                messagesWithImage(),
+                [
+                    makeProfile(port, "claude-like-describer"),
+                    makeProfile(port, "flagged-backup", true),
+                ],
+                { caller: "vision", maxRetries: 0 },
+            );
+            assert.equal(recorded.length, 1, "第一个就该成功");
+            assert.equal(
+                hasImageParts(recorded[0].body),
+                true,
+                "首个 describer 未声明 vision 也必须收到图片，否则图片描述功能被废掉",
+            );
+        } finally {
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+        }
+    });
+
+    it("非 vision profile 排在 vision profile 之前时不降级，之后才降级", async () => {
+        const recorded: RecordedRequest[] = [];
+        const { server, port } = await startFakeApi(recorded);
+        try {
+            await callLLMWithFallback(
+                messagesWithImage(),
+                [
+                    makeProfile(port, "plain-boom"),          // 无标记，排在前 → 保留图片
+                    makeProfile(port, "vision-boom", true),   // 有标记 → 保留图片
+                    makeProfile(port, "text-only"),           // 前面有 vision → 降级
+                ],
+                { caller: "test", maxRetries: 0 },
+            );
+            assert.equal(recorded.length, 3);
+            assert.equal(hasImageParts(recorded[0].body), true, "vision profile 之前不降级");
+            assert.equal(hasImageParts(recorded[1].body), true, "vision profile 本身不降级");
+            assert.equal(hasImageParts(recorded[2].body), false, "vision profile 之后才降级");
+        } finally {
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+        }
+    });
+
     it("单个非 vision profile 也不降级（无 chain 信息可依据）", async () => {
         const recorded: RecordedRequest[] = [];
         const { server, port } = await startFakeApi(recorded);

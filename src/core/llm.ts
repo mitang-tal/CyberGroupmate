@@ -673,10 +673,13 @@ export function stripImagePartsForNonVisionModel(messages: ChatMessage[]): ChatM
  * 必然继续失败，fallback 形同虚设。所以这里对声明了 vision !== true 的 profile
  * 自动把图片降级成文字占位。
  *
- * 仅当 chain 里至少有一个 profile 显式声明 `vision: true` 时才启用降级：
- * 说明这份配置确实在维护该标记。若整条 chain 都没声明（例如 vision 路由的
- * profile 忘了写 vision: true），则不动载荷，保持原行为，避免把真正能看图的
- * 模型误降级成瞎子。
+ * 降级条件是「前面已经有 profile 声明过 vision: true」——也就是确实发生了
+ * "为 vision 模型准备的载荷落到了声明不支持 vision 的模型上"。
+ *
+ * 为什么不能用"整条 chain 里有人声明过"来判断：vision 路由的实际配置里
+ * 第一个 describer 常常是没写 vision: true 的通用模型（如 claude-opus，
+ * 它其实完全支持图片），后面才跟着一串写了标记的。按 chain 级判断会把
+ * 主 describer 的图片剥掉，直接废掉图片描述功能。
  */
 export async function callLLMWithFallback(
     messages: ChatMessage[],
@@ -688,12 +691,19 @@ export async function callLLMWithFallback(
     }
 
     const imageCount = countImageParts(messages);
-    const chainDeclaresVision = configs.some((config) => config.vision === true);
-    const degradeEnabled = imageCount > 0 && chainDeclaresVision;
     let degradedMessages: ChatMessage[] | null = null;
 
-    const payloadFor = (config: LLMConfig): ChatMessage[] => {
-        if (!degradeEnabled || config.vision === true) return messages;
+    /**
+     * 第 index 个 profile 该收到什么载荷。
+     * 只有「它自己声明不支持 vision」且「它之前存在声明支持 vision 的 profile」时才降级。
+     */
+    const payloadFor = (index: number): ChatMessage[] => {
+        if (imageCount === 0) return messages;
+        const config = configs[index];
+        if (config.vision === true) return messages;
+        const precededByVisionProfile = configs.slice(0, index).some((earlier) => earlier.vision === true);
+        if (!precededByVisionProfile) return messages;
+
         if (!degradedMessages) {
             degradedMessages = stripImagePartsForNonVisionModel(messages);
         }
@@ -701,13 +711,13 @@ export async function callLLMWithFallback(
     };
 
     if (configs.length === 1) {
-        return callLLM(payloadFor(configs[0]), configs[0], options);
+        return callLLM(messages, configs[0], options);
     }
 
     let lastError: Error | null = null;
     for (let i = 0; i < configs.length; i++) {
         const config = configs[i];
-        const payload = payloadFor(config);
+        const payload = payloadFor(i);
         if (payload !== messages) {
             log.warn("callLLMWithFallback: 目标 profile 不支持 vision，图片已降级为文字占位", {
                 model: config.model,
