@@ -1873,6 +1873,29 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         }
     });
 
+    // 手动触发离线补抓（补载掉线/重启期间漏掉的消息）
+    router.post("/adapters/backfill", async (req, res) => {
+        if (!deps.backfillCoordinator) {
+            res.status(400).json({ error: "backfill coordinator 未初始化" });
+            return;
+        }
+        const platformRaw = req.body?.platform;
+        const platforms = typeof platformRaw === "string" && platformRaw
+            ? [platformRaw]
+            : Array.isArray(platformRaw) && platformRaw.length > 0
+                ? platformRaw.map(String)
+                : undefined;
+
+        try {
+            log.info("Dashboard 手动触发离线补抓", { platforms: platforms ?? "all" });
+            const outcome = await deps.backfillCoordinator.run(platforms);
+            res.json({ ok: true, ...outcome });
+        } catch (err) {
+            log.warn("Dashboard 手动补抓失败", { error: String(err) });
+            res.status(500).json({ error: String(err) });
+        }
+    });
+
     // ─── Mute Control ───
     // 获取所有 muted 聊天状态
     router.get("/mute/status", (_req, res) => {

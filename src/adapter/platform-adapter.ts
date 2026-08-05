@@ -36,6 +36,42 @@ export interface AdapterConnectionStatus {
     supportsReconnect?: boolean;
 }
 
+/** 某个会话已知的最新消息（补抓水位线） */
+export interface BackfillWatermark {
+    /** 平台原生 message id */
+    messageId: string;
+    /** 该消息的原始时间（ISO 8601） */
+    timestamp: string;
+}
+
+export interface BackfillOptions {
+    /** 每个会话最多补抓多少条 */
+    maxMessagesPerChat: number;
+    /** 最多补抓多少个会话 */
+    maxChats: number;
+    /** 只补抓该时间点之后的消息 */
+    since: Date;
+    /** 查询某会话的水位线；null 表示本地没有任何历史 */
+    getWatermark(chatId: string): BackfillWatermark | null;
+    /** 本平台本地已知的会话列表（composite chatId），用于决定补抓范围 */
+    knownChatIds: string[];
+    /**
+     * 投递一条补抓到的消息。
+     * 由 coordinator 负责过滤（chatFilter / userGate）、落盘与唤醒统计，
+     * adapter 只需要把消息标准化成与实时入站一致的形状。
+     */
+    deliver(event: Record<string, unknown>): void;
+}
+
+export interface BackfillResult {
+    /** 实际补抓到消息的会话数 */
+    chats: number;
+    /** 投递的消息条数 */
+    messages: number;
+    /** 未能补抓的原因（如 bot 模式无历史权限），用于日志 */
+    notes?: string[];
+}
+
 export interface PlatformAdapter {
     readonly platform: string;
     start(): Promise<void>;
@@ -44,6 +80,14 @@ export interface PlatformAdapter {
     getConnectionStatus?(): AdapterConnectionStatus;
     /** 手动重连：丢弃当前连接并立即重建，重置退避计数 */
     reconnect?(): Promise<void>;
+    /**
+     * 补抓离线期间漏掉的消息。
+     *
+     * 平台能力差异很大（见 docs）：telegram userbot 可精确补齐，
+     * telegram bot 无历史权限，discord 可按 snowflake 精确分页，
+     * onebot 只能拉最近 N 条近似补齐。
+     */
+    fetchMissedMessages?(options: BackfillOptions): Promise<BackfillResult>;
     canHandle(method: string): boolean;
     handleCall(method: string, args: unknown[]): Promise<unknown>;
     getSceneTypeDefs?(scene: string, baseTypeDefs: string): string | undefined;

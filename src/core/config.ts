@@ -440,6 +440,27 @@ export interface ChatFilterConfig {
     chatIds?: string[];
 }
 
+/**
+ * 离线补抓配置：重启 / 掉线重连后补载错过的消息。
+ *
+ * 补抓的消息只落盘 + 参与话题聚类，不会逐条唤醒 agent；
+ * 若离线期间有 DM / @ 提及，会为该会话产生一次合并唤醒。
+ */
+export interface BackfillConfig {
+    /** 是否启用。默认 true */
+    enabled?: boolean;
+    /** 单个会话最多补抓多少条。默认 50 */
+    maxMessagesPerChat?: number;
+    /** 单次补抓最多处理多少个会话。默认 20 */
+    maxChats?: number;
+    /** 只补抓最近多少分钟内的消息。默认 720（12 小时） */
+    maxAgeMinutes?: number;
+    /** 连接恢复后延迟多久开始补抓（毫秒），等平台侧状态稳定。默认 3000 */
+    delayMs?: number;
+    /** 补抓的消息是否下载媒体（图片/贴纸）。默认 false，避免打爆 vision */
+    downloadMedia?: boolean;
+}
+
 /** 紧急拉黑（emergency.block）预设文案。拉黑瞬间对被拉黑者发送一次。 */
 export interface EmergencyBlockConfig {
     /** 拉黑时发送的预设文案。 */
@@ -553,6 +574,8 @@ export interface AppConfig {
     metrics?: MetricsConfig;
     /** 聊天过滤（按 chatId 黑/白名单过滤入站消息） */
     chatFilter?: ChatFilterConfig;
+    /** 离线补抓（重启/重连后补载错过的消息） */
+    backfill?: BackfillConfig;
     /** 紧急拉黑预设文案（emergency.block） */
     emergencyBlock?: EmergencyBlockConfig;
     /** MCP Server 预配置列表（Sandbox 启动时自动连接） */
@@ -761,6 +784,7 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
         envVars: parseEnvVars(fileConfig),
         metrics: parseMetricsConfig(fileConfig),
         chatFilter: parseChatFilterConfig(fileConfig),
+        backfill: parseBackfillConfig(fileConfig),
         emergencyBlock: parseEmergencyBlockConfig(fileConfig),
         mcpServers: parseMcpServersConfig(fileConfig),
         grounding: parseGroundingConfig(fileConfig),
@@ -898,6 +922,26 @@ function parseChatFilterConfig(fileConfig: Record<string, unknown>): ChatFilterC
         mode: mode === "whitelist" ? "whitelist" : mode === "blacklist" ? "blacklist" : undefined,
         chatIds: Array.isArray(idsRaw)
             ? idsRaw.map(v => String(v).trim()).filter(Boolean)
+            : undefined,
+    };
+}
+
+function parseBackfillConfig(fileConfig: Record<string, unknown>): BackfillConfig | undefined {
+    const raw = (fileConfig.backfill ?? fileConfig.offline_backfill) as Record<string, unknown> | undefined;
+    if (!raw || typeof raw !== "object") return undefined;
+    const positive = (value: unknown): number | undefined => {
+        if (value == null) return undefined;
+        const parsed = Number(value);
+        return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
+    };
+    return {
+        enabled: raw.enabled != null ? Boolean(raw.enabled) : undefined,
+        maxMessagesPerChat: positive(raw.max_messages_per_chat ?? raw.maxMessagesPerChat),
+        maxChats: positive(raw.max_chats ?? raw.maxChats),
+        maxAgeMinutes: positive(raw.max_age_minutes ?? raw.maxAgeMinutes),
+        delayMs: positive(raw.delay_ms ?? raw.delayMs),
+        downloadMedia: (raw.download_media ?? raw.downloadMedia) != null
+            ? Boolean(raw.download_media ?? raw.downloadMedia)
             : undefined,
     };
 }

@@ -799,6 +799,12 @@ export interface IMemoryStoreV2 {
     /** 获取指定 chatId 最近的原始消息 */
     getRecentMessages(chatId: string, limit?: number): RecentMessageEntry[];
 
+    /** 补抓水位线：该会话本地已知的最新消息 */
+    getBackfillWatermark(chatId: string, ordering?: "numeric-id" | "timestamp"): { messageId: string; timestamp: string } | null;
+
+    /** message_log 中出现过的会话（可按平台前缀过滤） */
+    listKnownChatIds(platformPrefix?: string): string[];
+
     /** 获取已缓存的 sticker 描述（只读，用于上下文富化） */
     getStickerDescription(uniqueFileId: string, contentHash?: string): { description: string; emoji?: string; emojis?: string[] } | null;
 

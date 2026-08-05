@@ -29,6 +29,7 @@ import type { MemoryStoreV2 } from "../memory-v2/index.js";
 import type { EmbeddingConfig, RecordingPipelineConfig } from "../core/config.js";
 import type { Message } from "../pipeline/types.js";
 import { createLogger } from "../core/logger.js";
+import { resolveEventTimestamp } from "../core/message-enricher.js";
 import type { TopicSignalEntry } from "../pipeline/topic-signal.js";
 
 const log = createLogger("group-subagent");
@@ -151,7 +152,8 @@ export class GroupSubagent extends EventEmitter {
                 senderName: String(event.displayName ?? event.senderName ?? event.userName ?? ""),
                 senderUsername: (event.username as string) ?? undefined,
                 text: String(event.text ?? event.message ?? ""),
-                timestamp: Date.now(),
+                // 用消息原始时间而非入库时间，backfill 的历史消息才能保持正确时序
+                timestamp: Date.parse(resolveEventTimestamp(event)),
                 replyToMessageId: event.replyToMessageId ? String(event.replyToMessageId) : undefined,
                 mediaType: (event as any).mediaInfo?.type ?? undefined,
                 mediaInfo: (event as any).mediaInfo ? JSON.stringify((event as any).mediaInfo) : undefined,

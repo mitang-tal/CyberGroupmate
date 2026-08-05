@@ -168,6 +168,33 @@ notification:
     - "赛博群友"
     - "@赛博群友"
 
+# ─── 离线补抓 ───
+# 重启 / 掉线重连后，补载离线期间错过的消息。
+# 不配置时使用下面这些默认值（默认开启）。
+#
+# 各平台能力差异：
+#   telegram userbot: mtcute catchUp(updates.getDifference) 精确补齐，
+#                     gap 过大（differenceTooLong）时用 dialogs 未读数 + getHistory 兜底
+#   telegram bot:     Telegram 禁止 bot 读历史，只能依赖 catchUp，gap 太大即丢失
+#   discord:          按 snowflake after 分页精确补齐（需 Read Message History 权限）
+#   onebot/QQ:        只能拉最近 N 条近似补齐（message_id 不保证有序）
+#
+# 补抓的消息只落盘 + 参与话题聚类，不会逐条唤醒 agent；
+# 若离线期间有 DM / @ 提及，该会话会收到一次合并唤醒（reason=offline-backfill）。
+backfill:
+  enabled: true
+  # 单个会话最多补抓多少条
+  max_messages_per_chat: 50
+  # 单次最多处理多少个会话
+  max_chats: 20
+  # 只补抓最近多少分钟内的消息（默认 12 小时，避免第一次启动拉进远古历史）
+  max_age_minutes: 720
+  # 连接恢复后延迟多久开始补抓（毫秒），等平台侧状态稳定
+  delay_ms: 3000
+  # 补抓的消息是否下载媒体。默认 false —— 一次补几百张图会打爆 vision 和磁盘，
+  # 需要时 agent 可以事后单独调平台 API 取。
+  download_media: false
+
 # ─── Telegram 设置 ───
 # 可选。telegram 和 discord 至少配置一个。
 telegram:

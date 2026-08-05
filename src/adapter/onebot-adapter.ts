@@ -7,11 +7,12 @@
 
 import type { NotificationCenter } from "../event/notification-center.js";
 import type { OneBotConfig } from "../core/config.js";
-import type { AdapterConnectionStatus, PlatformAdapter } from "./platform-adapter.js";
+import type { AdapterConnectionStatus, BackfillOptions, BackfillResult, PlatformAdapter } from "./platform-adapter.js";
 import { ConnectionTracker } from "./connection-tracker.js";
+import { isNewerThanWatermark } from "./backfill.js";
 import type { MediaDownloader } from "../core/media-downloader.js";
 import { ensureSupportedFormat } from "../core/vision-processor.js";
-import { composeChatId, ensureCompositeId, parseChatId } from "../core/chat-id.js";
+import { composeChatId, ensureCompositeId, getRawId, parseChatId } from "../core/chat-id.js";
 import { createLogger } from "../core/logger.js";
 import {
     getOneBotNapCatGuideGroupForAction,
@@ -115,6 +116,54 @@ type NormalizedOneBotIncomingMessage = {
     mediaInfo?: OneBotMediaInfo;
 };
 
+/** 构造与实时入站完全一致的 NC 消息载荷（补抓路径复用，避免两套字段漂移） */
+function buildOneBotNcMessage(normalized: NormalizedOneBotIncomingMessage): Record<string, unknown> {
+    const source = {
+        scene: "onebot",
+        platform: "onebot",
+        chatId: normalized.chatId,
+        userId: normalized.userId,
+        chatType: normalized.chatType,
+        messageId: normalized.messageId,
+        replyToMessageId: normalized.replyToMessageId,
+    };
+    const core = {
+        chatId: normalized.chatId,
+        userId: normalized.userId,
+        displayName: normalized.displayName,
+        username: normalized.username,
+        text: normalized.text,
+        timestamp: normalized.timestamp,
+        messageId: normalized.messageId,
+        replyToMessageId: normalized.replyToMessageId,
+        chatTitle: normalized.chatTitle,
+        chatType: normalized.chatType,
+        isDirectMessage: normalized.isDirectMessage,
+        mentionsAgent: normalized.mentionsAgent,
+        mentions: normalized.mentions,
+        messageSegments: normalized.messageSegments,
+        mediaInfo: normalized.mediaInfo,
+    };
+
+    return {
+        type: "nc.message",
+        scene: "onebot",
+        source,
+        ...core,
+        payload: {
+            scene: "onebot",
+            ...core,
+            source,
+            platformData: {
+                originalType: "onebot.message",
+                messageSegments: normalized.messageSegments,
+                mentions: normalized.mentions,
+            },
+        },
+        _urgent: normalized.isDirectMessage || normalized.mentionsAgent || normalized.replyToMessageId ? true : false,
+    };
+}
+
 export class OneBotAdapter implements PlatformAdapter {
     readonly platform = "onebot";
 
@@ -174,6 +223,101 @@ export class OneBotAdapter implements PlatformAdapter {
 
     getConnectionStatus(): AdapterConnectionStatus {
         return this.connection.snapshot();
+    }
+
+    /**
+     * 补抓离线期间漏掉的消息。
+     *
+     * NapCat 在我们 WS 断开期间不会缓存消息，只能主动拉历史：
+     * 群聊用 get_group_msg_history，私聊用 get_friend_msg_history（NapCat 扩展，
+     * 非标准 OneBot v11，旧版本可能不支持 —— 失败时记进 notes 而不是抛错）。
+     *
+     * 精度限制：OneBot 的 message_id 不保证单调递增，分页游标是 message_seq，
+     * 所以这里只做"拉最近 N 条 + 按时间和水位线过滤"的近似补齐，
+     * 真正的去重依赖 message_log 的 (chat_id, message_id) 主键。
+     */
+    async fetchMissedMessages(options: BackfillOptions): Promise<BackfillResult> {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+            return { chats: 0, messages: 0, notes: ["onebot adapter 未连接"] };
+        }
+
+        const notes: string[] = [];
+        let chatsTouched = 0;
+        let delivered = 0;
+        const chatIds = options.knownChatIds.slice(0, options.maxChats);
+
+        for (const chatId of chatIds) {
+            const watermark = options.getWatermark(chatId);
+            const rawId = getRawId(chatId);
+            const isGroup = rawId.startsWith("group:");
+            const isPrivate = rawId.startsWith("private:");
+            if (!isGroup && !isPrivate) continue;
+
+            const peerId = rawId.slice(rawId.indexOf(":") + 1);
+            if (!peerId) continue;
+
+            let chatDelivered = 0;
+            try {
+                const action = isGroup ? "get_group_msg_history" : "get_friend_msg_history";
+                const params: Record<string, unknown> = isGroup
+                    ? { group_id: Number(peerId) || peerId, count: options.maxMessagesPerChat, reverse_order: false }
+                    : { user_id: Number(peerId) || peerId, count: options.maxMessagesPerChat, reverse_order: false };
+
+                const result = await this.callAction(action, params) as Record<string, unknown>;
+                const data = (result?.data ?? result) as Record<string, unknown> | unknown[];
+                const rawMessages = Array.isArray(data)
+                    ? data
+                    : Array.isArray((data as Record<string, unknown>)?.messages)
+                        ? (data as Record<string, unknown>).messages as unknown[]
+                        : [];
+                if (rawMessages.length === 0) continue;
+
+                // 历史接口返回旧→新或新→旧不统一，统一按 time 正序
+                const sorted = [...rawMessages].sort((left, right) =>
+                    Number((left as Record<string, unknown>)?.time ?? 0) - Number((right as Record<string, unknown>)?.time ?? 0)
+                );
+
+                for (const raw of sorted) {
+                    const event = raw as OneBotIncomingEvent;
+                    // 历史条目缺少 post_type / self_id，补齐后复用同一套标准化逻辑
+                    const patched: OneBotIncomingEvent = {
+                        ...event,
+                        post_type: "message",
+                        self_id: this.config.selfId,
+                        message_type: event.message_type ?? (isGroup ? "group" : "private"),
+                        group_id: isGroup ? (event.group_id ?? peerId) : event.group_id,
+                    } as OneBotIncomingEvent;
+
+                    // 自己发的消息不补抓
+                    if (String(patched.user_id ?? patched.sender?.user_id ?? "") === String(this.config.selfId)) continue;
+
+                    const normalized = await this.normalizeIncomingMessage(patched);
+                    if (!normalized || !normalized.messageId || !normalized.text) continue;
+                    if (normalized.chatId !== chatId) continue;
+                    if (!isNewerThanWatermark(
+                        { messageId: normalized.messageId, timestamp: normalized.timestamp },
+                        watermark,
+                        "timestamp",
+                        options.since,
+                    )) continue;
+
+                    options.deliver(buildOneBotNcMessage(normalized));
+                    chatDelivered++;
+                    if (chatDelivered >= options.maxMessagesPerChat) break;
+                }
+            } catch (err) {
+                notes.push(`${chatId} 拉历史失败: ${String(err).slice(0, 120)}`);
+                continue;
+            }
+
+            if (chatDelivered > 0) {
+                chatsTouched++;
+                delivered += chatDelivered;
+                log.info("OneBot 补抓会话", { chatId, delivered: chatDelivered });
+            }
+        }
+
+        return { chats: chatsTouched, messages: delivered, notes: notes.length > 0 ? notes : undefined };
     }
 
     /** 手动重连：立即断开重连，重置退避计数 */
@@ -1424,67 +1568,7 @@ export class OneBotAdapter implements PlatformAdapter {
         this.normalizeIncomingMessage(event).then(normalized => {
             if (!normalized) return;
 
-            this.nc.push({
-                type: "nc.message",
-                scene: "onebot",
-                source: {
-                    scene: "onebot",
-                    platform: "onebot",
-                    chatId: normalized.chatId,
-                    userId: normalized.userId,
-                    chatType: normalized.chatType,
-                    messageId: normalized.messageId,
-                    replyToMessageId: normalized.replyToMessageId,
-                },
-                chatId: normalized.chatId,
-                userId: normalized.userId,
-                displayName: normalized.displayName,
-                username: normalized.username,
-                text: normalized.text,
-                timestamp: normalized.timestamp,
-                messageId: normalized.messageId,
-                replyToMessageId: normalized.replyToMessageId,
-                chatTitle: normalized.chatTitle,
-                chatType: normalized.chatType,
-                isDirectMessage: normalized.isDirectMessage,
-                mentionsAgent: normalized.mentionsAgent,
-                mentions: normalized.mentions,
-                messageSegments: normalized.messageSegments,
-                mediaInfo: normalized.mediaInfo,
-                payload: {
-                    scene: "onebot",
-                    chatId: normalized.chatId,
-                    userId: normalized.userId,
-                    displayName: normalized.displayName,
-                    username: normalized.username,
-                    text: normalized.text,
-                    timestamp: normalized.timestamp,
-                    messageId: normalized.messageId,
-                    replyToMessageId: normalized.replyToMessageId,
-                    chatTitle: normalized.chatTitle,
-                    chatType: normalized.chatType,
-                    isDirectMessage: normalized.isDirectMessage,
-                    mentionsAgent: normalized.mentionsAgent,
-                    mentions: normalized.mentions,
-                    messageSegments: normalized.messageSegments,
-                    mediaInfo: normalized.mediaInfo,
-                    source: {
-                        scene: "onebot",
-                        platform: "onebot",
-                        chatId: normalized.chatId,
-                        userId: normalized.userId,
-                        chatType: normalized.chatType,
-                        messageId: normalized.messageId,
-                        replyToMessageId: normalized.replyToMessageId,
-                    },
-                    platformData: {
-                        originalType: "onebot.message",
-                        messageSegments: normalized.messageSegments,
-                        mentions: normalized.mentions,
-                    },
-                },
-                _urgent: normalized.isDirectMessage || normalized.mentionsAgent || normalized.replyToMessageId ? true : false,
-            });
+            this.nc.push(buildOneBotNcMessage(normalized) as never);
         }).catch(err => {
             log.warn("异步处理 OneBot 消息失败", { error: String(err) });
         });

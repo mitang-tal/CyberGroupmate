@@ -28,7 +28,7 @@ import {
     type EnvironmentVariable,
 } from "./core/config.js";
 import { describeImage, ensureSupportedFormat } from "./core/vision-processor.js";
-import { normalizeMessageMediaFields } from "./core/message-enricher.js";
+import { normalizeMessageMediaFields, resolveEventTimestamp } from "./core/message-enricher.js";
 import { TopicRegistry } from "./pipeline/index.js";
 import {
     existsSync,
@@ -42,6 +42,7 @@ import { TelegramAdapter } from "./adapter/telegram-adapter.js";
 import { DiscordAdapter } from "./adapter/discord-adapter.js";
 import { OneBotAdapter } from "./adapter/onebot-adapter.js";
 import type { PlatformAdapter } from "./adapter/platform-adapter.js";
+import { BackfillCoordinator, resolveBackfillConfig, BACKFILL_FLAG, BACKFILL_STALE_FLAG, BACKFILL_DIRECT_REASON } from "./adapter/backfill.js";
 import { markChatAsRead } from "./adapter/read-receipts.js";
 
 import { SubagentManager } from "./subagent/subagent-manager.js";
@@ -489,6 +490,7 @@ async function main(): Promise<void> {
     // ─── Subagent 架构组件初始化 ───
     // 注意: message_log 落盘由 RecordingPipeline Step 4 负责，不再需要独立的 MessageLogWriter hook
     let accumulator: AttentionAccumulator;
+    let backfillCoordinator: BackfillCoordinator | null = null;
     let postTaskWindows: PostTaskWindowManager | null = null;
     const subagentManager = new SubagentManager({
         observerConfig: {
@@ -614,6 +616,37 @@ async function main(): Promise<void> {
         restoredSignalPoolSize: accumulator.getSignalPoolSize(),
     });
 
+    // ─── 离线补抓协调器 ───
+    // 补抓的消息只落盘 + 参与话题聚类；离线期间被 DM / @ 的会话在批次结束后
+    // 收到一次合并唤醒，而不是每条消息唤醒一次。
+    backfillCoordinator = new BackfillCoordinator({
+        nc,
+        adapters,
+        getWatermark: (chatId, ordering) => memory.getBackfillWatermark(chatId, ordering),
+        listKnownChatIds: (platform) => memory.listKnownChatIds(platform),
+        onConsolidatedWake: (chatId, summary) => {
+            const sub = subagentManager.getOrCreate(chatId);
+            const entry = sub.buildQueueEntry("DIRECT_ADDRESS");
+            // reason 会作为 directAddressReason 进入 meta prompt —— 必须让 agent 明白
+            // 这些是"离线期间补看到的旧消息"，而不是刚刚收到的新消息。
+            const reason = `${BACKFILL_DIRECT_REASON}（离线期间补看：共 ${summary.messageCount} 条，`
+                + `其中 ${summary.directCount} 条直接找你（${summary.reasons.join("/") || "未知"}）；`
+                + `消息时间 ${summary.earliestTs} ~ ${summary.latestTs}，均为过去发生的事，回复时注意时间差）`;
+            accumulator.ingest(0, createDirectAddressItem(chatId, {
+                reason,
+                queueEntry: entry,
+                backfill: summary,
+            }));
+            log.info("补抓 → Layer0 合并唤醒", {
+                chatId,
+                messages: summary.messageCount,
+                direct: summary.directCount,
+                window: `${summary.earliestTs} ~ ${summary.latestTs}`,
+                reasons: summary.reasons,
+            });
+        },
+    });
+
     // ─── NC.onPush: 消息实时处理管线 ───
     // mentionKeywords 现在在每次消息到达时动态从 loadConfig() 读取（支持热重载）
 
@@ -696,6 +729,9 @@ async function main(): Promise<void> {
         // 接收所有消息类型事件（TelegramAdapter 使用 "nc.message"）
         if (eventType !== "nc.message") return;
 
+        // 补抓（离线期间漏掉的历史消息）标记：过滤/落盘/聚类照常，唤醒走合并路径
+        const isBackfilled = (event as Record<string, unknown>)[BACKFILL_FLAG] === true;
+
         // ─── 聊天过滤（chatFilter）：按 chatId 黑/白名单丢弃入站消息 ───
         // 动态读取 loadConfig()（支持热重载，无需重启）。命中过滤则完全丢弃：
         // 不落盘、不进 Observer/RecordingPipeline、不触发任何后续处理。
@@ -733,7 +769,9 @@ async function main(): Promise<void> {
                 displayName: String(event.displayName ?? event.senderName ?? event.userName ?? ""),
                 text: String(event.text ?? event.message ?? ""),
                 replyToMessageId: event.replyToMessageId ? String(event.replyToMessageId) : undefined,
-                timestamp: new Date().toISOString(),
+                // 必须用消息原始时间：backfill 补抓的历史消息若打上"现在"，
+                // message_log 的时序（以及基于它的 LLM 上下文）会整体错乱。
+                timestamp: resolveEventTimestamp(event),
                 mediaType: (event as any).mediaInfo?.type ?? undefined,
                 mediaInfo: (event as any).mediaInfo ? JSON.stringify((event as any).mediaInfo) : undefined,
             }]);
@@ -777,11 +815,14 @@ async function main(): Promise<void> {
         // 信号发布，群消息默认不会被送往任何 LLM API。只有下方的直接提及路径（DM / @ / 触发词 /
         // 回复 agent）才会唤醒 agent，届时 getRecentMessages() 从本地 message_log 取回最近上下文。
         const quietMode = !!memory.getGroupModel(getGroupModelKey(chatId))?.quietMode;
+        // 过旧/超量的补抓消息同样跳过 RecordingPipeline：话题聚类和 triage 都要调 LLM，
+        // 离线数天回来的几千条消息会直接把成本打爆。消息本身已落盘，不丢数据。
+        const staleBackfill = (event as Record<string, unknown>)[BACKFILL_STALE_FLAG] === true;
 
         const sub = subagentManager.getOrCreate(chatId);
         // Per-group: Observer + RecordingPipeline 同时处理消息 (subagent.md §3.1)
         // 静默模式下 skipRecording=true：仅走 Observer（纯内存），跳过 RecordingPipeline。
-        sub.onMessage(event, { skipRecording: quietMode });
+        sub.onMessage(event, { skipRecording: quietMode || staleBackfill });
 
         // 紧急路径：DM / @mention / 文本提及 agent 名字 → 立即注入 Layer 0。
         const isDM = !!event.isDirectMessage;
@@ -791,7 +832,7 @@ async function main(): Promise<void> {
         const mentionKeywords = (loadConfig().notification?.mentionKeywords ?? []).map(k => k.toLowerCase()).filter(k => k.length > 0);
         const messageText = String(event.text ?? event.message ?? "").toLowerCase();
         const hasNameMention = mentionKeywords.length > 0 && mentionKeywords.some(kw => messageText.includes(kw));
-        const isReplyToAgentInPostTaskWindow = postTaskWindows.isReplyToWindowSentMessage(chatId, event);
+        const isReplyToAgentInPostTaskWindow = !isBackfilled && postTaskWindows.isReplyToWindowSentMessage(chatId, event);
         const directReason = isDM
             ? "DM"
             : isMention
@@ -802,6 +843,20 @@ async function main(): Promise<void> {
                         ? "reply-to-agent"
                         : "";
         const isDirectAttention = directReason.length > 0;
+
+        // ─── 补抓消息：到此为止 ───
+        // 已落盘 + 已喂给 Observer/RecordingPipeline（话题聚类照常做），
+        // 但不逐条唤醒、不进 post-task window、不前送给正在执行的 session：
+        // 否则离线期间的几百条消息会逐条触发 attend，并对几小时前的消息逐条回复。
+        // 是否需要回应由 BackfillCoordinator 在批次结束后做一次合并唤醒决定。
+        if (isBackfilled) {
+            backfillCoordinator?.noteBackfilledMessage(chatId, {
+                timestamp: resolveEventTimestamp(event),
+                directReason: directReason || undefined,
+            });
+            return;
+        }
+
         const executor = sub.codeActExecutor as import("./subagent/code-act-executor.js").CodeActExecutor | null;
         const executorProcessing = !!executor?.isProcessing();
 
@@ -1231,6 +1286,7 @@ async function main(): Promise<void> {
                 mediaDownloader: sharedMediaDownloader,
                 imageCatalog,
                 adapters,
+                get backfillCoordinator() { return backfillCoordinator ?? undefined; },
                 metaSandbox,
                 onConfigSaved: async (config) => {
                     tokenStats.setProfiles(config.llmProfiles ?? {});
@@ -1580,6 +1636,52 @@ async function main(): Promise<void> {
     mainLoop.start();
     log.info("🤖 CyberGroupmate 运行中 (Subagent Architecture)");
 
+    // ─── 离线补抓触发 ───
+    // 启动后补一次（进程重启期间的消息），之后每次连接从 disconnected 恢复到
+    // connected 也补一次（掉线重连比"重启"更常见，也更该补）。
+    const backfillTimers: NodeJS.Timeout[] = [];
+    const scheduleBackfill = (platforms: string[], reason: string): void => {
+        if (!backfillCoordinator) return;
+        const delay = resolveBackfillConfig(loadConfig().backfill).delayMs;
+        const timer = setTimeout(() => {
+            if (shuttingDown) return;
+            log.info("触发离线补抓", { platforms, reason });
+            backfillCoordinator!.run(platforms).catch((err) => {
+                log.warn("离线补抓异常", { platforms, reason, error: String(err) });
+            });
+        }, delay);
+        if (timer.unref) timer.unref();
+        backfillTimers.push(timer);
+    };
+
+    if (resolveBackfillConfig(loadConfig().backfill).enabled) {
+        const readyPlatforms = adapterStatuses.filter(a => a.status === "ok").map(a => a.platform);
+        if (readyPlatforms.length > 0) {
+            scheduleBackfill(readyPlatforms, "startup");
+        }
+
+        // 监视连接状态：disconnected/connecting/error → connected 视为一次恢复
+        const lastConnectionState = new Map<string, string>();
+        for (const adapter of adapters) {
+            const state = adapter.getConnectionStatus?.().state;
+            if (state) lastConnectionState.set(adapter.platform, state);
+        }
+        const connectionWatcher = setInterval(() => {
+            if (shuttingDown || !backfillCoordinator) return;
+            for (const adapter of adapters) {
+                const state = adapter.getConnectionStatus?.().state;
+                if (!state) continue;
+                const previous = lastConnectionState.get(adapter.platform);
+                lastConnectionState.set(adapter.platform, state);
+                if (state === "connected" && previous && previous !== "connected" && previous !== "stopped") {
+                    scheduleBackfill([adapter.platform], `reconnected(from ${previous})`);
+                }
+            }
+        }, 5000);
+        if (connectionWatcher.unref) connectionWatcher.unref();
+        backfillTimers.push(connectionWatcher);
+    }
+
     const runWithTimeout = async (name: string, fn: () => Promise<void>, timeoutMs = 15_000): Promise<void> => {
         await Promise.race([
             fn(),
@@ -1600,6 +1702,8 @@ async function main(): Promise<void> {
         clearInterval(topicCleanupInterval);
         clearInterval(reflectionInterval);
         clearInterval(schedulerWatchdogInterval);
+        for (const timer of backfillTimers) clearTimeout(timer);
+        backfillCoordinator?.dispose();
         if (backgroundDreamingInterval) clearInterval(backgroundDreamingInterval);
 
         // 停止 Background Agent harness
