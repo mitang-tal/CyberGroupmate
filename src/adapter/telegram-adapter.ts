@@ -297,6 +297,8 @@ export class TelegramAdapter implements PlatformAdapter {
     /** mtcute 正在 catch-up（补齐离线期间的更新）；期间到达的消息按 backfill 处理 */
     private catchingUp = false;
     private catchUpDelivered = 0;
+    /** client 世代号：连接状态监听器在 start() 之前订阅，用它判断是否仍属当前 client */
+    private clientGeneration = 0;
     private mediaCache = new MediaFileCache();
     private mtcuteObjectRefCounter = 0;
     private mtcuteObjectRefs = new Map<string, MtcuteObjectRefRecord>();
@@ -366,6 +368,12 @@ export class TelegramAdapter implements PlatformAdapter {
 
         const client = await this.createClient(this.config);
 
+        // 必须在 client.start() 之前订阅连接状态：mtcute 的 catchUp 是在
+        // start() 内部的 startUpdatesLoop() 里启动的，"updating" 事件会在 start()
+        // 返回之前就发出。订阅晚了就收不到，catch-up 补回来的历史消息会被误判为新消息。
+        const generation = ++this.clientGeneration;
+        this.attachConnectionListeners(client, generation);
+
         const self = this.config.mode === "bot"
             ? await client.start({ botToken: this.config.botToken })
             : await client.start({
@@ -381,7 +389,6 @@ export class TelegramAdapter implements PlatformAdapter {
         this.selfUser = this.normalizeUser(self);
         this.rememberPeerObject(self);
         this.reconnectAttempts = 0;
-        this.attachConnectionListeners(client);
         this.connection.markConnected(
             `${this.selfUser.displayName ?? this.selfUser.firstName ?? this.selfUser.id} (${this.selfUser.id}), mode=${this.config.mode ?? "userbot"}`,
         );
@@ -490,9 +497,13 @@ export class TelegramAdapter implements PlatformAdapter {
      * 2. 长时间回不到 connected 时重建 client——mtcute 偶尔会卡在
      *    connecting/offline 再也不恢复，这时只有重建才能救
      */
-    private attachConnectionListeners(client: any): void {
+    private attachConnectionListeners(client: any, generation: number): void {
+        // 用 generation 而不是 this.client 做归属判断：订阅发生在 start() 之前，
+        // 那时 this.client 还没赋值。teardown / 重连会 bump generation 让旧监听器失效。
+        const isCurrent = () => this.clientGeneration === generation && !this.stopRequested;
+
         const onState = (state: string) => {
-            if (this.client !== client || this.stopRequested) return;
+            if (!isCurrent()) return;
             switch (state) {
                 case "updating":
                     // mtcute 开始 catch-up：接下来到达的消息是离线期间漏掉的历史消息
@@ -533,6 +544,7 @@ export class TelegramAdapter implements PlatformAdapter {
 
         try {
             client.onError?.add?.((err: unknown) => {
+                if (!isCurrent()) return;
                 this.connection.noteError(String(err));
                 log.warn("Telegram client error", { error: String(err) });
             });
@@ -545,7 +557,7 @@ export class TelegramAdapter implements PlatformAdapter {
         if (this.offlineWatchdog) return;
         this.offlineWatchdog = setTimeout(() => {
             this.offlineWatchdog = null;
-            if (this.stopRequested || this.client !== client) return;
+            if (this.stopRequested || (this.client && this.client !== client)) return;
             log.warn("Telegram 长时间未恢复连接，重建 client", {
                 state,
                 timeoutMs: TelegramAdapter.OFFLINE_RECOVERY_TIMEOUT_MS,
@@ -697,6 +709,9 @@ export class TelegramAdapter implements PlatformAdapter {
     /** 销毁当前 client，但不进入 stopped 状态（用于重连） */
     private async teardownClient(reason: string): Promise<void> {
         this.clearOfflineWatchdog();
+        // bump 世代号：旧 client 的连接状态监听器立即失效
+        this.clientGeneration++;
+        this.catchingUp = false;
         const client = this.client;
         this.client = null;
         this.selfUser = null;
