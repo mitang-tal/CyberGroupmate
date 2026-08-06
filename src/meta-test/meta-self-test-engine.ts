@@ -14,17 +14,27 @@ import {
     MetaSelfTestProbeResult,
     HealthStatus,
     ProbeCategory,
+    HealthWeights,
 } from "./types";
 import type { SelfTestStore } from "./self-test-store";
 import type { GlobalGuardrailEvaluator } from "../governance/global-guardrail-evaluator";
 import type { FailureExtractor } from "../experience/failure-extractor";
 import type { ReputationEvaluator } from "../reputation/reputation-evaluator";
 
+/** #25 默认探针权重：安全关键探针（guardrail/kill_switch）权重 1.5，常规探针 1.0 */
+const DEFAULT_HEALTH_WEIGHTS: Required<HealthWeights> = {
+    deadlock: 1.0,
+    guardrail: 1.5,
+    rigidity: 1.0,
+    kill_switch: 1.5,
+};
+
 export class MetaSelfTestEngine {
     private store: SelfTestStore;
     private guardrail?: GlobalGuardrailEvaluator;
     private extractor?: FailureExtractor;
     private reputation?: ReputationEvaluator;
+    private healthWeights: Required<HealthWeights>;
 
     constructor(
         store: SelfTestStore,
@@ -32,12 +42,15 @@ export class MetaSelfTestEngine {
             guardrail?: GlobalGuardrailEvaluator;
             extractor?: FailureExtractor;
             reputation?: ReputationEvaluator;
-        },
+            /** #25 探针权重（默认 guardrail/kill_switch 1.5，其余 1.0） */
+            healthWeights?: HealthWeights;
+        } = {},
     ) {
         this.store = store;
         this.guardrail = deps.guardrail;
         this.extractor = deps.extractor;
         this.reputation = deps.reputation;
+        this.healthWeights = { ...DEFAULT_HEALTH_WEIGHTS, ...deps.healthWeights };
     }
 
     /**
@@ -50,7 +63,13 @@ export class MetaSelfTestEngine {
             this.runExperienceRigidityProbe(),
             this.runSelfKillProbe(),
         ];
+        return this.buildReport(probes);
+    }
 
+    /**
+     * 由探针结果构造报告（复用健康分/状态/建议逻辑；供测试与编排复用）
+     */
+    buildReport(probes: MetaSelfTestProbeResult[]): MetaSelfTestReport {
         const overallHealthScore = this.calculateHealthScore(probes);
         const status = this.determineStatus(overallHealthScore);
         const recommendations = this.generateRecommendations(probes);
@@ -306,10 +325,21 @@ export class MetaSelfTestEngine {
 
     // ─── Health Score Calculator ───
 
+    /**
+     * #25 加权健康分：Σ(score × weight) / Σ(weight)。
+     * 安全关键探针（guardrail/kill_switch）失败权重大于常规探针，
+     * 避免"死锁探针挂了但 guardrail 失守"仍显示健康。
+     */
     private calculateHealthScore(probes: MetaSelfTestProbeResult[]): number {
         if (probes.length === 0) return 0;
-        const total = probes.reduce((sum, p) => sum + p.score, 0);
-        return Math.round((total / probes.length) * 100) / 100;
+        let weighted = 0;
+        let totalWeight = 0;
+        for (const p of probes) {
+            const w = this.healthWeights[p.category];
+            weighted += p.score * w;
+            totalWeight += w;
+        }
+        return Math.round((weighted / totalWeight) * 100) / 100;
     }
 
     private determineStatus(score: number): HealthStatus {
