@@ -241,7 +241,12 @@ export class EcosystemGovernance {
         if (t.guardrail) {
             t.guardrail.setKillSwitch(v.killSwitch);
         }
-        // federationStore / negotiationEngine / evolutionAnalyzer 预留（Phase 4.1 后接线）
+        if (t.negotiationEngine?.setTimeoutMs) {
+            t.negotiationEngine.setTimeoutMs(v.negotiationTimeoutMs);
+        }
+        if (t.evolutionAnalyzer?.setCoolingDays) {
+            t.evolutionAnalyzer.setCoolingDays(v.evolutionCoolingDays);
+        }
     }
 
     // ─── Private ───

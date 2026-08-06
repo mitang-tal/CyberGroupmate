@@ -613,14 +613,33 @@ async function main(): Promise<void> {
 	const ecosystemGovernance = new EcosystemGovernance(new SqliteGovernanceV2Store(join(DATA_DIR, "governance.db")));
 	const ecosystemGovernor = new EcosystemGovernor(ecosystemGovernance);
 
-	// ═══ Phase 4.1 治理收敛：Gov2 为唯一配置源，广播 kill-switch / rate limit / quarantine ═══
+	const conflictResolver = new ConflictResolver();
+	// 8.2 C2：Agent 侧真实异步竞标。bidProvider 为每个 eligible Agent 组价，
+	// 竞标窗口超时从 Gov2 negotiationTimeoutMs 读取（可热更新）。
+	const negotiationEngine = new NegotiationEngine({
+	    dispatcher: capabilityDispatcher,
+	    conflictResolver,
+	    capabilityRegistry,
+	    timeoutMs: ecosystemGovernance.getCurrent().values.negotiationTimeoutMs,
+	    bidProvider: async ({ proposal, agent }) => {
+	        // Agent 侧真实出价：基于声誉信任分决定信心与报价（信任越高 → 信心越高、报价越低）
+	        const rep = reputationEvaluator.getDispatchWeight(agent.agentId);
+	        const confidence = Math.max(0.3, Math.min(1, Math.round((0.5 + rep.trustScore * 0.5) * 100) / 100));
+	        return {
+	            costEstimateToken: Math.round(proposal.maxCostToken * (0.6 + (1 - confidence) * 0.4)),
+	            latencyEstimateMs: Math.round(proposal.slaLatencyMs * (0.6 + (1 - confidence) * 0.4)),
+	            confidenceScore: confidence,
+	        };
+	    },
+	});
+
+	// ═══ Phase 4.1 治理收敛：Gov2 为唯一配置源，广播 kill-switch / rate limit / quarantine / negotiation timeout ═══
 	ecosystemGovernance.attachTargets({
 	    governor: ecosystemGovernor,
 	    guardrail: { setKillSwitch: (active) => globalGuardrail.toggleKillSwitch(active) },
+	    negotiationEngine: { setTimeoutMs: (ms: number) => negotiationEngine.setTimeoutMs(ms) },
 	});
 	const federationStore = new FederationStore(experienceStore, ecosystemGovernor, simulationEngine);
-	const conflictResolver = new ConflictResolver();
-	const negotiationEngine = new NegotiationEngine({ dispatcher: capabilityDispatcher, conflictResolver });
 	const evolutionAnalyzer = new EvolutionAnalyzer(reputationEvaluator, { capabilityRegistry });
 
     const { createInterface: createRL } = await import("node:readline");

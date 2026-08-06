@@ -41,3 +41,11 @@ export interface NegotiationRound {
     startedAtMs: number;
     closedAtMs: number;
 }
+
+/** 8.2 C2 Agent 侧竞标输入（引擎补全 bidId/proposalId/agentId/agentName/round/submittedAtMs） */
+export type AgentBidInput = Omit<AgentBid, "bidId" | "proposalId" | "agentId" | "agentName" | "round" | "submittedAtMs">;
+
+/** 8.2 C2 Agent 侧异步出价提供者：每个 eligible Agent 线程调用，返回出价或弃标（undefined） */
+export type AgentBidProvider = (
+    ctx: { proposal: TaskProposal; round: 1 | 2; agent: { agentId: string; agentName: string } },
+) => Promise<AgentBidInput | undefined> | AgentBidInput | undefined;
