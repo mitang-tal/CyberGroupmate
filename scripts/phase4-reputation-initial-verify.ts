@@ -10,7 +10,7 @@
  * 4. getDispatchWeight 无记录默认仍为 normal / 0.5（既有行为不变）
  */
 import { ReputationEvaluator } from "../src/reputation/reputation-evaluator.js";
-import type { AgentReputation, TrustState } from "../src/reputation/types.js";
+import type { AgentReputation, TrustState, ShadowLogEntry } from "../src/reputation/types.js";
 import type { ReputationStore } from "../src/reputation/reputation-store.js";
 
 let pass = 0;
@@ -36,6 +36,8 @@ class MemReputationStore implements ReputationStore {
         if (r) { r.trustState = state; if (probationUntilMs !== undefined) r.probationUntilMs = probationUntilMs; }
     }
     delete(agentId: string): void { this.rows.delete(agentId); }
+    appendShadowLog(entry: ShadowLogEntry): void { /* 忽略 */ }
+    listShadowLog(): ShadowLogEntry[] { return []; }
 }
 
 function main() {

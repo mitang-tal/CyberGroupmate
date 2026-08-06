@@ -4,6 +4,14 @@
 
 export type TrustState = "trusted" | "normal" | "probation" | "untrusted";
 
+/** #23 probation shadow 观察日志条目 */
+export interface ShadowLogEntry {
+    agentId: string;
+    observedAtMs: number;
+    trustScore: number;
+    trustState: TrustState;
+}
+
 export interface CapabilityScore {
     capabilityId: string;
     capabilityName: string;

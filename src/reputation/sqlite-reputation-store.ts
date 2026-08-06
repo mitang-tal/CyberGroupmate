@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import { AgentReputation, CapabilityScore, TrustState } from "./types";
+import { AgentReputation, CapabilityScore, TrustState, ShadowLogEntry } from "./types";
 import { ReputationStore } from "./reputation-store";
 
 export class SqliteReputationStore implements ReputationStore {
@@ -37,6 +37,17 @@ export class SqliteReputationStore implements ReputationStore {
         } catch {
             // 列已存在则忽略
         }
+
+        // #23 probation shadow 观察日志（独立表，重启不丢）
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS reputation_shadow_log (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                agent_id TEXT NOT NULL,
+                observed_at_ms INTEGER NOT NULL,
+                trust_score REAL NOT NULL,
+                trust_state TEXT NOT NULL
+            );
+        `);
     }
 
     upsert(reputation: AgentReputation): void {
@@ -83,6 +94,25 @@ export class SqliteReputationStore implements ReputationStore {
 
     delete(agentId: string): void {
         this.db.prepare("DELETE FROM agent_reputation WHERE agent_id = ?").run(agentId);
+    }
+
+    appendShadowLog(entry: ShadowLogEntry): void {
+        this.db.prepare(`
+            INSERT INTO reputation_shadow_log (agent_id, observed_at_ms, trust_score, trust_state)
+            VALUES (?, ?, ?, ?)
+        `).run(entry.agentId, entry.observedAtMs, entry.trustScore, entry.trustState);
+    }
+
+    listShadowLog(): ShadowLogEntry[] {
+        const rows = this.db.prepare(
+            "SELECT agent_id, observed_at_ms, trust_score, trust_state FROM reputation_shadow_log ORDER BY seq ASC",
+        ).all() as any[];
+        return rows.map((row) => ({
+            agentId: row.agent_id,
+            observedAtMs: row.observed_at_ms,
+            trustScore: row.trust_score,
+            trustState: row.trust_state,
+        }));
     }
 
     private mapRow(row: any): AgentReputation {

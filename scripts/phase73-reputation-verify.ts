@@ -14,6 +14,7 @@ import type {
     AgentReputation,
     ReputationEvaluationInput,
     TrustState,
+    ShadowLogEntry,
 } from "../src/reputation/types.js";
 import type { ReputationStore } from "../src/reputation/reputation-store.js";
 
@@ -31,6 +32,7 @@ function check(name: string, cond: boolean, detail?: string) {
 
 class MemStore implements ReputationStore {
     private reps = new Map<string, AgentReputation>();
+    private shadowLog: ShadowLogEntry[] = [];
 
     upsert(r: AgentReputation): void { this.reps.set(r.agentId, r); }
     getByAgentId(id: string): AgentReputation | undefined { return this.reps.get(id); }
@@ -40,6 +42,8 @@ class MemStore implements ReputationStore {
         if (r) { r.trustState = state; r.probationUntilMs = probationUntilMs; }
     }
     delete(id: string): void { this.reps.delete(id); }
+    appendShadowLog(entry: ShadowLogEntry): void { this.shadowLog.push(entry); }
+    listShadowLog(): ShadowLogEntry[] { return [...this.shadowLog]; }
 }
 
 function makeInput(agentId: string, execs: Array<{ success: boolean; latencyMs?: number; ageMs?: number }>, alerts = 0): ReputationEvaluationInput {
@@ -59,7 +63,7 @@ function makeInput(agentId: string, execs: Array<{ success: boolean; latencyMs?:
     };
 }
 
-function main() {
+async function main(): Promise<void> {
     // ─── [1] #19 贝叶斯收缩 ───
     console.log("\n[1] #19 贝叶斯收缩 + 冷启动先验");
     {
@@ -194,6 +198,31 @@ function main() {
         check("probation 仍可被路由（降权而非禁用）", ev.getDispatchWeight("a1").trustScore >= 0, String(ev.getDispatchWeight("a1").trustScore));
     }
 
+    // ─── [5b] #23 shadow 持久化：写入 sqlite 后重开 store 读回（重启不丢） ───
+    console.log("\n[5b] #23 shadow 持久化");
+    {
+        const os = await import("node:os");
+        const path = await import("node:path");
+        const fs = await import("node:fs");
+        const tmpDb = path.join(os.tmpdir(), `phase73-shadow-${Date.now()}-${Math.random().toString(36).slice(2)}.db`);
+        try {
+            const { SqliteReputationStore } = await import("../src/reputation/sqlite-reputation-store.js");
+            const storeA = new SqliteReputationStore(tmpDb);
+            const evA = new ReputationEvaluator(storeA);
+            evA.evaluate(makeInput("p1", Array.from({ length: 10 }, (_, i) => ({ success: i >= 5 })), 2));
+            const written = storeA.listShadowLog();
+            check("sqlite 落库后有 shadow 记录", written.length >= 1, String(written.length));
+
+            // 重开同一 db 文件（模拟重启）
+            const storeB = new SqliteReputationStore(tmpDb);
+            const evB = new ReputationEvaluator(storeB);
+            check("重开 store 后 shadow 仍可读回（重启不丢）", evB.getShadowLog().length === written.length,
+                `${evB.getShadowLog().length} vs ${written.length}`);
+        } finally {
+            fs.unlinkSync(tmpDb);
+        }
+    }
+
     // ─── [6] 冷启动中性 + untrusted 权重 0 ───
     console.log("\n[6] 冷启动与 untrusted");
     {
@@ -215,4 +244,4 @@ function main() {
     if (fail > 0) process.exit(1);
 }
 
-main();
+await main();

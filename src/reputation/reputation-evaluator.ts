@@ -12,7 +12,7 @@
  * probation 行为：不硬排除、路由降权（dispatcher），另记 shadow 观察（#23）。
  */
 
-import { AgentReputation, TrustState, ReputationEvaluationInput } from "./types";
+import { AgentReputation, TrustState, ReputationEvaluationInput, ShadowLogEntry } from "./types";
 import type { ReputationStore } from "./reputation-store";
 import { calculateCapabilityScores } from "./capability-scorer";
 import { calculateReliability, calculateTrustScore, determineTrustState } from "./trust-scorer";
@@ -43,13 +43,6 @@ export interface ReputationConfig {
     shadowEnabled?: boolean;
 }
 
-interface ShadowEntry {
-    agentId: string;
-    observedAtMs: number;
-    trustScore: number;
-    trustState: TrustState;
-}
-
 const DEFAULT_CONFIG: Required<ReputationConfig> = {
     prior: 0.5,
     priorWeight: 2,
@@ -66,7 +59,6 @@ const DEFAULT_CONFIG: Required<ReputationConfig> = {
 export class ReputationEvaluator {
     private store: ReputationStore;
     private cfg: Required<ReputationConfig>;
-    private shadowLog: ShadowEntry[] = [];
 
     constructor(store: ReputationStore, config: ReputationConfig = {}) {
         this.store = store;
@@ -116,11 +108,11 @@ export class ReputationEvaluator {
         const trustState = determineTrustState(trustScore, existing?.trustState, this.cfg.hysteresis);
         const probationUntilMs = trustState === "probation" ? now + PROBATION_PERIOD_MS : undefined;
 
-        // #23 probation shadow 观察
+        // #23 probation shadow 观察（持久化到 store，重启不丢）
         let probationShadow = false;
         if (trustState === "probation" && this.cfg.shadowEnabled) {
             probationShadow = true;
-            this.shadowLog.push({ agentId: input.agentId, observedAtMs: now, trustScore, trustState });
+            this.store.appendShadowLog({ agentId: input.agentId, observedAtMs: now, trustScore, trustState });
         }
 
         const reputation: AgentReputation = {
@@ -143,9 +135,9 @@ export class ReputationEvaluator {
         return reputation;
     }
 
-    /** #23：probation shadow 观察日志 */
-    getShadowLog(): ShadowEntry[] {
-        return [...this.shadowLog];
+    /** #23：probation shadow 观察日志（持久化，重启不丢） */
+    getShadowLog(): ShadowLogEntry[] {
+        return this.store.listShadowLog();
     }
 
     evaluateAll(getAgentIds: () => { agentId: string; name: string }[]): AgentReputation[] {
