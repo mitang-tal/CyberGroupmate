@@ -17,9 +17,21 @@ const log = createLogger("capability-dispatcher");
 /** #23 probation 过滤：#23 规定 probation agent 只接 low-stakes，priority ≥ 此值视为 high-stakes */
 const HIGH_STAKES_PRIORITY = 7;
 
+/**
+ * #24 C9 推演联动：结构类型，避免与 simulation 模块产生依赖环。
+ * 仅使用 runSimulation 的可观测结果（predictedSuccessRate）。
+ */
+export interface SimulationEngineLike {
+    runSimulation(
+        context: { triggerContext: string; taskType?: string; category?: string },
+        opts?: { mode?: "full" | "fast" },
+    ): { optionsEvaluated: { predictedSuccessRate: number; overallScore: number }[] };
+}
+
 export class CapabilityDispatcher {
     private reputationProvider?: (agentId: string) => { trustScore: number; trustState: string; reliability: number };
     private guardrailEvaluator?: GuardrailEvaluatorLike;
+    private simulationEngine?: SimulationEngineLike;
 
     constructor(private registry: CapabilityRegistry) {}
 
@@ -28,6 +40,11 @@ export class CapabilityDispatcher {
         provider: (agentId: string) => { trustScore: number; trustState: string; reliability: number },
     ): void {
         this.reputationProvider = provider;
+    }
+
+    /** #24 C9：注入推演引擎（决策前跑沙盒推演，按预测成功率收紧信任门槛） */
+    setSimulationEngine(engine: SimulationEngineLike): void {
+        this.simulationEngine = engine;
     }
 
     /** 注入护栏评估器（Audit Fix Phase 1：所有自主派发入口必须经过护栏） */
@@ -57,8 +74,13 @@ export class CapabilityDispatcher {
             }
         }
 
+        // #24 C9：决策前跑推演，低预测成功率的任务要求更高 agent 信任分
+        const simRequiredTrust = this.simulationRequiredTrust(request);
+
         const agents = this.registry.listAgents().filter(
-            (a) => (a.status === "online" || a.status === "busy") && this.isDispatchEligible(a, request),
+            (a) => (a.status === "online" || a.status === "busy")
+                && this.isDispatchEligible(a, request)
+                && (simRequiredTrust === undefined || this.reputationScore(a) >= simRequiredTrust),
         );
 
         if (agents.length === 0) return undefined;
@@ -83,8 +105,13 @@ export class CapabilityDispatcher {
      * 批量评估可用的 Agent 列表（按匹配度排序）
      */
     listCandidates(request: DispatchRequest): DispatchMatch[] {
+        // #24 C9：与 dispatch 一致的推演信任门槛
+        const simRequiredTrust = this.simulationRequiredTrust(request);
+
         const agents = this.registry.listAgents().filter(
-            (a) => (a.status === "online" || a.status === "busy") && this.isDispatchEligible(a, request),
+            (a) => (a.status === "online" || a.status === "busy")
+                && this.isDispatchEligible(a, request)
+                && (simRequiredTrust === undefined || this.reputationScore(a) >= simRequiredTrust),
         );
 
         const results: DispatchMatch[] = [];
@@ -262,6 +289,34 @@ export class CapabilityDispatcher {
         const rep = this.reputationProvider(agent.agentId);
         if (rep.trustState !== "probation") return true;
         return (request.priority ?? 0) < HIGH_STAKES_PRIORITY;
+    }
+
+    /**
+     * #24 C9：决策前跑沙盒推演。取最优方案 predictedSuccessRate，
+     * 成功率越低 → 要求 agent 信任分越高（requiredTrust = 0.3 + (1-sim)*0.7）。
+     * 未注入推演引擎时返回 undefined（不收紧门槛，保持原行为）。
+     */
+    private simulationRequiredTrust(request: DispatchRequest): number | undefined {
+        if (!this.simulationEngine) return undefined;
+        try {
+            const mode = (request.priority ?? 0) >= HIGH_STAKES_PRIORITY ? "full" : "fast";
+            const result = this.simulationEngine.runSimulation(
+                { triggerContext: request.taskType, category: request.category },
+                { mode },
+            );
+            const top = result.optionsEvaluated[0];
+            const sim = top ? top.predictedSuccessRate : 0.5;
+            return Math.min(1, 0.3 + (1 - sim) * 0.7);
+        } catch (err) {
+            log.warn("simulation gate failed, skip trust tightening", { taskType: request.taskType, error: err });
+            return undefined;
+        }
+    }
+
+    /** 取 agent 的信任分；未注入 reputationProvider 时按中性 0.5 */
+    private reputationScore(agent: AgentRegistration): number {
+        if (!this.reputationProvider) return 0.5;
+        return this.reputationProvider(agent.agentId).trustScore;
     }
 
     private getReputationWeight(agentId: string): number {

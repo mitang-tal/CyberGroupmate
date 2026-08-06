@@ -383,8 +383,9 @@ export class MetaDecisionEngine {
     } {
         switch (decision.decisionType) {
             case "redispatch": {
-                // 真实重新派发：经过 dispatcher（含 Phase 1 guardrail + Phase 3.2 trust gate）
-                const match = this.dispatcher?.dispatch({ taskType: decision.targetComponent });
+                // 真实重新派发：经过 dispatcher（含 Phase 1 guardrail + Phase 3.2 trust gate + #24 推演门槛）
+                // redispatch 属 high-stakes（priority=7）→ 走 full 推演，收紧信任门槛
+                const match = this.dispatcher?.dispatch({ taskType: decision.targetComponent, priority: 7 });
                 if (!match) {
                     return {
                         status: "failure",

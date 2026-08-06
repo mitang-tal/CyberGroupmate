@@ -567,6 +567,9 @@ async function main(): Promise<void> {
 	    virtualizer: new SandboxStateVirtualizer(),
 	});
 
+	// #24 C9：dispatcher 决策前跑推演（sandbox simulation 与 reputation 联动）
+	capabilityDispatcher.setSimulationEngine(simulationEngine);
+
 	// ─── Phase 7: Agent Reputation ───
 	const { SqliteReputationStore } = await import("./reputation/sqlite-reputation-store.js");
 	const { ReputationEvaluator } = await import("./reputation/reputation-evaluator.js");

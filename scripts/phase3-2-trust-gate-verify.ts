@@ -100,6 +100,54 @@ function main() {
         check("无 provider 时仍可派发", match?.agentId === plain.agentId, JSON.stringify(match));
     }
 
+    // ─── 场景 D（#24 C9）：推演门槛 —— 低预测成功率要求更高信任分 ───
+    console.log("\n[D] #24 C9 推演联动：低 sim 成功率收紧信任门槛");
+    {
+        const registry = new CapabilityRegistry();
+        const high = registerMediaAgent(registry, "High Trust");
+        const mid = registerMediaAgent(registry, "Mid Trust");
+        const low = registerMediaAgent(registry, "Low Trust");
+        // 注：register 后默认正常 → 全可派发；此处仅验证推演门槛过滤低信任
+        const dispatcher = new CapabilityDispatcher(registry);
+        dispatcher.setReputationProvider((agentId) => {
+            if (agentId === high.agentId) return { trustScore: 0.9, trustState: "trusted", reliability: 0.9 };
+            if (agentId === mid.agentId) return { trustScore: 0.6, trustState: "normal", reliability: 0.6 };
+            return { trustScore: 0.4, trustState: "normal", reliability: 0.4 };
+        });
+        dispatcher.setSimulationEngine({
+            runSimulation: (_ctx, _opts) => ({
+                optionsEvaluated: [
+                    { optionId: "o1", predictedSuccessRate: 0.2, overallScore: 2 },
+                    { optionId: "o2", predictedSuccessRate: 0.9, overallScore: 9 },
+                ],
+            }),
+        });
+
+        // sim=0.2（top 方案）→ requiredTrust = 0.3 + 0.8*0.7 = 0.86 → 仅 trusted 通过
+        const risky = dispatcher.listCandidates({ taskType: "media_send", tags: ["send", "media"] });
+        check("低 sim 成功率仅保留高信任 agent", risky.length === 1 && risky[0].agentId === high.agentId,
+            `risky=${risky.map((r) => r.agentId).join(",")}`);
+
+        // 未注入推演引擎 → 门槛不生效，全部保留
+        const noSim = new CapabilityDispatcher(registry);
+        noSim.setReputationProvider((agentId) => {
+            if (agentId === high.agentId) return { trustScore: 0.9, trustState: "trusted", reliability: 0.9 };
+            if (agentId === mid.agentId) return { trustScore: 0.6, trustState: "normal", reliability: 0.6 };
+            return { trustScore: 0.4, trustState: "normal", reliability: 0.4 };
+        });
+        const all = noSim.listCandidates({ taskType: "media_send", tags: ["send", "media"] });
+        check("无推演引擎时门槛不生效", all.length === 3, String(all.length));
+
+        // 推演引擎异常 → 不阻断派发
+        const brokenSim = new CapabilityDispatcher(registry);
+        brokenSim.setReputationProvider(() => ({ trustScore: 0.5, trustState: "normal", reliability: 0.5 }));
+        brokenSim.setSimulationEngine({
+            runSimulation: () => { throw new Error("sim down"); },
+        });
+        const stillDispatch = brokenSim.dispatch({ taskType: "media_send", tags: ["send", "media"] });
+        check("推演引擎异常不阻断派发", stillDispatch !== undefined, JSON.stringify(stillDispatch));
+    }
+
     console.log(`\n结果: ${pass} passed, ${fail} failed`);
     if (fail > 0) process.exit(1);
 }
