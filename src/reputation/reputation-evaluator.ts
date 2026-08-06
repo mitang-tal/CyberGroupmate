@@ -37,6 +37,8 @@ export interface ReputationConfig {
     riskWeight?: number;
     /** 重复犯错罚权（#20），默认 0.15 */
     repeatErrorWeight?: number;
+    /** 胜任度权重（#19 融合），默认 0.4；reliability 权重 = 1 - masteryWeight */
+    masteryWeight?: number;
     /** probation shadow mode（#23），默认 true */
     shadowEnabled?: boolean;
 }
@@ -57,6 +59,7 @@ const DEFAULT_CONFIG: Required<ReputationConfig> = {
     latencyScaleMs: 2000,
     riskWeight: 0.3,
     repeatErrorWeight: 0.15,
+    masteryWeight: 0.4,
     shadowEnabled: true,
 };
 
@@ -109,7 +112,7 @@ export class ReputationEvaluator {
         const { reliability, repeatRatio } = calculateReliability(input.capabilityExecutions, now, this.cfg);
         const riskProbability = Math.min(input.recentAlerts / total, 1);
 
-        const trustScore = calculateTrustScore(reliability, riskProbability, repeatRatio, this.cfg);
+        const trustScore = calculateTrustScore(reliability, riskProbability, repeatRatio, capabilityScores, this.cfg);
         const trustState = determineTrustState(trustScore, existing?.trustState, this.cfg.hysteresis);
         const probationUntilMs = trustState === "probation" ? now + PROBATION_PERIOD_MS : undefined;
 

@@ -17,6 +17,8 @@ export interface TrustScorerOptions {
     riskWeight?: number;
     repeatErrorWeight?: number;
     hysteresis?: number;
+    /** #19 胜任度在 trustScore 中的权重（reliability 权重 = 1 - masteryWeight），默认 0.4 */
+    masteryWeight?: number;
 }
 
 const TRUST_BOUNDS: Record<"probation" | "normal" | "trusted", number> = {
@@ -77,19 +79,38 @@ export function calculateReliability(
     return { reliability, repeatRatio };
 }
 
-/** trustScore = reliability - 风险罚分 - 重复犯错罚分 */
+/** trustScore = 可靠度(reliability)与胜任度(mastery)加权融合 - 风险罚分 - 重复犯错罚分 */
 export function calculateTrustScore(
     reliability: number,
     riskProbability: number,
     repeatRatio: number,
+    capabilityScores: { mastery: number; executionCount: number }[] = [],
     opts: TrustScorerOptions = {},
 ): number {
     const riskWeight = opts.riskWeight ?? 0.3;
     const repeatErrorWeight = opts.repeatErrorWeight ?? 0.15;
+    const masteryWeight = opts.masteryWeight ?? 0.4;
     const riskPenalty = riskProbability * riskWeight;          // max -30%
     const repeatPenalty = repeatRatio * repeatErrorWeight;     // 重复犯错惩罚
-    const score = reliability - riskPenalty - repeatPenalty;
+    // 胜任度：各能力 mastery 按执行次数加权求均值，无样本时回退先验
+    const mastery = aggregateMastery(capabilityScores, opts.prior ?? 0.5);
+    const base = (1 - masteryWeight) * reliability + masteryWeight * mastery;
+    const score = base - riskPenalty - repeatPenalty;
     return Math.max(0, Math.min(1, Math.round(score * 100) / 100));
+}
+
+/** 各能力 mastery 按执行次数加权求均值；无样本时回退先验（避免空数据误判） */
+function aggregateMastery(
+    scores: { mastery: number; executionCount: number }[],
+    prior: number,
+): number {
+    let wSum = 0;
+    let wMastery = 0;
+    for (const s of scores) {
+        wSum += s.executionCount;
+        wMastery += s.mastery * s.executionCount;
+    }
+    return wSum > 0 ? wMastery / wSum : prior;
 }
 
 /** #22：带滞回窗的信任状态机 */

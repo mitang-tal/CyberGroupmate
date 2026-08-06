@@ -160,19 +160,19 @@ function main() {
         const first = ev.evaluate(makeInput("a1", Array.from({ length: 10 }, () => ({ success: true }))));
         check("全成功进入 trusted", first.trustState === "trusted", String(first.trustState));
 
-        // score≈0.8（8 成功，失败分散到不同能力避免重复惩罚）→ raw=normal，但降级需 <0.80 → 保持 trusted
+        // score≈0.81（9 成功，失败分散到不同能力避免重复惩罚）→ raw=normal，但降级需 <0.80 → 保持 trusted
         const now4 = Date.now();
         const edgeInput: ReputationEvaluationInput = {
             agentId: "a1", agentName: "a1",
             capabilityExecutions: [
-                ...Array.from({ length: 8 }, () => ({ capabilityId: "c1", capabilityName: "c1", success: true, latencyMs: 500, timestampMs: now4 })),
+                ...Array.from({ length: 9 }, () => ({ capabilityId: "c1", capabilityName: "c1", success: true, latencyMs: 500, timestampMs: now4 })),
                 { capabilityId: "c1", capabilityName: "c1", success: false, latencyMs: 500, timestampMs: now4, errorType: "e" },
                 { capabilityId: "c2", capabilityName: "c2", success: false, latencyMs: 500, timestampMs: now4, errorType: "e" },
             ],
             recentAlerts: 0,
         };
         const edge = ev.evaluate(edgeInput);
-        check("score≈0.8 时滞回保持 trusted（不抖动）", edge.trustState === "trusted", `${edge.trustState} score=${edge.trustScore}`);
+        check("score≈0.81 时滞回保持 trusted（不抖动）", edge.trustState === "trusted", `${edge.trustState} score=${edge.trustScore}`);
 
         // score ≈ 0.7 → <0.80 → 降级 normal
         const lower = ev.evaluate(makeInput("a1", Array.from({ length: 10 }, (_, i) => ({ success: i < 7 }))));
