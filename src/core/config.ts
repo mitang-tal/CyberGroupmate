@@ -525,6 +525,13 @@ export interface AppConfig {
         /** 检查间隔 ms，默认 60000 */
         checkIntervalMs?: number;
     };
+    /** Phase 8.4 Agent Evolution 配置 */
+    evolution?: {
+        /** cron 表达式（5 字段），命中时自动跑全量演化分析。建议每日 0 点（0 0 * * *）或每周。默认空 = 不启用定时 */
+        schedule?: string;
+        /** 检查间隔 ms，默认 60000 */
+        checkIntervalMs?: number;
+    };
 }
 
 // ─── 默认值 ───
@@ -701,6 +708,7 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
         rateLimiting: parseRateLimitingConfig(fileConfig),
         backgroundAgent: parseBackgroundAgentConfig(fileConfig),
         metaSelfTest: parseMetaSelfTestConfig(fileConfig),
+        evolution: parseEvolutionConfig(fileConfig),
     };
 
     _cached = config;
@@ -1039,6 +1047,15 @@ function parseBackgroundAgentConfig(fileConfig: Record<string, unknown>): AppCon
 
 function parseMetaSelfTestConfig(fileConfig: Record<string, unknown>): AppConfig["metaSelfTest"] {
     const raw = fileConfig.meta_self_test as Record<string, unknown> | undefined;
+    if (!raw || typeof raw !== "object") return undefined;
+    return {
+        schedule: str(raw.schedule) ?? undefined,
+        checkIntervalMs: raw.check_interval_ms != null ? num(raw.check_interval_ms, 60000) : undefined,
+    };
+}
+
+function parseEvolutionConfig(fileConfig: Record<string, unknown>): AppConfig["evolution"] {
+    const raw = fileConfig.evolution as Record<string, unknown> | undefined;
     if (!raw || typeof raw !== "object") return undefined;
     return {
         schedule: str(raw.schedule) ?? undefined,
@@ -1610,6 +1627,13 @@ export function serializeConfigToObject(config: AppConfig): Record<string, unkno
         if (config.metaSelfTest.schedule != null) mst.schedule = config.metaSelfTest.schedule;
         if (config.metaSelfTest.checkIntervalMs != null) mst.check_interval_ms = config.metaSelfTest.checkIntervalMs;
         if (Object.keys(mst).length > 0) obj.meta_self_test = mst;
+    }
+
+    if (config.evolution) {
+        const ev: Record<string, unknown> = {};
+        if (config.evolution.schedule != null) ev.schedule = config.evolution.schedule;
+        if (config.evolution.checkIntervalMs != null) ev.check_interval_ms = config.evolution.checkIntervalMs;
+        if (Object.keys(ev).length > 0) obj.evolution = ev;
     }
 
     return obj;

@@ -637,11 +637,15 @@ async function main(): Promise<void> {
 	    },
 	});
 
-	// ═══ Phase 4.1 治理收敛：Gov2 为唯一配置源，广播 kill-switch / rate limit / quarantine / negotiation timeout ═══
+	// 8.4 C4：演化分析器（cron 全量触发由 appConfig.evolution.schedule 控制，见下方）
+	const evolutionAnalyzer = new EvolutionAnalyzer(reputationEvaluator, { capabilityRegistry });
+
+	// ═══ Phase 4.1 治理收敛：Gov2 为唯一配置源，广播 kill-switch / rate limit / quarantine / negotiation timeout / evolution cooling ═══
 	ecosystemGovernance.attachTargets({
 	    governor: ecosystemGovernor,
 	    guardrail: { setKillSwitch: (active) => globalGuardrail.toggleKillSwitch(active) },
 	    negotiationEngine: { setTimeoutMs: (ms: number) => negotiationEngine.setTimeoutMs(ms) },
+	    evolutionAnalyzer: { setCoolingDays: (days: number) => evolutionAnalyzer.setCoolingDays(days) },
 	});
 	const federationStore = new FederationStore(experienceStore, ecosystemGovernor, simulationEngine);
 
@@ -664,7 +668,10 @@ async function main(): Promise<void> {
 	        `Meta self-test critical (health=${healthScore}, failed probes: ${failedProbes}). Recommendations: ${recommendations}`,
 	    );
 	});
-	const evolutionAnalyzer = new EvolutionAnalyzer(reputationEvaluator, { capabilityRegistry });
+	// 8.4 C4 cron 定时演化分析：配置了 evolution.schedule 时自动启用（默认建议 0 0 * * * 每日 0 点）
+	if (appConfig.evolution?.schedule) {
+	    evolutionAnalyzer.startAutoRun(appConfig.evolution.schedule, appConfig.evolution.checkIntervalMs ?? 60_000);
+	}
 
     const { createInterface: createRL } = await import("node:readline");
     const hostRL = createRL({ input: process.stdin, output: process.stdout });
@@ -1916,6 +1923,7 @@ async function main(): Promise<void> {
         clearInterval(replyWatchdogInterval);
         if (backgroundDreamingInterval) clearInterval(backgroundDreamingInterval);
         metaSelfTestEngine.stopAutoRun();
+        evolutionAnalyzer.stopAutoRun();
 
         // 停止 Background Agent harness
         if (harnessManager) {

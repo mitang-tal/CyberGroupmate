@@ -13,9 +13,10 @@ import crypto from "node:crypto";
 import { EvolutionProposal, SpecializationTag } from "./types";
 import type { ReputationEvaluator } from "../reputation/reputation-evaluator";
 import type { CapabilityRegistry } from "../capability-registry/capability-registry";
+import { matchesCron } from "../core/cron-matcher.js";
 
 const SAMPLING_DAYS = 30;
-const COOLING_DAYS = 14;
+const DEFAULT_COOLING_DAYS = 14;
 const MIN_EXECUTIONS = 20;
 const SPECIALIZATION_THRESHOLD = 0.2; // 高出全局平均 20%
 
@@ -24,6 +25,10 @@ export class EvolutionAnalyzer {
     private capabilityRegistry?: CapabilityRegistry;
     private proposals: EvolutionProposal[] = [];
     private history: Map<string, number> = new Map(); // agentId → lastEvolvedAtMs
+    private coolingDays: number = DEFAULT_COOLING_DAYS;
+    private autoRunTimer: ReturnType<typeof setInterval> | null = null;
+    private autoRunSchedule = "";
+    private autoRunLastFiredKey = "";
 
     constructor(
         reputationEvaluator: ReputationEvaluator,
@@ -34,10 +39,62 @@ export class EvolutionAnalyzer {
     }
 
     /**
+     * 8.4 C4 cron 定时触发：按 5 字段 cron 表达式周期性跑全量演化分析。
+     * 每 checkIntervalMs（默认 60s）检查一次，同一分钟只触发一次（避免重复）。
+     * @returns 停止函数（或在未启用时返回 null）
+     */
+    startAutoRun(schedule: string, checkIntervalMs = 60_000): (() => void) | null {
+        this.stopAutoRun();
+        this.autoRunSchedule = schedule;
+        if (!schedule) return null;
+
+        const timer = setInterval(() => {
+            try {
+                this.runAutoCheck(new Date());
+            } catch (err) {
+                console.error("[evolution] auto run failed:", err instanceof Error ? err.message : String(err));
+            }
+        }, checkIntervalMs);
+        if (timer.unref) timer.unref();
+        this.autoRunTimer = timer;
+        return () => this.stopAutoRun();
+    }
+
+    /** 8.4 C4 单次 cron 检查：命中则跑全量分析并返回提案；未命中返回 undefined */
+    runAutoCheck(now: Date): EvolutionProposal[] | undefined {
+        if (!this.autoRunSchedule || !matchesCron(this.autoRunSchedule, now)) return undefined;
+        const key = now.toISOString().slice(0, 16); // 按分钟去重
+        if (key === this.autoRunLastFiredKey) return undefined;
+        this.autoRunLastFiredKey = key;
+        const proposals = this.analyzeAll();
+        console.log(`[evolution] cron auto run fired: ${proposals.length} proposal(s)`);
+        return proposals;
+    }
+
+    /** 8.4 C4 停止 cron 自动触发 */
+    stopAutoRun(): void {
+        if (this.autoRunTimer) {
+            clearInterval(this.autoRunTimer);
+            this.autoRunTimer = null;
+        }
+        this.autoRunLastFiredKey = "";
+    }
+
+    /** 是否已启用 cron 自动触发 */
+    isAutoRunEnabled(): boolean {
+        return this.autoRunTimer !== null;
+    }
+
+    /** Gov2 热更新：演化冷却窗口天数 */
+    setCoolingDays(days: number): void {
+        if (typeof days === "number" && days > 0) this.coolingDays = days;
+    }
+
+    /**
      * 触发全量离线演化分析
      */
-    analyzeAll(getAgentIds: () => { agentId: string; name: string }[]): EvolutionProposal[] {
-        const agents = getAgentIds();
+    analyzeAll(getAgentIds?: () => { agentId: string; name: string }[]): EvolutionProposal[] {
+        const agents = getAgentIds ? getAgentIds() : this.defaultAgentIds();
         const proposals: EvolutionProposal[] = [];
 
         for (const agent of agents) {
@@ -101,7 +158,7 @@ export class EvolutionAnalyzer {
         // 4. Cooling Window 检查
         const lastEvolvedAt = this.history.get(agentId);
         if (lastEvolvedAt) {
-            const coolingDeadline = lastEvolvedAt + COOLING_DAYS * 24 * 3600_000;
+            const coolingDeadline = lastEvolvedAt + this.coolingDays * 24 * 3600_000;
             if (Date.now() < coolingDeadline) {
                 return undefined; // 冷却期内跳过
             }
@@ -133,7 +190,7 @@ export class EvolutionAnalyzer {
             },
             status: "pending_approval",
             createdAtMs: Date.now(),
-            coolingDeadlineMs: (lastEvolvedAt || 0) + COOLING_DAYS * 24 * 3600_000,
+            coolingDeadlineMs: (lastEvolvedAt || 0) + this.coolingDays * 24 * 3600_000,
         };
 
         this.proposals.push(proposal);
@@ -205,7 +262,7 @@ export class EvolutionAnalyzer {
             return { inCooling: false };
         }
 
-        const coolingDeadline = lastEvolvedAt + COOLING_DAYS * 24 * 3600_000;
+        const coolingDeadline = lastEvolvedAt + this.coolingDays * 24 * 3600_000;
         const now = Date.now();
 
         if (now < coolingDeadline) {
@@ -221,6 +278,14 @@ export class EvolutionAnalyzer {
     }
 
     // ─── Private ───
+
+    /**
+     * 8.4 C4：未显式传 getAgentIds 时，从 CapabilityRegistry 枚举全部 Agent（供 cron 全量触发）
+     */
+    private defaultAgentIds(): { agentId: string; name: string }[] {
+        if (!this.capabilityRegistry) return [];
+        return this.capabilityRegistry.listAgents().map((a) => ({ agentId: a.agentId, name: a.name }));
+    }
 
     /**
      * 从 AgentRegistration.metadata 读取已生效的特化标签
