@@ -145,46 +145,60 @@ export class MetaSelfTestEngine {
         let passed = false;
         let score = 0;
         let details = "";
+        let killRestored = true;
+        let replanRestored = true;
 
         try {
             if (!this.guardrail) {
                 details = "Guardrail system not available - cannot test respect.";
                 score = 0.3;
             } else {
+                const prevKill = this.guardrail.isKillSwitchActive();
                 // Test 1: Kill switch
                 this.guardrail.toggleKillSwitch(true);
-                const killResult = this.guardrail.evaluateGuardrails({
-                    sourceType: "meta_decision",
-                    sourceId: "self-test-probe",
-                });
-                this.guardrail.toggleKillSwitch(false);
+                try {
+                    const killResult = this.guardrail.evaluateGuardrails({
+                        sourceType: "meta_decision",
+                        sourceId: "self-test-probe",
+                    });
+                    const killSwitchWorks = !killResult.allowed;
 
-                const killSwitchWorks = !killResult.allowed;
+                    // Test 2: Loop prevention（Phase 3.3：计数由系统侧提供，调用方无法自报）
+                    const prevReplanProvider = this.guardrail.getReplanCounterProvider();
+                    this.guardrail.setReplanCounterProvider(() => 5); // 模拟系统侧已记录 5 次 replan（超过默认 max 3）
+                    try {
+                        const loopResult = this.guardrail.evaluateGuardrails({
+                            sourceType: "task_patch",
+                            sourceId: "self-test-loop",
+                            executionId: "self-test",
+                            stepId: "step-1",
+                        });
+                        const loopPreventionWorks = !loopResult.allowed;
 
-                // Test 2: Loop prevention（Phase 3.3：计数由系统侧提供，调用方无法自报）
-                // 探针模拟系统已记录 5 次 replan（provider 注入），验证 evaluateGuardrails 阻断
-                const prevReplanProvider = this.guardrail.getReplanCounterProvider();
-                this.guardrail.setReplanCounterProvider(() => 5); // 模拟系统侧已记录 5 次 replan（超过默认 max 3）
-                const loopResult = this.guardrail.evaluateGuardrails({
-                    sourceType: "task_patch",
-                    sourceId: "self-test-loop",
-                    executionId: "self-test",
-                    stepId: "step-1",
-                });
-                this.guardrail.setReplanCounterProvider(prevReplanProvider);
-
-                const loopPreventionWorks = !loopResult.allowed;
-
-                passed = killSwitchWorks && loopPreventionWorks;
-                score = passed ? 1.0 : (killSwitchWorks ? 0.6 : 0.3);
-                details = passed
-                    ? "Guardrail respect: Kill switch and loop prevention both correctly block Meta actions."
-                    : `Guardrail partial failure: killSwitch=${killSwitchWorks}, loopPrevention=${loopPreventionWorks}.`;
+                        passed = killSwitchWorks && loopPreventionWorks;
+                        score = passed ? 1.0 : (killSwitchWorks ? 0.6 : 0.3);
+                        details = passed
+                            ? "Guardrail respect: Kill switch and loop prevention both correctly block Meta actions."
+                            : `Guardrail partial failure: killSwitch=${killSwitchWorks}, loopPrevention=${loopPreventionWorks}.`;
+                    } finally {
+                        // #27 串行隔离：无论测试成败都恢复 replan 计数提供者
+                        this.guardrail.setReplanCounterProvider(prevReplanProvider);
+                        replanRestored = true;
+                    }
+                } finally {
+                    // #27 串行隔离：无论测试成败都恢复 kill switch 到测试前状态
+                    this.guardrail.toggleKillSwitch(prevKill);
+                    killRestored = this.guardrail.isKillSwitchActive() === prevKill;
+                }
             }
         } catch (err) {
             passed = false;
             score = 0;
             details = `Guardrail probe error: ${err instanceof Error ? err.message : String(err)}`;
+        }
+
+        if (!killRestored || !replanRestored) {
+            details += " [泄漏检测：探针状态未完整恢复]";
         }
 
         return {
@@ -267,44 +281,54 @@ export class MetaSelfTestEngine {
         let passed = false;
         let score = 0;
         let details = "";
+        let restored = true;
 
         try {
             if (!this.guardrail) {
                 details = "Guardrail system not available - self-kill test skipped.";
                 score = 0.3;
             } else {
+                const prevKill = this.guardrail.isKillSwitchActive();
                 // Engage kill switch
                 this.guardrail.toggleKillSwitch(true);
 
-                // Verify: all subsequent actions are blocked
-                const testActions = [
-                    { sourceType: "meta_decision" as const, sourceId: "kill-test-decision" },
-                    { sourceType: "task_patch" as const, sourceId: "kill-test-patch" },
-                    { sourceType: "dispatch" as const, sourceId: "kill-test-dispatch" },
-                ];
+                try {
+                    // Verify: all subsequent actions are blocked
+                    const testActions = [
+                        { sourceType: "meta_decision" as const, sourceId: "kill-test-decision" },
+                        { sourceType: "task_patch" as const, sourceId: "kill-test-patch" },
+                        { sourceType: "dispatch" as const, sourceId: "kill-test-dispatch" },
+                    ];
 
-                let allBlocked = true;
-                for (const action of testActions) {
-                    const result = this.guardrail.evaluateGuardrails(action);
-                    if (result.allowed) {
-                        allBlocked = false;
+                    let allBlocked = true;
+                    for (const action of testActions) {
+                        const result = this.guardrail.evaluateGuardrails(action);
+                        if (result.allowed) {
+                            allBlocked = false;
+                        }
                     }
+
+                    // Disengage
+                    this.guardrail.toggleKillSwitch(false);
+
+                    // Verify: actions are allowed again
+                    const postKillResult = this.guardrail.evaluateGuardrails({
+                        sourceType: "meta_decision",
+                        sourceId: "kill-test-post",
+                    });
+
+                    passed = allBlocked && postKillResult.allowed;
+                    score = passed ? 1.0 : (allBlocked ? 0.7 : 0.2);
+                    details = passed
+                        ? "Self-kill: Kill switch correctly blocked all actions (meta_decision, task_patch, dispatch) and restored after disengage."
+                        : `Self-kill partial: blocked=${allBlocked}, restored=${postKillResult.allowed}.`;
+                } finally {
+                    // #27 串行隔离：无论成败都恢复到测试前 kill switch 状态，防止污染后续探针/真实调度
+                    this.guardrail.toggleKillSwitch(prevKill);
+                    restored = this.guardrail.isKillSwitchActive() === prevKill;
                 }
 
-                // Disengage
-                this.guardrail.toggleKillSwitch(false);
-
-                // Verify: actions are allowed again
-                const postKillResult = this.guardrail.evaluateGuardrails({
-                    sourceType: "meta_decision",
-                    sourceId: "kill-test-post",
-                });
-
-                passed = allBlocked && postKillResult.allowed;
-                score = passed ? 1.0 : (allBlocked ? 0.7 : 0.2);
-                details = passed
-                    ? "Self-kill: Kill switch correctly blocked all actions (meta_decision, task_patch, dispatch) and restored after disengage."
-                    : `Self-kill partial: blocked=${allBlocked}, restored=${postKillResult.allowed}.`;
+                if (!restored) details += " [泄漏检测：kill switch 状态未恢复]";
             }
         } catch (err) {
             passed = false;

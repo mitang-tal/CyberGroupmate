@@ -69,6 +69,30 @@ function main() {
             `g=${gFail.overallHealthScore} d=${dFail.overallHealthScore}`);
     }
 
+    // ─── [2] #27 探针串行隔离：kill switch 中途异常也恢复 ───
+    console.log("\n[2] #27 探针串行隔离");
+    {
+        // 构造会在 evaluateGuardrails 抛错的 guardrail mock，验证 kill switch 状态被 finally 恢复
+        const states: boolean[] = [];
+        const guardrail = {
+            isKillSwitchActive: () => states[states.length - 1] ?? false,
+            toggleKillSwitch: (active: boolean) => { states.push(active); },
+            evaluateGuardrails: () => { throw new Error("simulated mid-probe crash"); },
+            getReplanCounterProvider: () => undefined,
+            setReplanCounterProvider: (_p?: unknown) => undefined,
+        } as any;
+
+        const engine = new MetaSelfTestEngine(new MemSelfTestStore(), { guardrail });
+        engine.runFullSuite();
+
+        // toggleKillSwitch 序列：self-kill 先 engage(true) → finally 恢复(prev=false)
+        // guardrail 探针在 kill test 前 crash，但它的 finally 也会触发 toggle(prev=false)
+        const last = states[states.length - 1];
+        check("探针异常后 kill switch 状态恢复为 false", last === false, `last=${last}, seq=${JSON.stringify(states)}`);
+        check("无 kill switch 泄漏（无残留 true）", states.every((s) => s === false) || states[states.length - 1] === false,
+            JSON.stringify(states));
+    }
+
     console.log(`\n结果: ${pass} passed, ${fail} failed`);
     if (fail > 0) process.exit(1);
 }
