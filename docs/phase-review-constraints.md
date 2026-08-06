@@ -48,11 +48,11 @@
 
 ## 四、Phase 7.4 Meta Self-Test 约束
 
-- **#25 健康分公式未写 + 权重分级**：Guardrail Respect失败应比 Deadlock 严重。当前 health 为 4 探针平均分，无分级。状态：`[选型待定/待实现]`。
-- **#26 自检资源消耗**：cron 跑 Full Suite 频率+成本需控制。状态：`[待办]`（当前仅手动触发，未接 cron）。
-- **#27 探针执行独立性**：Self-Kill 探针是否会污染并影响其他 probe？需定串行（安全慢）/ 并行（快但污染）。当前 `runFullSuite` 顺序执行。状态：`[选型待定]`（需评估是否改串行隔离）。
-- **#28 自检失败自动响应未写**：降级/告警/停机/自愈链路？当前仅"抛出全局预警"文本。 状态：`[待办]`（需补响应链路）。
-- **#29 Commit 2 过重**：4 探针 + Health Score 计算应拆。状态：`[已记录]`（后补拆分时执行）。
+- **#25 健康分公式未写 + 权重分级**：Guardrail Respect失败应比 Deadlock 严重。当前 health 为 4 探针平均分，无分级。状态：`[已落地-7.4]`（加权健康分：guardrail/kill_switch 权重 1.5，deadlock/rigidity 1.0，可配置 `HealthWeights`；verify `phase74-meta-test-verify.ts`）。
+- **#26 自检资源消耗**：cron 跑 Full Suite 频率+成本需控制。状态：`[已落地-7.4]`（`meta_self_test.schedule` cron 表达式 + 检查间隔配置，默认 60s 轮询、按分钟去重；main.ts 接线、shutdown 停止）。
+- **#27 探针执行独立性**：Self-Kill 探针是否会污染并影响其他 probe？需定串行（安全慢）/ 并行（快但污染）。状态：`[已落地-7.4]`（串行执行 + try/finally 恢复 guardrail 状态，探针中途崩溃不泄漏 kill switch / replan provider）。
+- **#28 自检失败自动响应未写**：降级/告警/停机/自愈链路？状态：`[已落地-7.4]`（`alertEmitter` 注入：critical/degraded 推送 `system.meta_health_alert` 事件到 NotificationCenter，`changed` 区分新故障/持续故障，healthy 静默）。
+- **#29 Commit 2 过重**：4 探针 + Health Score 计算应拆。状态：`[已落地-7.4]`（#25/#26/#27/#28 分 4 个独立 commit 落地，均 tsc clean + verify）。
 
 ## 排期汇总（后续 commit 必含）
 
@@ -61,8 +61,6 @@
 | 8.x 治理面板 | Dashboard 前端（Patterns 看板 + 经验管理 + Revoke/提升） | #11 |
 | 8.x 安全治理 | Experience PUT/DELETE + audit log（who/when/what） | Revoke Audit 漏项 |
 | 7.2/sandbox | queryRelevantExperience 热路径缓存（与 sandbox 共用 cache 层） | Cache 漏项 |
-| 待定 | 各选型决策（静态/动态权重、纯逻辑/副本、收益率 control、延迟阈值） | #14-#17,#19-#21,#23,#27 |
-| 待定 | 信任状态 hysteresis / probation 行为 / 健康权重分级 | #22,#25 |
-| 待定 | 自动响应链路（自检失败降级/告警/停机） | #28 |
+| 待定 | 各选型决策（静态/动态权重、纯逻辑/副本、收益率 control、延迟阈值、探针串行/并行） | #14-#17,#23,#27(其余已落地) |
 
-> 说明：本表为**约束清单**，具体实现在相应 phase 的 commit 切分 + 验收标准中落实（不 squash）。
+> 说明：本表为**约束清单**，具体实现在相应 phase 的 commit 切分 + 验收标准中落实（不 squash）。Phase 7.x 约束 #19-#29 均已按 commit 拆分落地（见各 phase-complete.md 与 verify 脚本）。
