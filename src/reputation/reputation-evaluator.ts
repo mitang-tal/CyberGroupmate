@@ -15,15 +15,10 @@
 import { AgentReputation, TrustState, ReputationEvaluationInput } from "./types";
 import type { ReputationStore } from "./reputation-store";
 import { calculateCapabilityScores } from "./capability-scorer";
+import { calculateReliability, calculateTrustScore, determineTrustState } from "./trust-scorer";
 
 const PROBATION_PERIOD_MS = 24 * 3600_000; // 24h
 const HYSTERESIS_DEFAULT = 0.05;
-const TRUST_BOUNDS: Record<"probation" | "normal" | "trusted", number> = {
-    probation: 0.3,
-    normal: 0.55,
-    trusted: 0.85,
-};
-const TRUST_ORDER: TrustState[] = ["untrusted", "probation", "normal", "trusted"];
 
 export interface ReputationConfig {
     /** 冷启动先验（#19），默认 0.5 */
@@ -110,12 +105,12 @@ export class ReputationEvaluator {
             priorWeight: this.cfg.priorWeight,
         });
 
-        // 可靠性（#20 加权 + #21 衰减）与重复犯错占比
-        const { reliability, repeatRatio } = this.reliabilityAndRepeat(input, now);
+        // 可靠性（#20 加权 + #21 衰减）与重复犯错占比（trust-scorer）
+        const { reliability, repeatRatio } = calculateReliability(input.capabilityExecutions, now, this.cfg);
         const riskProbability = Math.min(input.recentAlerts / total, 1);
 
-        const trustScore = this.calculateTrustScore(reliability, riskProbability, repeatRatio);
-        const trustState = this.determineTrustState(trustScore, input.agentId);
+        const trustScore = calculateTrustScore(reliability, riskProbability, repeatRatio, this.cfg);
+        const trustState = determineTrustState(trustScore, existing?.trustState, this.cfg.hysteresis);
         const probationUntilMs = trustState === "probation" ? now + PROBATION_PERIOD_MS : undefined;
 
         // #23 probation shadow 观察
@@ -187,74 +182,5 @@ export class ReputationEvaluator {
 
     // ─── Private ───
 
-    /** #20 + #21：指数半衰衰减 + 延迟成本加权可靠性；统计重复犯错占比 */
-    private reliabilityAndRepeat(input: ReputationEvaluationInput, now: number): {
-        reliability: number;
-        repeatRatio: number;
-    } {
-        let wSum = 0;
-        let wSucc = 0;
-        const failCounts = new Map<string, number>();
-
-        for (const exec of input.capabilityExecutions) {
-            const age = Math.max(0, now - exec.timestampMs);
-            const timeWeight = Math.pow(2, -age / this.cfg.halfLifeMs); // 2^(-age/halfLife)
-            const latencyWeight = 1 + this.cfg.costWeight * Math.min(1, (exec.latencyMs || 0) / this.cfg.latencyScaleMs);
-            const w = timeWeight * latencyWeight;
-            wSum += w;
-            if (exec.success) {
-                wSucc += w;
-            } else {
-                failCounts.set(exec.capabilityId, (failCounts.get(exec.capabilityId) ?? 0) + 1);
-            }
-        }
-
-        if (wSum === 0) return { reliability: this.cfg.prior, repeatRatio: 0 };
-
-        const reliability = wSucc / wSum;
-
-        let repeats = 0;
-        for (const count of failCounts.values()) {
-            if (count > 1) repeats += count - 1;
-        }
-        const repeatRatio = Math.min(repeats / input.capabilityExecutions.length, 1);
-
-        return { reliability, repeatRatio };
-    }
-
-    /** trustScore = reliability - 风险罚分 - 重复犯错罚分 */
-    private calculateTrustScore(reliability: number, riskProbability: number, repeatRatio: number): number {
-        const riskPenalty = riskProbability * this.cfg.riskWeight;          // max -30%
-        const repeatPenalty = repeatRatio * this.cfg.repeatErrorWeight;     // 重复犯错惩罚
-        const score = reliability - riskPenalty - repeatPenalty;
-        return Math.max(0, Math.min(1, Math.round(score * 100) / 100));
-    }
-
-    /** #22：带滞回窗的信任状态机 */
-    private determineTrustState(trustScore: number, agentId: string): TrustState {
-        const current = this.store.getByAgentId(agentId)?.trustState;
-        const raw = this.rawState(trustScore);
-        if (!current || raw === current) return raw;
-
-        const h = this.cfg.hysteresis;
-        const rawRank = TRUST_ORDER.indexOf(raw);
-        const curRank = TRUST_ORDER.indexOf(current);
-
-        if (rawRank > curRank) {
-            // 升级：需超过当前档上界 + 滞回余量，防止刚到阈值又回退
-            const need = current === "untrusted" ? TRUST_BOUNDS.probation + h : TRUST_BOUNDS[current] + h;
-            return trustScore >= need ? raw : current;
-        }
-        // 降级：需跌破当前档下界 - 滞回余量
-        const boundKey = current as "probation" | "normal" | "trusted";
-        const need = TRUST_BOUNDS[boundKey] - h;
-        return trustScore < need ? raw : current;
-    }
-
-    private rawState(score: number): TrustState {
-        if (score >= TRUST_BOUNDS.trusted) return "trusted";
-        if (score >= TRUST_BOUNDS.normal) return "normal";
-        if (score >= TRUST_BOUNDS.probation) return "probation";
-        return "untrusted";
-    }
+    // ─── 评分逻辑已迁移至 trust-scorer / capability-scorer（独立计算器模块） ───
 }
