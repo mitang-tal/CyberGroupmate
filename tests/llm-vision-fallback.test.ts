@@ -6,12 +6,14 @@
  * 带着图片打过去必然继续失败，fallback 形同虚设。
  */
 
-import { describe, it } from "node:test";
+import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import {
     callLLMWithFallback,
     stripImagePartsForNonVisionModel,
+    setVisionDegradeConfigProvider,
+    clearVisionDegradeCache,
     type ChatMessage,
 } from "../src/core/llm.js";
 import type { LLMConfig } from "../src/core/config.js";
@@ -23,9 +25,13 @@ interface RecordedRequest {
     body: Record<string, any>;
 }
 
+const FAKE_DESCRIPTION = "一只戴墨镜的柴犬";
+
 /**
  * 起一个假的 OpenAI 兼容 endpoint。
- * model 名里带 "boom" 的返回 400（不可重试 → 立即 fallback，测试不会卡在退避上）。
+ * - model 名里带 "boom" → 400（不可重试 → 立即 fallback，测试不会卡在退避上）
+ * - 请求里带图片 → 返回一段固定"图片描述"（模拟视觉模型）
+ * - 其余 → "ok"
  */
 async function startFakeApi(recorded: RecordedRequest[]): Promise<{ server: Server; port: number }> {
     const server = createServer((req, res) => {
@@ -44,7 +50,7 @@ async function startFakeApi(recorded: RecordedRequest[]): Promise<{ server: Serv
             }
             res.writeHead(200, { "content-type": "application/json" });
             res.end(JSON.stringify({
-                choices: [{ message: { content: "ok" } }],
+                choices: [{ message: { content: hasImageParts(body) ? FAKE_DESCRIPTION : "ok" } }],
                 usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
             }));
         });
@@ -113,29 +119,87 @@ describe("stripImagePartsForNonVisionModel", () => {
 });
 
 describe("callLLMWithFallback 多模态降级", () => {
-    it("fallback 到不支持 vision 的 profile 时自动去掉图片并成功", async () => {
+    // 默认不注入 vision profile：走"转述不可用 → 纯占位"的二级兜底，
+    // 避免测试依赖真实 config.yaml 的 vision 路由（会打真实 API）。
+    beforeEach(() => {
+        setVisionDegradeConfigProvider(() => []);
+        clearVisionDegradeCache();
+    });
+    afterEach(() => {
+        setVisionDegradeConfigProvider(null);
+        clearVisionDegradeCache();
+    });
+
+    it("一级降级：用 vision 模型把图片转述成文字后交给非 vision profile", async () => {
         const recorded: RecordedRequest[] = [];
         const { server, port } = await startFakeApi(recorded);
         try {
-            const visionProfile = makeProfile(port, "vision-boom", true);
-            const textProfile = makeProfile(port, "text-only");
+            // 注入一个"视觉转述"专用 profile（同一个假 server）
+            setVisionDegradeConfigProvider(() => [makeProfile(port, "describer", true)]);
 
             const response = await callLLMWithFallback(
                 messagesWithImage(),
-                [visionProfile, textProfile],
+                [makeProfile(port, "vision-boom", true), makeProfile(port, "text-only")],
                 { caller: "test", maxRetries: 0 },
             );
 
             assert.equal(response.content, "ok", "应由第二个 profile 成功返回");
-            assert.equal(recorded.length, 2, "应恰好尝试两个 profile");
 
-            assert.equal(recorded[0].model, "vision-boom");
+            const models = recorded.map((r) => r.model);
+            assert.deepEqual(models, ["vision-boom", "describer", "text-only"],
+                "应依次是：vision profile 失败 → 转述 → 非 vision profile");
+
             assert.equal(hasImageParts(recorded[0].body), true, "vision profile 应照常收到图片");
+            assert.equal(hasImageParts(recorded[1].body), true, "转述调用必须带图片");
 
-            assert.equal(recorded[1].model, "text-only");
-            assert.equal(hasImageParts(recorded[1].body), false, "非 vision profile 不应收到图片");
-            assert.match(userText(recorded[1].body), /图片 ×1/, "应带文字占位说明");
+            const final = recorded[2];
+            assert.equal(hasImageParts(final.body), false, "非 vision profile 不应收到图片");
+            assert.match(userText(final.body), /视觉模型对原图的转述/, "应说明这是转述");
+            assert.match(userText(final.body), new RegExp(FAKE_DESCRIPTION), "应带上真实描述内容");
+            assert.match(userText(final.body), /看看这张图/, "原文应保留");
         } finally {
+            setVisionDegradeConfigProvider(() => []);
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+        }
+    });
+
+    it("二级兜底：没有可用 vision profile 时退回纯文字占位", async () => {
+        const recorded: RecordedRequest[] = [];
+        const { server, port } = await startFakeApi(recorded);
+        try {
+            const response = await callLLMWithFallback(
+                messagesWithImage(),
+                [makeProfile(port, "vision-boom", true), makeProfile(port, "text-only")],
+                { caller: "test", maxRetries: 0 },
+            );
+
+            assert.equal(response.content, "ok");
+            assert.deepEqual(recorded.map((r) => r.model), ["vision-boom", "text-only"], "不应有转述调用");
+
+            const last = recorded[1];
+            assert.equal(hasImageParts(last.body), false, "非 vision profile 不应收到图片");
+            assert.match(userText(last.body), /图片 ×1/, "应说明原本有几张图");
+            assert.match(userText(last.body), /图片已省略/);
+        } finally {
+            await new Promise<void>((resolve) => server.close(() => resolve()));
+        }
+    });
+
+    it("noVisionDegrade 完全关闭降级（视觉描述自身路径）", async () => {
+        const recorded: RecordedRequest[] = [];
+        const { server, port } = await startFakeApi(recorded);
+        try {
+            setVisionDegradeConfigProvider(() => [makeProfile(port, "describer", true)]);
+            await callLLMWithFallback(
+                messagesWithImage(),
+                [makeProfile(port, "vision-boom", true), makeProfile(port, "text-only")],
+                { caller: "vision", maxRetries: 0, noVisionDegrade: true },
+            );
+
+            assert.deepEqual(recorded.map((r) => r.model), ["vision-boom", "text-only"], "不应触发转述");
+            assert.equal(hasImageParts(recorded[1].body), true, "关闭降级后图片应原样发出");
+        } finally {
+            setVisionDegradeConfigProvider(() => []);
             await new Promise<void>((resolve) => server.close(() => resolve()));
         }
     });

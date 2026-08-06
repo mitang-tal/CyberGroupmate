@@ -853,7 +853,13 @@ export async function describeImage(
         },
     ];
 
-    const response = await callLLMWithFallback(messages, visionConfigs, { caller: "vision", timeoutMs: resolveComponentTimeout("vision") });
+    // noVisionDegrade：视觉描述的整个目的就是看图。剥掉图片只会得到一段
+    // 凭空编造的描述；同时这也是「降级 → describeImage → 再降级」的递归护栏。
+    const response = await callLLMWithFallback(messages, visionConfigs, {
+        caller: "vision",
+        timeoutMs: resolveComponentTimeout("vision"),
+        noVisionDegrade: true,
+    });
     const collapseNewlines = !trimmedPrompt;
     return normalizeVisionDescription(response.content, collapseNewlines);
 }
@@ -893,7 +899,10 @@ async function describeSticker(
         },
     ];
 
-    const response = await callLLMWithFallback(messages, visionConfigs, { caller: "vision" });
+    const response = await callLLMWithFallback(messages, visionConfigs, {
+        caller: "vision",
+        noVisionDegrade: true,
+    });
     const raw = response.content.trim();
 
     // 尝试解析 JSON（先直接解析，失败再从文本中抽取 {...} 片段救一把）
