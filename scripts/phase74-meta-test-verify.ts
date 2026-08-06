@@ -93,6 +93,27 @@ function main() {
             JSON.stringify(states));
     }
 
+    // ─── [3] #26 cron 定时自动触发 ───
+    console.log("\n[3] #26 cron 定时自动触发");
+    {
+        const engine = new MetaSelfTestEngine(new MemSelfTestStore());
+        const stop = engine.startAutoRun("*/1 * * * *", 1000);
+        check("startAutoRun 注册成功", stop !== null && engine.isAutoRunEnabled());
+        stop!();
+        check("stopAutoRun 清理成功", !engine.isAutoRunEnabled());
+
+        // runAutoCheck：cron 命中 → 跑全套自检返回报告；未命中 → undefined
+        const engine2 = new MetaSelfTestEngine(new MemSelfTestStore());
+        engine2.startAutoRun("0 3 * * *", 1000); // 每日 3:00
+        const hit = engine2.runAutoCheck(new Date(2026, 0, 1, 3, 0, 0)); // 命中
+        const miss = engine2.runAutoCheck(new Date(2026, 0, 1, 12, 0, 0)); // 未命中
+        check("cron 命中时触发全套自检", hit !== undefined && hit.overallHealthScore >= 0);
+        check("cron 未命中时不触发", miss === undefined);
+        const hit2 = engine2.runAutoCheck(new Date(2026, 0, 1, 3, 0, 30)); // 同一分钟再去重
+        check("同一分钟只触发一次（去重）", hit2 === undefined);
+        engine2.stopAutoRun();
+    }
+
     console.log(`\n结果: ${pass} passed, ${fail} failed`);
     if (fail > 0) process.exit(1);
 }

@@ -20,6 +20,7 @@ import type { SelfTestStore } from "./self-test-store";
 import type { GlobalGuardrailEvaluator } from "../governance/global-guardrail-evaluator";
 import type { FailureExtractor } from "../experience/failure-extractor";
 import type { ReputationEvaluator } from "../reputation/reputation-evaluator";
+import { matchesCron } from "../core/cron-matcher.js";
 
 /** #25 默认探针权重：安全关键探针（guardrail/kill_switch）权重 1.5，常规探针 1.0 */
 const DEFAULT_HEALTH_WEIGHTS: Required<HealthWeights> = {
@@ -35,6 +36,9 @@ export class MetaSelfTestEngine {
     private extractor?: FailureExtractor;
     private reputation?: ReputationEvaluator;
     private healthWeights: Required<HealthWeights>;
+    private autoRunTimer: ReturnType<typeof setInterval> | null = null;
+    private autoRunSchedule = "";
+    private autoRunLastFiredKey = "";
 
     constructor(
         store: SelfTestStore,
@@ -51,6 +55,53 @@ export class MetaSelfTestEngine {
         this.extractor = deps.extractor;
         this.reputation = deps.reputation;
         this.healthWeights = { ...DEFAULT_HEALTH_WEIGHTS, ...deps.healthWeights };
+    }
+
+    /**
+     * #26 cron 定时自检：按 5 字段 cron 表达式周期性触发 runFullSuite。
+     * 每 checkIntervalMs（默认 60s）检查一次，同一分钟只触发一次（避免重复）。
+     * @returns 停止函数（或在未启用时返回 null）
+     */
+    startAutoRun(schedule: string, checkIntervalMs = 60_000): (() => void) | null {
+        this.stopAutoRun();
+        this.autoRunSchedule = schedule;
+        if (!schedule) return null;
+
+        const timer = setInterval(() => {
+            try {
+                this.runAutoCheck(new Date());
+            } catch (err) {
+                console.error("[meta-self-test] auto run failed:", err instanceof Error ? err.message : String(err));
+            }
+        }, checkIntervalMs);
+        if (timer.unref) timer.unref();
+        this.autoRunTimer = timer;
+        return () => this.stopAutoRun();
+    }
+
+    /** #26 单次 cron 检查：命中则跑全套自检并返回报告；未命中返回 undefined */
+    runAutoCheck(now: Date): MetaSelfTestReport | undefined {
+        if (!this.autoRunSchedule || !matchesCron(this.autoRunSchedule, now)) return undefined;
+        const key = now.toISOString().slice(0, 16); // 按分钟去重
+        if (key === this.autoRunLastFiredKey) return undefined;
+        this.autoRunLastFiredKey = key;
+        const report = this.runFullSuite();
+        console.log(`[meta-self-test] auto run fired: health=${report.overallHealthScore} status=${report.status}`);
+        return report;
+    }
+
+    /** #26 停止 cron 自检 */
+    stopAutoRun(): void {
+        if (this.autoRunTimer) {
+            clearInterval(this.autoRunTimer);
+            this.autoRunTimer = null;
+        }
+        this.autoRunLastFiredKey = "";
+    }
+
+    /** 是否已启用 cron 自检 */
+    isAutoRunEnabled(): boolean {
+        return this.autoRunTimer !== null;
     }
 
     /**

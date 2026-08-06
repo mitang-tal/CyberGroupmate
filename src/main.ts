@@ -586,6 +586,10 @@ async function main(): Promise<void> {
 	    extractor: failureExtractor,
 	    reputation: reputationEvaluator,
 	});
+	// #26 cron 定时自检：配置了 meta_self_test.schedule 时自动启用
+	if (appConfig.metaSelfTest?.schedule) {
+	    metaSelfTestEngine.startAutoRun(appConfig.metaSelfTest.schedule, appConfig.metaSelfTest.checkIntervalMs ?? 60_000);
+	}
 
 	// ─── Phase 8: Ecosystem（生态中心） ───
 	const { EcosystemGovernor } = await import("./ecosystem/ecosystem-governor.js");
@@ -1857,6 +1861,7 @@ async function main(): Promise<void> {
         clearInterval(schedulerWatchdogInterval);
         clearInterval(replyWatchdogInterval);
         if (backgroundDreamingInterval) clearInterval(backgroundDreamingInterval);
+        metaSelfTestEngine.stopAutoRun();
 
         // 停止 Background Agent harness
         if (harnessManager) {

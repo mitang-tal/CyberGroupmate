@@ -518,6 +518,13 @@ export interface AppConfig {
         /** @deprecated use harnessModel */
         claudeModel?: string;
     };
+    /** Phase 7.4 Meta Self-Test 配置 */
+    metaSelfTest?: {
+        /** cron 表达式（5 字段），命中时自动跑全套自检。默认空 = 不启用定时 */
+        schedule?: string;
+        /** 检查间隔 ms，默认 60000 */
+        checkIntervalMs?: number;
+    };
 }
 
 // ─── 默认值 ───
@@ -693,6 +700,7 @@ export function loadConfig(configPath?: string, forceReload?: boolean): AppConfi
         grounding: parseGroundingConfig(fileConfig),
         rateLimiting: parseRateLimitingConfig(fileConfig),
         backgroundAgent: parseBackgroundAgentConfig(fileConfig),
+        metaSelfTest: parseMetaSelfTestConfig(fileConfig),
     };
 
     _cached = config;
@@ -1026,6 +1034,15 @@ function parseBackgroundAgentConfig(fileConfig: Record<string, unknown>): AppCon
         minIntervalHours: raw.min_interval_hours != null ? num(raw.min_interval_hours, 6) : undefined,
         maxBudgetUsd: raw.max_budget_usd != null ? num(raw.max_budget_usd, 5) : undefined,
         extraArgs: Array.isArray(raw.extra_args) ? (raw.extra_args as unknown[]).map(String) : undefined,
+    };
+}
+
+function parseMetaSelfTestConfig(fileConfig: Record<string, unknown>): AppConfig["metaSelfTest"] {
+    const raw = fileConfig.meta_self_test as Record<string, unknown> | undefined;
+    if (!raw || typeof raw !== "object") return undefined;
+    return {
+        schedule: str(raw.schedule) ?? undefined,
+        checkIntervalMs: raw.check_interval_ms != null ? num(raw.check_interval_ms, 60000) : undefined,
     };
 }
 
@@ -1586,6 +1603,13 @@ export function serializeConfigToObject(config: AppConfig): Record<string, unkno
         if (config.backgroundAgent.maxBudgetUsd != null) ba.max_budget_usd = config.backgroundAgent.maxBudgetUsd;
         if (config.backgroundAgent.extraArgs && config.backgroundAgent.extraArgs.length > 0) ba.extra_args = config.backgroundAgent.extraArgs;
         if (Object.keys(ba).length > 0) obj.background_agent = ba;
+    }
+
+    if (config.metaSelfTest) {
+        const mst: Record<string, unknown> = {};
+        if (config.metaSelfTest.schedule != null) mst.schedule = config.metaSelfTest.schedule;
+        if (config.metaSelfTest.checkIntervalMs != null) mst.check_interval_ms = config.metaSelfTest.checkIntervalMs;
+        if (Object.keys(mst).length > 0) obj.meta_self_test = mst;
     }
 
     return obj;
