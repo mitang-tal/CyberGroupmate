@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { api } from '../lib/api.js';
+  import { translateReasoning, translateExecutionResult } from '../lib/i18n.js';
 
   let activeSection = 'capabilities';
   const SECTIONS = [
@@ -584,12 +585,13 @@
               </tr></thead>
               <tbody>
                 {#each decisions as d}
+                  {@const dt = translateReasoning(d.reasoningText)}
                   <tr>
                     <td><span class="badge badge-xs {decisionTypeClass(d.decisionType)}">{d.decisionType}</span></td>
                     <td><span class="badge badge-xs {decisionStatusClass(d.status)}">{d.status}</span></td>
                     <td class="text-xs">{d.targetComponent}</td>
                     <td>{pct(d.confidenceScore)}</td>
-                    <td class="text-xs max-w-[260px] truncate" title={d.reasoningText}>{short(d.reasoningText, 40)}</td>
+                    <td class="text-xs max-w-[260px] truncate" title={dt.translated ? `${dt.zh}\nEN: ${dt.en}` : dt.zh}>{short(dt.zh, 40)}</td>
                     <td class="text-xs opacity-60">{fmtTime(d.createdAtMs)}</td>
                     <td>
                       {#if d.status === 'proposed'}
@@ -641,10 +643,16 @@
               <div><div class="opacity-50">执行时间</div>{fmtTime(selectedDecision.executedAtMs)}</div>
             {/if}
           </div>
-          <div class="text-xs mb-3">
-            <div class="font-bold mb-1">推理过程</div>
-            <div class="bg-base-200 rounded p-2">{selectedDecision.reasoningText}</div>
-          </div>
+          {#if selectedDecision.reasoningText}
+            {@const rt = translateReasoning(selectedDecision.reasoningText)}
+            <div class="text-xs mb-3">
+              <div class="font-bold mb-1">推理过程</div>
+              <div class="bg-base-200 rounded p-2 whitespace-pre-wrap break-words">{rt.zh}</div>
+              {#if rt.translated}
+                <div class="opacity-40 text-[10px] mt-1 whitespace-pre-wrap break-words">EN: {rt.en}</div>
+              {/if}
+            </div>
+          {/if}
           {#if selectedDecision.actionParams}
             <div class="text-xs mb-3">
               <div class="font-bold mb-1">执行参数</div>
@@ -652,9 +660,25 @@
             </div>
           {/if}
           {#if selectedDecision.executionResult}
+            {@const ex = translateExecutionResult(selectedDecision.executionResult)}
             <div class="text-xs">
               <div class="font-bold mb-1">执行结果</div>
-              <div class="alert alert-success py-2">{selectedDecision.executionResult}</div>
+              <div class="alert alert-success py-2 whitespace-pre-wrap break-words">
+                {#if ex}
+                  <div class="w-full">
+                    <div><span class="opacity-50">结果:</span> <span class="font-semibold">{ex.outcome}</span></div>
+                    {#if ex.detailZh}
+                      <div class="mt-0.5 whitespace-pre-wrap break-words">{ex.detailZh}</div>
+                      {#if ex.translated}
+                        <div class="opacity-40 text-[10px] mt-0.5 whitespace-pre-wrap break-words">EN: {ex.detailEn}</div>
+                      {/if}
+                    {/if}
+                    <div class="opacity-50 text-[10px] mt-0.5 font-mono break-all">executionId: {ex.executionId}</div>
+                  </div>
+                {:else}
+                  <pre class="whitespace-pre-wrap break-words text-[10px]">{selectedDecision.executionResult}</pre>
+                {/if}
+              </div>
             </div>
           {/if}
           {#if selectedDecision.status === 'proposed'}
@@ -730,13 +754,20 @@
             <div class="alert alert-error py-2 text-xs mt-3">{generateError}</div>
           {/if}
           {#if generateResult}
+            {@const gr = translateReasoning(generateResult.reasoning)}
             <div class="border border-base-300 rounded p-3 mt-3 text-xs">
               <div class="font-bold mb-2">Patch 结果</div>
               <div class="space-y-1">
                 <div><span class="opacity-50">Patch ID:</span> <span class="font-mono break-all">{generateResult.patchId}</span></div>
                 <div><span class="opacity-50">类型:</span> <span class="badge badge-xs {patchTypeClass(generateResult.patchType)}">{generateResult.patchType}</span></div>
                 <div><span class="opacity-50">状态:</span> <span class="badge badge-xs {patchStatusClass(generateResult.status)}">{generateResult.status}</span></div>
-                <div><span class="opacity-50">推理:</span> {generateResult.reasoning}</div>
+                <div>
+                  <span class="opacity-50">推理:</span>
+                  <div class="whitespace-pre-wrap break-words">{gr.zh}</div>
+                  {#if gr.translated}
+                    <div class="opacity-40 text-[10px] mt-0.5 whitespace-pre-wrap break-words">EN: {gr.en}</div>
+                  {/if}
+                </div>
                 {#if (generateResult.replacementSteps || []).length}
                   <div class="pt-1">
                     <div class="font-bold mb-1">替换步骤</div>
@@ -784,12 +815,18 @@
                 </tr></thead>
                 <tbody>
                   {#each patches as p}
+                    {@const pt = translateReasoning(p.reasoning)}
                     <tr>
                       <td><span class="badge badge-xs {patchTypeClass(p.patchType)}">{p.patchType}</span></td>
                       <td><span class="badge badge-xs {patchStatusClass(p.status)}">{p.status}</span></td>
                       <td class="font-mono text-xs">{short(p.executionId, 16)}</td>
                       <td class="font-mono text-xs">{short(p.failedStepId, 16)}</td>
-                      <td class="text-xs max-w-[200px] truncate" title={p.reasoning}>{short(p.reasoning, 30)}</td>
+                      <td class="text-xs whitespace-normal break-words min-w-[220px]">
+                        <div>{pt.zh}</div>
+                        {#if pt.translated}
+                          <div class="opacity-40 text-[10px] whitespace-pre-wrap break-words">EN: {pt.en}</div>
+                        {/if}
+                      </td>
                       <td class="text-xs opacity-60">{fmtTime(p.createdAtMs)}</td>
                       <td>
                         {#if p.status === 'draft'}
@@ -903,6 +940,7 @@
             <div class="alert alert-error py-2 text-xs mt-3">{evaluateError}</div>
           {/if}
           {#if evaluateResult}
+            {@const rt = translateReasoning(evaluateResult.reasoning)}
             <div class="border border-base-300 rounded p-3 mt-3 text-xs">
               <div class="font-bold mb-1">评估结果</div>
               <div class="mb-1">
@@ -912,12 +950,21 @@
                   <span class="badge badge-xs badge-error">阻止</span>
                 {/if}
               </div>
-              <div class="opacity-60">{evaluateResult.reasoning}</div>
+              <div class="whitespace-pre-wrap break-words">{rt.zh}</div>
+              {#if rt.translated}
+                <div class="opacity-40 text-[10px] mt-0.5 whitespace-pre-wrap break-words">EN: {rt.en}</div>
+              {/if}
               {#if (evaluateResult.violatedPolicies || []).length}
                 <div class="mt-2">
                   <div class="font-bold mb-1">违反策略</div>
                   {#each evaluateResult.violatedPolicies as v}
-                    <div class="text-error">{v.ruleType}: {v.reasoning}</div>
+                    {@const vt = translateReasoning(v.reasoning)}
+                    <div class="text-error">
+                      <div>{v.ruleType}: {vt.zh}</div>
+                      {#if vt.translated}
+                        <div class="opacity-50 text-[10px]">EN: {vt.en}</div>
+                      {/if}
+                    </div>
                   {/each}
                 </div>
               {/if}
@@ -942,11 +989,12 @@
                 </tr></thead>
                 <tbody>
                   {#each violations as v}
+                    {@const vt = translateReasoning(v.reasoning)}
                     <tr>
                       <td><span class="badge badge-xs {ruleTypeClass(v.ruleType)}">{v.ruleType}</span></td>
                       <td class="text-xs">{v.sourceType} <span class="font-mono opacity-60">({short(v.sourceId, 14)})</span></td>
                       <td><span class="badge badge-xs badge-error">{v.actionTaken}</span></td>
-                      <td class="text-xs max-w-[220px] truncate" title={v.reasoning}>{short(v.reasoning, 40)}</td>
+                      <td class="text-xs max-w-[220px] truncate" title={vt.translated ? `${vt.zh}\nEN: ${vt.en}` : vt.zh}>{short(vt.zh, 40)}</td>
                       <td class="text-xs opacity-60">{fmtTime(v.createdAtMs)}</td>
                     </tr>
                   {/each}
