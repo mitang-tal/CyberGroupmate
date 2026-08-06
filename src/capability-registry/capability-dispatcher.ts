@@ -14,6 +14,9 @@ import { createLogger } from "../core/logger.js";
 
 const log = createLogger("capability-dispatcher");
 
+/** #23 probation 过滤：#23 规定 probation agent 只接 low-stakes，priority ≥ 此值视为 high-stakes */
+const HIGH_STAKES_PRIORITY = 7;
+
 export class CapabilityDispatcher {
     private reputationProvider?: (agentId: string) => { trustScore: number; trustState: string; reliability: number };
     private guardrailEvaluator?: GuardrailEvaluatorLike;
@@ -55,7 +58,7 @@ export class CapabilityDispatcher {
         }
 
         const agents = this.registry.listAgents().filter(
-            (a) => (a.status === "online" || a.status === "busy") && this.isTrustedAgent(a),
+            (a) => (a.status === "online" || a.status === "busy") && this.isDispatchEligible(a, request),
         );
 
         if (agents.length === 0) return undefined;
@@ -81,7 +84,7 @@ export class CapabilityDispatcher {
      */
     listCandidates(request: DispatchRequest): DispatchMatch[] {
         const agents = this.registry.listAgents().filter(
-            (a) => (a.status === "online" || a.status === "busy") && this.isTrustedAgent(a),
+            (a) => (a.status === "online" || a.status === "busy") && this.isDispatchEligible(a, request),
         );
 
         const results: DispatchMatch[] = [];
@@ -247,6 +250,18 @@ export class CapabilityDispatcher {
         if (!this.reputationProvider) return true;
         const rep = this.reputationProvider(agent.agentId);
         return rep.trustState !== "untrusted";
+    }
+
+    /**
+     * #23 probation：probation agent 只接 low-stakes（priority < HIGH_STAKES_PRIORITY）。
+     * high-stakes 任务直接排除 probation，防止重权重任务落到降级中的 agent。
+     */
+    private isDispatchEligible(agent: AgentRegistration, request: DispatchRequest): boolean {
+        if (!this.isTrustedAgent(agent)) return false;
+        if (!this.reputationProvider) return true;
+        const rep = this.reputationProvider(agent.agentId);
+        if (rep.trustState !== "probation") return true;
+        return (request.priority ?? 0) < HIGH_STAKES_PRIORITY;
     }
 
     private getReputationWeight(agentId: string): number {
