@@ -42,6 +42,8 @@ export interface AgentReputation {
 
     /** 考察期到期时间（probation 状态下） */
     probationUntilMs?: number;
+    /** #23 probation shadow mode：为 true 表示该 Agent 处于考察观望状态（不被硬阻断，仅观察） */
+    probationShadow?: boolean;
     /** 上次评估时间 */
     lastEvaluatedAtMs: number;
     /** 声誉分数最后更新 */

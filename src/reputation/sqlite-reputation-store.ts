@@ -25,10 +25,18 @@ export class SqliteReputationStore implements ReputationStore {
                 total_failures INTEGER NOT NULL DEFAULT 0,
                 capability_scores TEXT NOT NULL DEFAULT '[]',
                 probation_until_ms INTEGER,
+                probation_shadow INTEGER NOT NULL DEFAULT 0,
                 last_evaluated_at_ms INTEGER NOT NULL,
                 updated_at_ms INTEGER NOT NULL
             );
         `);
+
+        // 迁移：老库补充 probation_shadow 列
+        try {
+            this.db.exec("ALTER TABLE agent_reputation ADD COLUMN probation_shadow INTEGER NOT NULL DEFAULT 0");
+        } catch {
+            // 列已存在则忽略
+        }
     }
 
     upsert(reputation: AgentReputation): void {
@@ -36,8 +44,8 @@ export class SqliteReputationStore implements ReputationStore {
             INSERT OR REPLACE INTO agent_reputation
                 (agent_id, agent_name, trust_score, trust_state, reliability,
                  risk_probability, avg_latency_ms, total_executions, total_failures,
-                 capability_scores, probation_until_ms, last_evaluated_at_ms, updated_at_ms)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 capability_scores, probation_until_ms, probation_shadow, last_evaluated_at_ms, updated_at_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
             reputation.agentId, reputation.agentName,
             reputation.trustScore, reputation.trustState, reputation.reliability,
@@ -45,6 +53,7 @@ export class SqliteReputationStore implements ReputationStore {
             reputation.totalExecutions, reputation.totalFailures,
             JSON.stringify(reputation.capabilityScores),
             reputation.probationUntilMs ?? null,
+            reputation.probationShadow ? 1 : 0,
             reputation.lastEvaluatedAtMs, reputation.updatedAtMs,
         );
     }
@@ -89,6 +98,7 @@ export class SqliteReputationStore implements ReputationStore {
             totalFailures: row.total_failures,
             capabilityScores: JSON.parse(row.capability_scores || "[]"),
             probationUntilMs: row.probation_until_ms ?? undefined,
+            probationShadow: row.probation_shadow ? true : undefined,
             lastEvaluatedAtMs: row.last_evaluated_at_ms,
             updatedAtMs: row.updated_at_ms,
         };
