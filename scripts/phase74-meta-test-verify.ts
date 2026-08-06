@@ -114,6 +114,53 @@ function main() {
         engine2.stopAutoRun();
     }
 
+    // ─── [4] #28 自检失败自动响应（告警） ───
+    console.log("\n[4] #28 自检失败自动响应");
+    {
+        const alerts: Array<{ status: HealthStatus; changed: boolean }> = [];
+        const engine = new MetaSelfTestEngine(new MemSelfTestStore(), {
+            alertEmitter: (report, changed) => { alerts.push({ status: report.status, changed }); },
+        });
+
+        // 健康 → 不告警
+        engine.buildReport([mkProbe("p1", "deadlock", 1.0, true)]);
+        check("healthy 不触发告警", alerts.length === 0, String(alerts.length));
+
+        // 全部失败 → critical → 告警（changed=false，首次）
+        engine.buildReport([
+            mkProbe("p1", "deadlock", 0.1, false),
+            mkProbe("p2", "guardrail", 0.1, false),
+            mkProbe("p3", "rigidity", 0.1, false),
+            mkProbe("p4", "kill_switch", 0.1, false),
+        ]);
+        check("critical 触发告警", alerts.length === 1 && alerts[0].status === "critical",
+            JSON.stringify(alerts));
+
+        // 继续 critical → 告警但 changed=false（持续故障）
+        engine.buildReport([
+            mkProbe("p1", "deadlock", 0.1, false),
+            mkProbe("p2", "guardrail", 0.1, false),
+            mkProbe("p3", "rigidity", 0.1, false),
+            mkProbe("p4", "kill_switch", 0.1, false),
+        ]);
+        check("持续 critical 仍告警（changed=false）", alerts.length === 2 && alerts[1].changed === false,
+            JSON.stringify(alerts));
+
+        // 恢复 healthy → 不告警
+        engine.buildReport([mkProbe("p1", "deadlock", 1.0, true)]);
+        check("恢复 healthy 后不告警", alerts.length === 2, String(alerts.length));
+
+        // 再次 critical → 状态转移告警（changed=true）
+        engine.buildReport([
+            mkProbe("p1", "deadlock", 0.1, false),
+            mkProbe("p2", "guardrail", 0.1, false),
+            mkProbe("p3", "rigidity", 0.1, false),
+            mkProbe("p4", "kill_switch", 0.1, false),
+        ]);
+        check("状态转移（healthy→critical）告警 changed=true", alerts.length === 3 && alerts[2].changed === true,
+            JSON.stringify(alerts));
+    }
+
     console.log(`\n结果: ${pass} passed, ${fail} failed`);
     if (fail > 0) process.exit(1);
 }

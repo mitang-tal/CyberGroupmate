@@ -39,6 +39,9 @@ export class MetaSelfTestEngine {
     private autoRunTimer: ReturnType<typeof setInterval> | null = null;
     private autoRunSchedule = "";
     private autoRunLastFiredKey = "";
+    /** #28 自检失败告警回调 */
+    private alertEmitter?: (report: MetaSelfTestReport, changed: boolean) => void;
+    private lastStatus: HealthStatus | undefined;
 
     constructor(
         store: SelfTestStore,
@@ -48,6 +51,8 @@ export class MetaSelfTestEngine {
             reputation?: ReputationEvaluator;
             /** #25 探针权重（默认 guardrail/kill_switch 1.5，其余 1.0） */
             healthWeights?: HealthWeights;
+            /** #28 失败告警回调（注入 NotificationCenter push 或日志） */
+            alertEmitter?: (report: MetaSelfTestReport, changed: boolean) => void;
         } = {},
     ) {
         this.store = store;
@@ -55,6 +60,7 @@ export class MetaSelfTestEngine {
         this.extractor = deps.extractor;
         this.reputation = deps.reputation;
         this.healthWeights = { ...DEFAULT_HEALTH_WEIGHTS, ...deps.healthWeights };
+        this.alertEmitter = deps.alertEmitter;
     }
 
     /**
@@ -135,7 +141,25 @@ export class MetaSelfTestEngine {
         };
 
         this.store.insertReport(report);
+        this.maybeAlert(report);
         return report;
+    }
+
+    /**
+     * #28 自动响应：状态变化或仍处 critical 时触发告警回调。
+     * changed=true 表示状态发生转移（healthy/degraded → critical 等），
+     * 供告警端区分"新故障"与"持续故障"。
+     */
+    private maybeAlert(report: MetaSelfTestReport): void {
+        if (!this.alertEmitter) return;
+        const changed = this.lastStatus !== undefined && this.lastStatus !== report.status;
+        this.lastStatus = report.status;
+        if (report.status === "healthy") return; // 健康不告警
+        try {
+            this.alertEmitter(report, changed);
+        } catch (err) {
+            console.error("[meta-self-test] alert emitter error:", err instanceof Error ? err.message : String(err));
+        }
     }
 
     /**

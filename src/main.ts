@@ -585,6 +585,17 @@ async function main(): Promise<void> {
 	    guardrail: globalGuardrail,
 	    extractor: failureExtractor,
 	    reputation: reputationEvaluator,
+	    // #28 自检失败自动响应：critical/degraded 时推送到事件总线（供告警/监控消费）
+	    alertEmitter: (report, changed) => {
+	        nc.push({
+	            type: "system.meta_health_alert",
+	            status: report.status,
+	            healthScore: report.overallHealthScore,
+	            changed,
+	            recommendations: report.recommendations,
+	            createdAtMs: report.createdAtMs,
+	        });
+	    },
 	});
 	// #26 cron 定时自检：配置了 meta_self_test.schedule 时自动启用
 	if (appConfig.metaSelfTest?.schedule) {
