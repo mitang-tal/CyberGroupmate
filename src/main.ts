@@ -592,6 +592,10 @@ async function main(): Promise<void> {
 	            status: report.status,
 	            healthScore: report.overallHealthScore,
 	            changed,
+	            // 8.5a↔7.4 C3：附带失败探针名，供 kill-switch 审计追溯
+	            failedProbes: report.probeResults
+	                .filter((p) => !p.passed)
+	                .map((p) => p.probeName),
 	            recommendations: report.recommendations,
 	            createdAtMs: report.createdAtMs,
 	        });
@@ -640,6 +644,26 @@ async function main(): Promise<void> {
 	    negotiationEngine: { setTimeoutMs: (ms: number) => negotiationEngine.setTimeoutMs(ms) },
 	});
 	const federationStore = new FederationStore(experienceStore, ecosystemGovernor, simulationEngine);
+
+	// ═══ 8.5a↔7.4 C3：自检 critical → EcosystemGovernor kill-switch（完成生态自愈响应链）═══
+	// 消费 Phase 7.4 #28 的 system.meta_health_alert 事件，经 Gov2 唯一事实源广播冻结
+	// 联邦写入 / A2A / guardrail；reason 携带 healthScore + 失败探针名 + 全部建议，保证审计可追溯。
+	nc.onPush((event) => {
+	    if (event.type !== "system.meta_health_alert") return;
+	    if (event.status !== "critical") return; // 仅 critical 触发全局冻结，degraded 不冻结
+	    const healthScore = typeof event.healthScore === "number" ? event.healthScore : 0;
+	    const failedProbes = Array.isArray(event.failedProbes) && event.failedProbes.length > 0
+	        ? event.failedProbes.join(", ")
+	        : "unknown";
+	    const recommendations = Array.isArray(event.recommendations) && event.recommendations.length > 0
+	        ? event.recommendations.join(" | ")
+	        : "none";
+	    ecosystemGovernance.setKillSwitch(
+	        true,
+	        "meta_self_test",
+	        `Meta self-test critical (health=${healthScore}, failed probes: ${failedProbes}). Recommendations: ${recommendations}`,
+	    );
+	});
 	const evolutionAnalyzer = new EvolutionAnalyzer(reputationEvaluator, { capabilityRegistry });
 
     const { createInterface: createRL } = await import("node:readline");
