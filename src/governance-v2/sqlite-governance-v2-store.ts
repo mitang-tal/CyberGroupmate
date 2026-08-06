@@ -23,7 +23,7 @@ export class SqliteGovernanceV2Store implements GovernanceV2Store {
             CREATE TABLE IF NOT EXISTS governance_v2_state (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 version TEXT NOT NULL,
-                values TEXT NOT NULL,
+                \`values\` TEXT NOT NULL,
                 updated_at_ms INTEGER NOT NULL
             );
 
@@ -57,11 +57,11 @@ export class SqliteGovernanceV2Store implements GovernanceV2Store {
 
     saveState(version: string, values: GovernancePolicyValues): void {
         this.db.prepare(`
-            INSERT INTO governance_v2_state (id, version, values, updated_at_ms)
+            INSERT INTO governance_v2_state (id, version, \`values\`, updated_at_ms)
             VALUES (1, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 version = excluded.version,
-                values = excluded.values,
+                \`values\` = excluded.\`values\`,
                 updated_at_ms = excluded.updated_at_ms
         `).run(version, JSON.stringify(values), Date.now());
     }
