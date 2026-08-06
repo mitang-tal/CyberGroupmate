@@ -798,7 +798,7 @@
         </div>
       </div>
 
-      <div class="card bg-base-100 md:col-span-2">
+      <div class="card bg-base-100 md:col-span-2 min-w-0">
         <div class="card-body p-4">
           <div class="flex items-center gap-2 mb-3">
             <h3 class="card-title text-sm">Patch 列表
@@ -819,12 +819,12 @@
                     <tr>
                       <td><span class="badge badge-xs {patchTypeClass(p.patchType)}">{termZh(p.patchType)}</span></td>
                       <td><span class="badge badge-xs {patchStatusClass(p.status)}">{termZh(p.status)}</span></td>
-                      <td class="font-mono text-xs">{short(p.executionId, 16)}</td>
-                      <td class="font-mono text-xs">{short(p.failedStepId, 16)}</td>
-                      <td class="text-xs whitespace-normal break-words min-w-[220px]">
+                      <td class="font-mono text-xs break-all">{p.executionId}</td>
+                      <td class="font-mono text-xs break-all">{p.failedStepId}</td>
+                      <td class="text-xs whitespace-normal break-all min-w-[180px] max-w-[320px]">
                         <div>{pt.zh}</div>
                         {#if pt.translated}
-                          <div class="opacity-40 text-[10px] whitespace-pre-wrap break-words">EN: {pt.en}</div>
+                          <div class="opacity-40 text-[10px] whitespace-pre-wrap break-all">EN: {pt.en}</div>
                         {/if}
                       </td>
                       <td class="text-xs opacity-60">{fmtTime(p.createdAtMs)}</td>
