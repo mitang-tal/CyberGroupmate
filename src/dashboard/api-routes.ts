@@ -924,6 +924,11 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             const results = rev.evaluateAll(() => []);
             res.json({ count: results.length });
         });
+
+        // #23 probation shadow 观察日志
+        router.get("/reputation/shadow-log", (_req, res) => {
+            res.json({ entries: rev.getShadowLog() });
+        });
     }
 
     // ─── Meta Self-Test ───
