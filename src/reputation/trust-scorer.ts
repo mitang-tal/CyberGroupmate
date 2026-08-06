@@ -19,6 +19,10 @@ export interface TrustScorerOptions {
     hysteresis?: number;
     /** #19 胜任度在 trustScore 中的权重（reliability 权重 = 1 - masteryWeight），默认 0.4 */
     masteryWeight?: number;
+    /** #20 抗 gaming：high-stakes 判定阈值（priority ≥ 此值），默认 7，与 dispatcher 一致 */
+    highStakesPriority?: number;
+    /** #20 抗 gaming：low-stakes 成功事件的可靠性折扣，默认 0.6（high-stakes 为满权 1.0） */
+    lowStakesSuccessWeight?: number;
 }
 
 const TRUST_BOUNDS: Record<"probation" | "normal" | "trusted", number> = {
@@ -40,6 +44,7 @@ export function calculateReliability(
         latencyMs?: number;
         timestampMs: number;
         capabilityId: string;
+        priority?: number;
     }[],
     now: number,
     opts: TrustScorerOptions = {},
@@ -48,6 +53,8 @@ export function calculateReliability(
     const halfLifeMs = opts.halfLifeMs ?? 7 * 24 * 3600_000;
     const costWeight = opts.costWeight ?? 0.3;
     const latencyScaleMs = opts.latencyScaleMs ?? 2000;
+    const highStakesPriority = opts.highStakesPriority ?? 7;
+    const lowStakesSuccessWeight = opts.lowStakesSuccessWeight ?? 0.6;
 
     let wSum = 0;
     let wSucc = 0;
@@ -60,7 +67,10 @@ export function calculateReliability(
         const w = timeWeight * latencyWeight;
         wSum += w;
         if (exec.success) {
-            wSucc += w;
+            // #20 抗 gaming：high-stakes 成功满权，low-stakes 成功打折
+            // （仅打折 numerator，分母 wSum 不打折 → 只刷 low-stakes 无法拉满 reliability）
+            const stakesWeight = (exec.priority ?? highStakesPriority) >= highStakesPriority ? 1 : lowStakesSuccessWeight;
+            wSucc += w * stakesWeight;
         } else {
             failCounts.set(exec.capabilityId, (failCounts.get(exec.capabilityId) ?? 0) + 1);
         }

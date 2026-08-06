@@ -61,6 +61,8 @@ export interface ReputationEvaluationInput {
         latencyMs: number;
         errorType?: string;
         timestampMs: number;
+        /** 任务 stakes（#20 抗 gaming）：与 dispatcher 的 priority 同语义，≥7 视为 high-stakes */
+        priority?: number;
     }[];
     recentAlerts: number;
     recentFailures: number;
