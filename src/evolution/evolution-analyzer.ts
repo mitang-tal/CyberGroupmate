@@ -12,6 +12,7 @@
 import crypto from "node:crypto";
 import { EvolutionProposal, SpecializationTag } from "./types";
 import type { ReputationEvaluator } from "../reputation/reputation-evaluator";
+import type { CapabilityRegistry } from "../capability-registry/capability-registry";
 
 const SAMPLING_DAYS = 30;
 const COOLING_DAYS = 14;
@@ -20,11 +21,16 @@ const SPECIALIZATION_THRESHOLD = 0.2; // 高出全局平均 20%
 
 export class EvolutionAnalyzer {
     private reputationEvaluator: ReputationEvaluator;
+    private capabilityRegistry?: CapabilityRegistry;
     private proposals: EvolutionProposal[] = [];
     private history: Map<string, number> = new Map(); // agentId → lastEvolvedAtMs
 
-    constructor(reputationEvaluator: ReputationEvaluator) {
+    constructor(
+        reputationEvaluator: ReputationEvaluator,
+        deps: { capabilityRegistry?: CapabilityRegistry } = {},
+    ) {
         this.reputationEvaluator = reputationEvaluator;
+        this.capabilityRegistry = deps.capabilityRegistry;
     }
 
     /**
@@ -113,7 +119,7 @@ export class EvolutionAnalyzer {
             proposalId: crypto.randomUUID(),
             agentId,
             agentName,
-            currentTags: [],
+            currentTags: this.readAppliedTags(agentId),
             suggestedTags,
             deprecatedTags: deprecatedNames,
             analysis: {
@@ -143,6 +149,9 @@ export class EvolutionAnalyzer {
 
         proposal.status = "approved";
         proposal.approvedAtMs = Date.now();
+
+        // 8.4 C1：批准后实际回写 AgentRegistration.metadata，演化闸门真生效
+        proposal.currentTags = this.applyTagsToRegistry(proposal);
 
         // 记录演化时间（冷却窗口以此为起点）
         this.history.set(proposal.agentId, Date.now());
@@ -212,6 +221,43 @@ export class EvolutionAnalyzer {
     }
 
     // ─── Private ───
+
+    /**
+     * 从 AgentRegistration.metadata 读取已生效的特化标签
+     */
+    private readAppliedTags(agentId: string): SpecializationTag[] {
+        const agent = this.capabilityRegistry?.getAgent(agentId);
+        const meta = agent?.metadata;
+        if (!meta || !Array.isArray(meta.specializationTags)) return [];
+        return meta.specializationTags as SpecializationTag[];
+    }
+
+    /**
+     * 批准后把 suggestedTags 合并写入 AgentRegistration.metadata.specializationTags，
+     * 同时记录 lastEvolvedAtMs（冷却窗口持久化起点）。返回合并后的全部标签。
+     */
+    private applyTagsToRegistry(proposal: EvolutionProposal): SpecializationTag[] {
+        const agent = this.capabilityRegistry?.getAgent(proposal.agentId);
+        if (!agent) return proposal.currentTags;
+
+        const metadata = agent.metadata ?? {};
+        const existing = Array.isArray(metadata.specializationTags)
+            ? (metadata.specializationTags as SpecializationTag[])
+            : [];
+
+        const merged = [...existing];
+        for (const tag of proposal.suggestedTags) {
+            const idx = merged.findIndex((t) => t.category === tag.category);
+            if (idx >= 0) merged[idx] = tag;
+            else merged.push(tag);
+        }
+
+        metadata.specializationTags = merged;
+        metadata.lastEvolvedAtMs = proposal.approvedAtMs;
+        agent.metadata = metadata;
+
+        return merged;
+    }
 
     private generateTagName(capabilityName: string, mastery: number): string {
         const prefix = mastery >= 0.9 ? "domain_expert" : mastery >= 0.75 ? "specialist" : "practitioner";

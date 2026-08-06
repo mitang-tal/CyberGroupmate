@@ -621,7 +621,7 @@ async function main(): Promise<void> {
 	const federationStore = new FederationStore(experienceStore, ecosystemGovernor, simulationEngine);
 	const conflictResolver = new ConflictResolver();
 	const negotiationEngine = new NegotiationEngine({ dispatcher: capabilityDispatcher, conflictResolver });
-	const evolutionAnalyzer = new EvolutionAnalyzer(reputationEvaluator);
+	const evolutionAnalyzer = new EvolutionAnalyzer(reputationEvaluator, { capabilityRegistry });
 
     const { createInterface: createRL } = await import("node:readline");
     const hostRL = createRL({ input: process.stdin, output: process.stdout });
