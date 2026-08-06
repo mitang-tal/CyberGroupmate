@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { activeTab } from '../lib/stores.js';
   import { api } from '../lib/api.js';
+  import { termZh, translateReasoning } from '../lib/i18n.js';
 
   let activeSection = 'records';
   const SECTIONS = [
@@ -310,11 +311,11 @@
           <div class="ml-auto flex flex-wrap gap-2">
             <select class="select select-xs select-bordered" bind:value={statusFilter} onchange={() => refreshRecords()}>
               <option value="">全部状态</option>
-              {#each STATUS_OPTIONS as s}<option value={s}>{s}</option>{/each}
+              {#each STATUS_OPTIONS as s}<option value={s}>{termZh(s)}</option>{/each}
             </select>
             <select class="select select-xs select-bordered" bind:value={sourceFilter} onchange={() => refreshRecords()}>
               <option value="">全部来源</option>
-              {#each SOURCE_OPTIONS as s}<option value={s}>{s}</option>{/each}
+              {#each SOURCE_OPTIONS as s}<option value={s}>{termZh(s)}</option>{/each}
             </select>
             <button class="btn btn-xs btn-outline" onclick={() => refreshRecords()}>查询</button>
           </div>
@@ -331,9 +332,9 @@
               <tbody>
                 {#each records as r}
                   <tr>
-                    <td><span class="badge badge-xs {statusClass(r.status)}">{r.status}</span></td>
+                    <td><span class="badge badge-xs {statusClass(r.status)}">{termZh(r.status)}</span></td>
                     <td class="font-mono text-xs">{r.method}</td>
-                    <td class="text-xs">{r.source}</td>
+                    <td class="text-xs">{termZh(r.source)}</td>
                     <td class="text-xs">{fmtMs(r.durationMs)}</td>
                     <td class="text-xs text-error max-w-[220px] truncate" title={r.error?.message || ''}>{r.error?.type || '-'}</td>
                     <td class="text-xs opacity-60">{fmtTime(r.createdAtMs)}</td>
@@ -363,7 +364,7 @@
             <div><div class="opacity-50">ID</div><div class="font-mono break-all">{selectedRecord.id}</div></div>
             <div><div class="opacity-50">方法</div><div class="font-mono">{selectedRecord.method}</div></div>
             <div><div class="opacity-50">来源</div><div>{selectedRecord.source}</div></div>
-            <div><div class="opacity-50">状态</div><span class="badge badge-xs {statusClass(selectedRecord.status)}">{selectedRecord.status}</span></div>
+            <div><div class="opacity-50">状态</div><span class="badge badge-xs {statusClass(selectedRecord.status)}">{termZh(selectedRecord.status)}</span></div>
             <div><div class="opacity-50">耗时</div>{fmtMs(selectedRecord.durationMs)}</div>
             <div><div class="opacity-50">runId</div><div class="font-mono">{selectedRecord.runId || '-'}</div></div>
             <div><div class="opacity-50">创建时间</div>{fmtTime(selectedRecord.createdAtMs)}</div>
@@ -399,7 +400,7 @@
               <div class="overflow-x-auto border border-base-300 rounded p-2 bg-base-200/50 max-h-80 overflow-y-auto">
                 {#each traceNodes(recordTrace) as { node, depth }}
                   <div class="flex items-center gap-2 py-0.5" style="padding-left: {depth * 16}px">
-                    <span class="badge badge-xs {statusClass(node.record.status)}">{node.record.status}</span>
+                    <span class="badge badge-xs {statusClass(node.record.status)}">{termZh(node.record.status)}</span>
                     <span class="font-mono text-xs">{node.record.method}</span>
                     <span class="text-xs opacity-50">{fmtMs(node.record.durationMs)}</span>
                     {#if node.record.error}
@@ -447,7 +448,7 @@
                 {#each analytics.statusDistribution as item}
                   {@const total = (analytics.overview?.totalExecutions || 1)}
                   <div class="flex items-center gap-2 text-xs">
-                    <span class="w-24 shrink-0">{item.status}</span>
+                    <span class="w-24 shrink-0">{termZh(item.status)}</span>
                     <div class="flex-1 h-3 bg-base-200 rounded overflow-hidden">
                       <div class="h-full bg-primary rounded" style="width:{Math.round((item.count / total) * 100)}%"></div>
                     </div>
@@ -542,7 +543,7 @@
                   {#each analytics.slowExecutions as s}
                     <tr>
                       <td class="font-mono text-xs">{s.method}</td>
-                      <td><span class="badge badge-xs {statusClass(s.status)}">{s.status}</span></td>
+                      <td><span class="badge badge-xs {statusClass(s.status)}">{termZh(s.status)}</span></td>
                       <td class="text-warning">{fmtMs(s.durationMs)}</td>
                       <td class="text-xs opacity-60">{fmtTime(s.createdAtMs)}</td>
                     </tr>
@@ -580,9 +581,9 @@
           <div class="flex items-center gap-2 mt-3">
             <select class="select select-xs select-bordered" bind:value={alertStatusFilter} onchange={() => refreshAlerts()}>
               <option value="">全部状态</option>
-              <option value="active">active</option>
-              <option value="acknowledged">acknowledged</option>
-              <option value="resolved">resolved</option>
+              <option value="active">{termZh('active')}</option>
+              <option value="acknowledged">{termZh('acknowledged')}</option>
+              <option value="resolved">{termZh('resolved')}</option>
             </select>
             <button class="btn btn-xs btn-outline" onclick={() => refreshAlerts()}>刷新</button>
           </div>
@@ -604,8 +605,8 @@
                   {#each alerts as a}
                     <tr>
                       <td class="font-mono text-xs">{a.ruleType}</td>
-                      <td><span class="badge badge-xs {severityClass(a.severity)}">{a.severity}</span></td>
-                      <td><span class="badge badge-xs {statusClass(a.status)}">{a.status}</span></td>
+                      <td><span class="badge badge-xs {severityClass(a.severity)}">{termZh(a.severity)}</span></td>
+                      <td><span class="badge badge-xs {statusClass(a.status)}">{termZh(a.status)}</span></td>
                       <td class="text-xs">{a.sourceComponent}</td>
                       <td>{a.occurrenceCount}</td>
                       <td class="text-xs max-w-[220px] truncate" title={a.contextSummary?.message}>{short(a.contextSummary?.message, 40)}</td>
@@ -650,13 +651,14 @@
               </tr></thead>
               <tbody>
                 {#each healingActions as h}
+                  {@const hr = translateReasoning(h.decisionReason)}
                   <tr>
-                    <td><span class="badge badge-xs {strategyClass(h.strategy)}">{h.strategy}</span></td>
-                    <td><span class="badge badge-xs {healStatusClass(h.status)}">{h.status}</span></td>
+                    <td><span class="badge badge-xs {strategyClass(h.strategy)}">{termZh(h.strategy)}</span></td>
+                    <td><span class="badge badge-xs {healStatusClass(h.status)}">{termZh(h.status)}</span></td>
                     <td class="font-mono text-xs">{short(h.alertId, 20)}</td>
                     <td class="font-mono text-xs">{short(h.executionId, 20)}</td>
                     <td>{h.attemptCount}</td>
-                    <td class="text-xs max-w-[240px] truncate" title={h.decisionReason}>{h.decisionReason}</td>
+                    <td class="text-xs max-w-[240px] truncate" title={hr.translated ? `${hr.zh}\nEN: ${hr.en}` : hr.zh}>{short(hr.zh, 40)}</td>
                     <td class="text-xs opacity-60">{fmtTime(h.createdAtMs)}</td>
                     <td><button class="btn btn-xs btn-outline" onclick={() => openHealingDetail(h)}>详情</button></td>
                   </tr>
@@ -670,17 +672,24 @@
       </div>
     </div>
 
-    {#if selectedHealing}
-      <div class="modal modal-open">
-        <div class="modal-box max-w-2xl">
-          <div class="flex items-center justify-between mb-2">
-            <h3 class="card-title text-sm">自愈详情</h3>
-            <button class="btn btn-xs btn-circle btn-ghost" onclick={() => selectedHealing = null}>✕</button>
-          </div>
-          <div class="grid grid-cols-2 gap-2 text-xs mb-3">
-            <div><div class="opacity-50">策略</div><span class="badge badge-xs {strategyClass(selectedHealing.strategy)}">{selectedHealing.strategy}</span></div>
-            <div><div class="opacity-50">状态</div><span class="badge badge-xs {healStatusClass(selectedHealing.status)}">{selectedHealing.status}</span></div>
-            <div class="col-span-2"><div class="opacity-50">决策原因</div><div>{selectedHealing.decisionReason}</div></div>
+          {#if selectedHealing}
+            {@const hdr = translateReasoning(selectedHealing.decisionReason)}
+            <div class="modal modal-open">
+              <div class="modal-box max-w-2xl">
+                <div class="flex items-center justify-between mb-2">
+                  <h3 class="card-title text-sm">自愈详情</h3>
+                  <button class="btn btn-xs btn-circle btn-ghost" onclick={() => selectedHealing = null}>✕</button>
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-xs mb-3">
+                  <div><div class="opacity-50">策略</div><span class="badge badge-xs {strategyClass(selectedHealing.strategy)}">{termZh(selectedHealing.strategy)}</span></div>
+                  <div><div class="opacity-50">状态</div><span class="badge badge-xs {healStatusClass(selectedHealing.status)}">{termZh(selectedHealing.status)}</span></div>
+                  <div class="col-span-2">
+                    <div class="opacity-50">决策原因</div>
+                    <div class="whitespace-pre-wrap break-words">{hdr.zh}</div>
+                    {#if hdr.translated}
+                      <div class="opacity-40 text-[10px] whitespace-pre-wrap break-words">EN: {hdr.en}</div>
+                    {/if}
+                  </div>
             <div><div class="opacity-50">Action ID</div><div class="font-mono break-all">{selectedHealing.actionId}</div></div>
             <div><div class="opacity-50">Alert ID</div><div class="font-mono break-all">{selectedHealing.alertId}</div></div>
             <div><div class="opacity-50">Execution ID</div><div class="font-mono">{selectedHealing.executionId}</div></div>

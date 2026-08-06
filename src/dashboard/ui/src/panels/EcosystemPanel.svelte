@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { api } from '../lib/api.js';
+  import { termZh } from '../lib/i18n.js';
 
   // ─── Ecosystem Governance ───
   let egStatus = null;
@@ -300,7 +301,7 @@
     <!-- ─── Ecosystem Governance ─── -->
     <div class="card bg-base-100">
       <div class="card-body p-4">
-        <h3 class="card-title text-sm">Ecosystem Governance
+        <h3 class="card-title text-sm">生态治理
           {#if egLoading}<span class="loading loading-spinner loading-xs ml-1"></span>{/if}
         </h3>
         {#if egError}
@@ -308,7 +309,7 @@
         {:else if egStatus}
           <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div class="stat bg-base-200 rounded p-3">
-              <div class="stat-title text-xs">Rate Limit</div>
+              <div class="stat-title text-xs">限流阈值</div>
               <div class="stat-value text-lg">{egStatus.limit ?? '-'}</div>
             </div>
             <div class="stat bg-base-200 rounded p-3">
@@ -339,14 +340,14 @@
               <div class="text-xs font-bold mb-1">隔离类别</div>
               <div class="flex flex-wrap gap-1">
                 {#each egStatus.quarantineCategories as cat}
-                  <span class="badge badge-error badge-xs">{cat}</span>
+                  <span class="badge badge-error badge-xs">{termZh(cat)}</span>
                 {/each}
               </div>
             </div>
           {/if}
-        {:else}
-          <div class="text-xs opacity-60">Governance 未启用</div>
-        {/if}
+          {:else}
+            <div class="text-xs opacity-60">生态治理未启用</div>
+          {/if}
       </div>
     </div>
 
@@ -354,7 +355,7 @@
     <!-- ─── Experience Federation ─── -->
     <div class="card bg-base-100">
       <div class="card-body p-4">
-        <h3 class="card-title text-sm">Experience Federation
+        <h3 class="card-title text-sm">经验联邦
           {#if fedLoading}<span class="loading loading-spinner loading-xs ml-1"></span>{/if}
         </h3>
         {#if federationItems.length}
@@ -371,7 +372,7 @@
                         class:badge-success={item._type === 'federated'}
                         class:badge-warning={item._type === 'quarantine'}
                         class:badge-info={item._type === 'candidate'}
-                      >{item._type}</span>
+                      >{termZh(item._type)}</span>
                     </td>
                     <td class="font-mono text-xs">{item.id || item.experienceId || '-'}</td>
                     <td class="text-xs">{item.summary || item.description || '-'}</td>
@@ -382,7 +383,7 @@
             </table>
           </div>
         {:else}
-          <div class="text-xs opacity-60">暂无 Federation 数据</div>
+          <div class="text-xs opacity-60">暂无联邦数据</div>
         {/if}
       </div>
     </div>
@@ -392,7 +393,7 @@
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
       <div class="card bg-base-100 md:col-span-2">
         <div class="card-body p-4">
-          <h3 class="card-title text-sm">Conflict History
+          <h3 class="card-title text-sm">冲突仲裁记录
             {#if conflictLoading}<span class="loading loading-spinner loading-xs ml-1"></span>{/if}
           </h3>
           {#if conflictHistory.length}
@@ -440,7 +441,7 @@
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
       <div class="card bg-base-100 md:col-span-2">
         <div class="card-body p-4">
-          <h3 class="card-title text-sm">Negotiation History
+          <h3 class="card-title text-sm">协商记录
             {#if neLoading}<span class="loading loading-spinner loading-xs ml-1"></span>{/if}
           </h3>
           {#if negotiationHistory.length}
@@ -487,7 +488,7 @@
     <!-- ─── Agent Evolution ─── -->
     <div class="card bg-base-100">
       <div class="card-body p-4">
-        <h3 class="card-title text-sm">Agent Evolution Proposals
+        <h3 class="card-title text-sm">Agent 演化提案
           {#if evolutionLoading}<span class="loading loading-spinner loading-xs ml-1"></span>{/if}
         </h3>
         {#if evolutionProposals.length}
@@ -504,13 +505,13 @@
                     <td class="text-xs">{p.specialization || p.description || '-'}</td>
                     <td>
                       <span class="badge badge-xs"
-                        class:badge-warning={p.status === 'pending'}
+                        class:badge-warning={p.status === 'pending_approval'}
                         class:badge-success={p.status === 'approved'}
                         class:badge-error={p.status === 'rejected'}
-                      >{p.status}</span>
+                      >{termZh(p.status)}</span>
                     </td>
                     <td>
-                      {#if p.status === 'pending'}
+                      {#if p.status === 'pending_approval'}
                         <button class="btn btn-success btn-xs mr-1" on:click={() => approveProposal(p.proposalId || p.id)}>批准</button>
                         <button class="btn btn-error btn-xs" on:click={() => rejectProposal(p.proposalId || p.id)}>拒绝</button>
                       {:else}

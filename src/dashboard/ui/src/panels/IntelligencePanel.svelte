@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { api } from '../lib/api.js';
+  import { termZh, translateReasoning } from '../lib/i18n.js';
 
   let activeSection = 'simulation';
   const SECTIONS = [
@@ -390,9 +391,13 @@
             <button class="btn btn-xs btn-outline ml-auto" onclick={refreshSimulationMetrics}>刷新指标</button>
           </div>
           {#if simResult}
+            {@const st = translateReasoning(simResult.reasoningText)}
             <div class="text-xs mb-3">
               <div class="font-bold mb-1">推理过程</div>
-              <div class="opacity-80 bg-base-200 rounded p-2">{simResult.reasoningText}</div>
+              <div class="opacity-80 bg-base-200 rounded p-2 whitespace-pre-wrap break-words">{st.zh}</div>
+              {#if st.translated}
+                <div class="opacity-40 text-[10px] mt-1 whitespace-pre-wrap break-words">EN: {st.en}</div>
+              {/if}
             </div>
             <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
               {#each simResult.optionsEvaluated || [] as opt}
@@ -475,7 +480,7 @@
           {#if evalResult}
             <div class="border border-base-300 rounded p-3 mt-3 text-xs space-y-1">
               <div class="font-bold mb-1">评估结果</div>
-              <div><span class="opacity-50">信任状态:</span> <span class="badge badge-xs {trustClass(evalResult.trustState)}">{evalResult.trustState}</span></div>
+              <div><span class="opacity-50">信任状态:</span> <span class="badge badge-xs {trustClass(evalResult.trustState)}">{termZh(evalResult.trustState)}</span></div>
               <div><span class="opacity-50">信任分:</span> <b>{pct(evalResult.trustScore)}</b></div>
               <div><span class="opacity-50">可靠性:</span> {pct(evalResult.reliability)}</div>
               <div><span class="opacity-50">风险概率:</span> {pct(evalResult.riskProbability)}</div>
@@ -510,7 +515,7 @@
                         <div class="font-semibold">{a.agentName}</div>
                         <div class="font-mono opacity-50">{a.agentId}</div>
                       </td>
-                      <td><span class="badge badge-xs {trustClass(a.trustState)}">{a.trustState}</span></td>
+                      <td><span class="badge badge-xs {trustClass(a.trustState)}">{termZh(a.trustState)}</span></td>
                       <td><b>{pct(a.trustScore)}</b></td>
                       <td>{pct(a.reliability)}</td>
                       <td class="text-error">{pct(a.riskProbability)}</td>
@@ -546,7 +551,7 @@
           {#if testReport}
             <div class="text-center py-4">
               <div class="text-4xl mb-2">{Math.round(testReport.overallHealthScore * 100)}</div>
-              <span class="badge badge-lg {healthClass(testReport.status)}">{testReport.status}</span>
+              <span class="badge badge-lg {healthClass(testReport.status)}">{termZh(testReport.status)}</span>
               <div class="text-xs opacity-60 mt-2">更新时间: {fmtTime(testReport.createdAtMs)}</div>
             </div>
           {:else if testLoading}
@@ -569,10 +574,11 @@
           {#if testReport?.probeResults?.length}
             <div class="space-y-2 mt-2">
               {#each testReport.probeResults as probe}
+                {@const pd = translateReasoning(probe.details)}
                 <div class="border border-base-300 rounded p-3">
                   <div class="flex items-center gap-2">
-                    <span class="badge badge-xs {probeClass(probe.category)}">{probe.category}</span>
-                    <span class="font-semibold text-xs">{probe.probeName}</span>
+                    <span class="badge badge-xs {probeClass(probe.category)}">{termZh(probe.category)}</span>
+                    <span class="font-semibold text-xs">{termZh(probe.probeName)}</span>
                     <span class="badge badge-xs ml-auto" class:badge-success={probe.passed} class:badge-error={!probe.passed}>
                       {probe.passed ? '通过' : '失败'}
                     </span>
@@ -589,7 +595,10 @@
                     </div>
                     <span class="text-xs">{Math.round(probe.score * 100)}%</span>
                   </div>
-                  <div class="text-xs opacity-70 mt-1">{probe.details}</div>
+                  <div class="text-xs opacity-70 mt-1 whitespace-pre-wrap break-words">{pd.zh}</div>
+                  {#if pd.translated}
+                    <div class="opacity-40 text-[10px] whitespace-pre-wrap break-words">EN: {pd.en}</div>
+                  {/if}
                 </div>
               {/each}
             </div>
@@ -602,7 +611,15 @@
               <div class="text-xs font-bold mb-1">建议</div>
               <div class="space-y-1">
                 {#each testReport.recommendations as rec}
-                  <div class="text-xs alert alert-info py-1.5">{rec}</div>
+                  {@const rc = translateReasoning(rec)}
+                  <div class="text-xs alert alert-info py-1.5">
+                    <div class="w-full">
+                      <div>{rc.zh}</div>
+                      {#if rc.translated}
+                        <div class="opacity-50 text-[10px]">EN: {rc.en}</div>
+                      {/if}
+                    </div>
+                  </div>
                 {/each}
               </div>
             </div>
@@ -614,7 +631,7 @@
               <div class="flex flex-wrap gap-1">
                 {#each testHistory as h}
                   <span class="badge badge-sm {healthClass(h.status)}" title="{fmtTime(h.createdAtMs)}">
-                    {Math.round(h.overallHealthScore * 100)} · {fmtTime(h.createdAtMs)}
+                    {Math.round(h.overallHealthScore * 100)} · {termZh(h.status)} · {fmtTime(h.createdAtMs)}
                   </span>
                 {/each}
               </div>
@@ -645,7 +662,7 @@
           <div class="form-control w-full mt-2">
             <label class="label py-1"><span class="label-text text-xs">分类</span></label>
             <select class="select select-xs select-bordered" bind:value={extractCategory}>
-              {#each CATEGORIES as c}<option value={c}>{c}</option>{/each}
+              {#each CATEGORIES as c}<option value={c}>{termZh(c)}</option>{/each}
             </select>
           </div>
           <button class="btn btn-sm btn-primary mt-3" onclick={extractFailure} disabled={extractLoading}>
@@ -734,31 +751,31 @@
                 <div class="border border-base-300 rounded p-3 text-xs">
                   {#if isPattern(item)}
                     <div class="flex items-center gap-2 flex-wrap">
-                      <span class="badge badge-xs badge-info">Pattern</span>
+                      <span class="badge badge-xs badge-info">模式</span>
                       <span class="font-semibold">{item.triggerContext}</span>
                       <span class="opacity-60">{item.symptom}</span>
                       <span class="ml-auto">
-                        <span class="badge badge-xs badge-ghost">freq {item.frequency}</span>
+                        <span class="badge badge-xs badge-ghost">频率 {item.frequency}</span>
                         <span class="badge badge-xs badge-primary ml-1">{pct(item.confidence)}</span>
                       </span>
                     </div>
                     <div class="opacity-60 mt-1">根因: {item.rootCause} · 分类: {item.category}</div>
                   {:else if isExperience(item)}
                     <div class="flex items-center gap-2 flex-wrap">
-                      <span class="badge badge-xs {expStatusClass(item.status)}">{item.status}</span>
+                      <span class="badge badge-xs {expStatusClass(item.status)}">{termZh(item.status)}</span>
                       <span class="font-semibold">{item.context?.tool || item.patternId}</span>
                       {#if item.rule?.avoid}
-                        <span class="badge badge-xs badge-error">avoid: {item.rule.avoid}</span>
+                        <span class="badge badge-xs badge-error">避免: {item.rule.avoid}</span>
                       {/if}
                       {#if item.rule?.prefer}
-                        <span class="badge badge-xs badge-success">prefer: {item.rule.prefer}</span>
+                        <span class="badge badge-xs badge-success">偏好: {item.rule.prefer}</span>
                       {/if}
                       <span class="ml-auto">
-                        <span class="badge badge-xs badge-ghost">{item.federationStatus}</span>
+                        <span class="badge badge-xs badge-ghost">{termZh(item.federationStatus)}</span>
                         <span class="badge badge-xs badge-primary ml-1">{pct(item.confidence)}</span>
                       </span>
                     </div>
-                    <div class="opacity-60 mt-1">freq {item.frequency} · 过期 {fmtTime(item.expiresAtMs)}</div>
+                    <div class="opacity-60 mt-1">频率 {item.frequency} · 过期 {fmtTime(item.expiresAtMs)}</div>
                   {:else}
                     <div class="opacity-60">{JSON.stringify(item)}</div>
                   {/if}

@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { api } from '../lib/api.js';
+  import { termZh, translateReasoning } from '../lib/i18n.js';
 
   // ─── Stability ───
   let chaosResults = { results: [], summary: null, activeInjections: [] };
@@ -211,7 +212,7 @@
         <h3 class="card-title text-sm">注入故障</h3>
         <div class="form-control w-full mt-2">
           <select class="select select-xs select-bordered" bind:value={injectFaultType}>
-            {#each FAULT_TYPES as f}<option value={f}>{f}</option>{/each}
+            {#each FAULT_TYPES as f}<option value={f}>{termZh(f)}</option>{/each}
           </select>
         </div>
         <div class="form-control w-full mt-2">
@@ -249,7 +250,7 @@
             <div class="flex flex-wrap gap-1">
               {#each chaosResults.activeInjections as inj}
                 <span class="badge badge-sm badge-warning">
-                  {inj.faultType} → {inj.targetComponent}
+                  {termZh(inj.faultType)} → {inj.targetComponent}
                   <button class="ml-1 opacity-70" onclick={() => removeInjection(inj.id)}>✕</button>
                 </span>
               {/each}
@@ -264,9 +265,10 @@
               </tr></thead>
               <tbody>
                 {#each chaosResults.results as r}
+                  {@const obs = translateReasoning((r.observations || []).join('; '))}
                   <tr>
-                    <td class="text-xs">{r.testName || '-'}</td>
-                    <td><span class="badge badge-xs badge-error">{r.faultType}</span></td>
+                    <td class="text-xs">{termZh(r.faultType)} → {r.testName.replace(/^.*? on /, '') || '-'}</td>
+                    <td><span class="badge badge-xs badge-error">{termZh(r.faultType)}</span></td>
                     <td class="text-xs font-mono">{r.targetComponent}</td>
                     <td>
                       {#if r.systemSurvived}
@@ -276,9 +278,7 @@
                       {/if}
                     </td>
                     <td class="text-xs">{fmtMs(r.recoveryTimeMs)}</td>
-                    <td class="text-xs max-w-[200px] truncate" title={(r.observations || []).join('; ')}>
-                      {short((r.observations || []).join('; '), 40)}
-                    </td>
+                    <td class="text-xs max-w-[220px] whitespace-normal break-words" title={obs.translated ? `${obs.zh}\nEN: ${obs.en}` : obs.zh}>{obs.zh}</td>
                   </tr>
                 {/each}
               </tbody>

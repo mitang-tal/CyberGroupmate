@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte';
   import { api } from '../lib/api.js';
-  import { translateReasoning, translateExecutionResult } from '../lib/i18n.js';
+  import { translateReasoning, translateExecutionResult, termZh } from '../lib/i18n.js';
 
   let activeSection = 'capabilities';
   const SECTIONS = [
@@ -401,7 +401,7 @@
                   {#each agents as a}
                     <tr>
                       <td class="text-xs font-semibold">{a.name}</td>
-                      <td><span class="badge badge-xs {statusClass(a.status)}">{a.status}</span></td>
+                      <td><span class="badge badge-xs {statusClass(a.status)}">{termZh(a.status)}</span></td>
                       <td>{a.capabilities?.length || 0}</td>
                       <td>{a.activeTaskCount}</td>
                       <td class="text-xs opacity-60">{fmtTime(a.lastHeartbeatAtMs)}</td>
@@ -438,7 +438,7 @@
             <div class="text-xs space-y-1.5 mt-2">
               <div><span class="opacity-50">ID:</span> <span class="font-mono break-all">{selectedAgent.agentId}</span></div>
               <div><span class="opacity-50">名称:</span> {selectedAgent.name}</div>
-              <div><span class="opacity-50">状态:</span> <span class="badge badge-xs {statusClass(selectedAgent.status)}">{selectedAgent.status}</span></div>
+              <div><span class="opacity-50">状态:</span> <span class="badge badge-xs {statusClass(selectedAgent.status)}">{termZh(selectedAgent.status)}</span></div>
               <div><span class="opacity-50">注册时间:</span> {fmtTime(selectedAgent.registeredAtMs)}</div>
               {#if selectedAgent.metadata}
                 <div><span class="opacity-50">元数据:</span>
@@ -526,7 +526,7 @@
               <div class="space-y-1">
                 <div><span class="opacity-50">Agent:</span> {dispatchResult.agentName} <span class="font-mono">({dispatchResult.agentId})</span></div>
                 <div><span class="opacity-50">能力:</span> <span class="font-mono">{dispatchResult.capabilityId}</span></div>
-                <div><span class="opacity-50">匹配方式:</span> <span class="badge badge-xs badge-info">{dispatchResult.matchType}</span></div>
+                <div><span class="opacity-50">匹配方式:</span> <span class="badge badge-xs badge-info">{termZh(dispatchResult.matchType)}</span></div>
                 <div><span class="opacity-50">置信度:</span> {pct(dispatchResult.confidence)}</div>
               </div>
             </div>
@@ -587,8 +587,8 @@
                 {#each decisions as d}
                   {@const dt = translateReasoning(d.reasoningText)}
                   <tr>
-                    <td><span class="badge badge-xs {decisionTypeClass(d.decisionType)}">{d.decisionType}</span></td>
-                    <td><span class="badge badge-xs {decisionStatusClass(d.status)}">{d.status}</span></td>
+                    <td><span class="badge badge-xs {decisionTypeClass(d.decisionType)}">{termZh(d.decisionType)}</span></td>
+                    <td><span class="badge badge-xs {decisionStatusClass(d.status)}">{termZh(d.status)}</span></td>
                     <td class="text-xs">{d.targetComponent}</td>
                     <td>{pct(d.confidenceScore)}</td>
                     <td class="text-xs max-w-[260px] truncate" title={dt.translated ? `${dt.zh}\nEN: ${dt.en}` : dt.zh}>{short(dt.zh, 40)}</td>
@@ -633,8 +633,8 @@
             <span class="opacity-50">决策 ID: {selectedDecision.decisionId}</span>
           </div>
           <div class="grid grid-cols-2 gap-2 text-xs mb-3">
-            <div><div class="opacity-50">类型</div><span class="badge badge-xs {decisionTypeClass(selectedDecision.decisionType)}">{selectedDecision.decisionType}</span></div>
-            <div><div class="opacity-50">状态</div><span class="badge badge-xs {decisionStatusClass(selectedDecision.status)}">{selectedDecision.status}</span></div>
+            <div><div class="opacity-50">类型</div><span class="badge badge-xs {decisionTypeClass(selectedDecision.decisionType)}">{termZh(selectedDecision.decisionType)}</span></div>
+            <div><div class="opacity-50">状态</div><span class="badge badge-xs {decisionStatusClass(selectedDecision.status)}">{termZh(selectedDecision.status)}</span></div>
             <div><div class="opacity-50">目标组件</div>{selectedDecision.targetComponent}</div>
             <div><div class="opacity-50">置信度</div>{pct(selectedDecision.confidenceScore)}</div>
             <div><div class="opacity-50">触发事件</div>{selectedDecision.triggerEvent?.eventType} ({selectedDecision.triggerEvent?.sourceId})</div>
@@ -704,7 +704,7 @@
                 <div class="space-y-1">
                   {#each policyState.activeDecisions as ad}
                     <div class="text-xs border border-base-300 rounded p-1.5">
-                      <span class="badge badge-xs {decisionTypeClass(ad.decisionType)}">{ad.decisionType}</span>
+                      <span class="badge badge-xs {decisionTypeClass(ad.decisionType)}">{termZh(ad.decisionType)}</span>
                       <span class="ml-1">{ad.targetComponent}</span>
                     </div>
                   {/each}
@@ -759,8 +759,8 @@
               <div class="font-bold mb-2">Patch 结果</div>
               <div class="space-y-1">
                 <div><span class="opacity-50">Patch ID:</span> <span class="font-mono break-all">{generateResult.patchId}</span></div>
-                <div><span class="opacity-50">类型:</span> <span class="badge badge-xs {patchTypeClass(generateResult.patchType)}">{generateResult.patchType}</span></div>
-                <div><span class="opacity-50">状态:</span> <span class="badge badge-xs {patchStatusClass(generateResult.status)}">{generateResult.status}</span></div>
+                <div><span class="opacity-50">类型:</span> <span class="badge badge-xs {patchTypeClass(generateResult.patchType)}">{termZh(generateResult.patchType)}</span></div>
+                <div><span class="opacity-50">状态:</span> <span class="badge badge-xs {patchStatusClass(generateResult.status)}">{termZh(generateResult.status)}</span></div>
                 <div>
                   <span class="opacity-50">推理:</span>
                   <div class="whitespace-pre-wrap break-words">{gr.zh}</div>
@@ -817,8 +817,8 @@
                   {#each patches as p}
                     {@const pt = translateReasoning(p.reasoning)}
                     <tr>
-                      <td><span class="badge badge-xs {patchTypeClass(p.patchType)}">{p.patchType}</span></td>
-                      <td><span class="badge badge-xs {patchStatusClass(p.status)}">{p.status}</span></td>
+                      <td><span class="badge badge-xs {patchTypeClass(p.patchType)}">{termZh(p.patchType)}</span></td>
+                      <td><span class="badge badge-xs {patchStatusClass(p.status)}">{termZh(p.status)}</span></td>
                       <td class="font-mono text-xs">{short(p.executionId, 16)}</td>
                       <td class="font-mono text-xs">{short(p.failedStepId, 16)}</td>
                       <td class="text-xs whitespace-normal break-words min-w-[220px]">
@@ -901,8 +901,8 @@
                   {#each policies as p}
                     <tr>
                       <td class="text-xs font-semibold">{p.name}</td>
-                      <td><span class="badge badge-xs {ruleTypeClass(p.ruleType)}">{p.ruleType}</span></td>
-                      <td><span class="badge badge-xs {p.status === 'active' ? 'badge-success' : 'badge-ghost'}">{p.status}</span></td>
+                      <td><span class="badge badge-xs {ruleTypeClass(p.ruleType)}">{termZh(p.ruleType)}</span></td>
+                      <td><span class="badge badge-xs {p.status === 'active' ? 'badge-success' : 'badge-ghost'}">{termZh(p.status)}</span></td>
                       <td class="text-xs opacity-60">{JSON.stringify(p.config || {})}</td>
                     </tr>
                   {/each}
@@ -991,9 +991,9 @@
                   {#each violations as v}
                     {@const vt = translateReasoning(v.reasoning)}
                     <tr>
-                      <td><span class="badge badge-xs {ruleTypeClass(v.ruleType)}">{v.ruleType}</span></td>
+                      <td><span class="badge badge-xs {ruleTypeClass(v.ruleType)}">{termZh(v.ruleType)}</span></td>
                       <td class="text-xs">{v.sourceType} <span class="font-mono opacity-60">({short(v.sourceId, 14)})</span></td>
-                      <td><span class="badge badge-xs badge-error">{v.actionTaken}</span></td>
+                      <td><span class="badge badge-xs badge-error">{termZh(v.actionTaken)}</span></td>
                       <td class="text-xs max-w-[220px] truncate" title={vt.translated ? `${vt.zh}\nEN: ${vt.en}` : vt.zh}>{short(vt.zh, 40)}</td>
                       <td class="text-xs opacity-60">{fmtTime(v.createdAtMs)}</td>
                     </tr>
