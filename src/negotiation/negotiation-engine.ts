@@ -47,6 +47,8 @@ export class NegotiationEngine {
     private timeoutMs: number = BID_TIMEOUT_MS;
     private history: ContractAward[] = [];
     private pendingRounds: Map<string, BidWindow> = new Map();
+    /** 8.2 批量标书：已撤销的 proposalId（撤销后不再产生 award 记录） */
+    private withdrawnProposals = new Set<string>();
 
     constructor(deps: {
         dispatcher?: CapabilityDispatcher;
@@ -71,11 +73,19 @@ export class NegotiationEngine {
      * 发布标案并运行完整协商（2 轮密封出价 + 硬超时）
      */
     async runNegotiation(proposal: TaskProposal): Promise<ContractAward> {
+        if (this.withdrawnProposals.has(proposal.proposalId)) {
+            return this.withdrawnAward(proposal);
+        }
+
         const allBids: AgentBid[] = [];
 
         // Round 1: 初报
         const round1 = await this.runRound(proposal, 1);
         allBids.push(...round1.bids);
+
+        if (this.withdrawnProposals.has(proposal.proposalId)) {
+            return this.withdrawnAward(proposal);
+        }
 
         if (round1.bids.length === 0) {
             return this.fallbackToDispatcher(proposal, "No bids received in round 1.");
@@ -87,8 +97,46 @@ export class NegotiationEngine {
             allBids.push(...round2.bids);
         }
 
+        if (this.withdrawnProposals.has(proposal.proposalId)) {
+            return this.withdrawnAward(proposal);
+        }
+
         // 评标
         return this.evaluateBids(proposal, allBids);
+    }
+
+    /**
+     * 8.2 批量标书：并发发布多个标案，各自独立运行 2 轮协商并评标。
+     * proposalId 重复（含重复显式 id）→ 抛错拒绝整批。
+     */
+    async publishBatch(proposals: TaskProposal[]): Promise<ContractAward[]> {
+        if (proposals.length === 0) return [];
+        const seen = new Set<string>();
+        for (const p of proposals) {
+            if (seen.has(p.proposalId)) {
+                throw new Error(`Duplicate proposalId in batch: ${p.proposalId}`);
+            }
+            seen.add(p.proposalId);
+        }
+        return Promise.all(proposals.map((p) => this.runNegotiation(p)));
+    }
+
+    /**
+     * 8.2 撤销标书：关闭该 proposal 所有未结算竞标窗口并从 pendingRounds 移除，
+     * 在评标前被撤销的标书不产生 award 记录（不入 history/stats）。
+     * 已进入评标/已结算的标书无法撤销（返回 false）。
+     */
+    withdrawProposal(proposalId: string): boolean {
+        let removed = false;
+        for (const [key, window] of this.pendingRounds) {
+            if (key.startsWith(`${proposalId}:`)) {
+                window.settled = true;
+                this.pendingRounds.delete(key);
+                removed = true;
+            }
+        }
+        if (removed) this.withdrawnProposals.add(proposalId);
+        return removed;
     }
 
     /**
@@ -357,6 +405,31 @@ export class NegotiationEngine {
 
         this.history.push(award);
         return award;
+    }
+
+    /**
+     * 8.2 撤销结果：不写入 history/stats（不产生 award 记录）。
+     */
+    private withdrawnAward(proposal: TaskProposal): ContractAward {
+        return {
+            awardId: crypto.randomUUID(),
+            proposalId: proposal.proposalId,
+            winnerBid: {
+                bidId: crypto.randomUUID(),
+                proposalId: proposal.proposalId,
+                agentId: "withdrawn",
+                agentName: "Withdrawn",
+                costEstimateToken: 0,
+                latencyEstimateMs: 0,
+                confidenceScore: 0,
+                round: 1,
+                submittedAtMs: Date.now(),
+            },
+            utilityScore: 0,
+            roundSettled: 1,
+            reasoning: "Proposal withdrawn before settlement.",
+            awardedAtMs: Date.now(),
+        };
     }
 
     private determineSettledRound(allBids: AgentBid[], winnerBid: AgentBid): 1 | 2 {

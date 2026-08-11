@@ -2863,6 +2863,53 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             }
         });
 
+        // 8.2 批量标书：一次发布多个标案
+        router.post("/negotiation/publish-batch", async (req, res) => {
+            const { proposals } = (req.body || {}) as any;
+            if (!Array.isArray(proposals) || proposals.length === 0) {
+                res.status(400).json({ error: "proposals[] required" });
+                return;
+            }
+            for (const p of proposals) {
+                if (!p.taskType || !p.requiredCapability || !p.slaLatencyMs || !p.maxCostToken) {
+                    res.status(400).json({ error: "each proposal requires taskType, requiredCapability, slaLatencyMs, maxCostToken" });
+                    return;
+                }
+            }
+            try {
+                const now = Date.now();
+                const normalized = proposals.map((p, i) => ({
+                    proposalId: p.proposalId || `prop_${now}_${i}`,
+                    taskType: p.taskType,
+                    requiredCapability: p.requiredCapability,
+                    slaLatencyMs: p.slaLatencyMs,
+                    maxCostToken: p.maxCostToken,
+                    tags: Array.isArray(p.tags) ? p.tags : undefined,
+                    publishedAtMs: now,
+                    bidDeadlineMs: 500,
+                }));
+                for (const proposal of normalized) {
+                    bridge.broadcast({ type: "negotiation:published", timestamp: new Date().toISOString(), data: proposal });
+                }
+                const awards = await ne.publishBatch(normalized);
+                for (const award of awards) {
+                    bridge.broadcast({ type: "negotiation:awarded", timestamp: new Date().toISOString(), data: award });
+                }
+                res.json({ awards, count: awards.length });
+            } catch (err) {
+                res.status(400).json({ error: String(err) });
+            }
+        });
+
+        // 8.2 批量标书：撤销未结算标书
+        router.post("/negotiation/withdraw", (req, res) => {
+            const { proposalId } = (req.body || {}) as any;
+            if (!proposalId) { res.status(400).json({ error: "proposalId required" }); return; }
+            const withdrawn = ne.withdrawProposal(proposalId);
+            bridge.broadcast({ type: "negotiation:withdrawn", timestamp: new Date().toISOString(), data: { proposalId, withdrawn } });
+            res.json({ ok: true, withdrawn });
+        });
+
         router.get("/negotiation/history", (_req, res) => {
             res.json(ne.getHistory());
         });
