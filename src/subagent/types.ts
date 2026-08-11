@@ -137,10 +137,19 @@ export interface AttentionQueueEntry {
     urgentSignals?: string[];
     /** 快照时间戳 */
     snapshotTimestamp?: string;
-    /** Scheduler 触发描述列表（watchdog 注入，source=SCHEDULER_TRIGGER 时存在） */
+    /** Scheduler 触发描述列表（watchdog 注入，source=SCHEDULER_TRIGGER 时存在）；triggerAt 为本地扩展（main-agent-loop extractSchedulerTriggers 注入、metaAttendMetaProvider 渲染使用） */
     schedulerTriggers?: Array<{
         id: string;
         type: "reminder" | "cron" | "wake_condition";
+        description: string;
+        bindingId?: string;
+        callback?: string;
+        data?: unknown;
+        triggerAt?: string;
+    }>;
+    /** WAKE_CONDITION 源条目展开（main-agent-loop extractWakeConditions 注入、metaAttendMetaProvider 渲染使用） */
+    wakeConditions?: Array<{
+        id: string;
         description: string;
         bindingId?: string;
         callback?: string;
@@ -299,6 +308,7 @@ export interface SubagentPostTaskFollowUpCallback {
 export interface DispatchedSubagentTaskRecord {
     taskId: string;
     chatId: string;
+    /** sourceType 含 "harness"、sourceRunId 为 upstream 扩展（main-agent-loop enqueueHarnessDispatchCallback / dispatch.ts 使用） */
     sourceType?: "meta" | "subagent" | "harness";
     sourceChatId?: string;
     sourceTaskId?: string;
@@ -466,11 +476,13 @@ export interface Decision {
 
 /** Agent 工作笔记 */
 /** 调度事件（scheduler 命名空间） */
+// 采用含执行生命周期扩展的版本（type 含 "wake_condition"，新增 dedupKey/executionStatus/lastExecutionAt/lastSentMessageId）：
+// main.ts schedulerWatchdog 的 RUNNING/COMPLETED 守卫、main-agent-loop 回调匹配、meta-api/scheduler dedup 均依赖这些字段。
 export interface SchedulerEvent {
     /** 任务 ID */
     id: string;
     /** 类型：一次性提醒 or 周期 cron */
-    type: "reminder" | "cron";
+    type: "reminder" | "cron" | "wake_condition";
     /** 关联群组 */
     chatId: string;
     /** 唤醒绑定目标。可以是 composite chatId，也可以是 "meta"。 */
@@ -497,6 +509,14 @@ export interface SchedulerEvent {
     triggered?: boolean;
     /** 上次触发时间（cron） */
     lastTriggeredAt?: string;
+    // scheduler dedup
+    dedupKey?: string;
+    // reminder execution lifecycle
+    executionStatus?: "PENDING" | "RUNNING" | "COMPLETED";
+    lastExecutionAt?: string;
+
+    /** 最近一次发送消息 ID */
+    lastSentMessageId?: string;
 }
 
 export interface MemoEntry {
@@ -518,6 +538,7 @@ export type SessionDigestKind =
     | "system"
     | "legacy";
 
+// 采用富字段版：meta-providers / executor-providers 的 formatSessionDigestLine 读取 kind/actorType/sourceChatTitle/taskId/runId/targetChatId 等字段，极简版无法满足。
 export interface SessionDigestEntry {
     id?: string;
     content: string;

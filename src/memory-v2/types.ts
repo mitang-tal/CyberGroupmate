@@ -852,29 +852,47 @@ export interface IMemoryStoreV2 {
     listGroupModels(): GroupModel[];
 
     /** 列出指定 binding/chat 的 todo */
-    todoList(chatId: string, options?: { includeExpired?: boolean }): Array<{
+    // todo.type 语义：
+    // - task: 需要执行的任务，可能带 dueAt
+    // - policy: agent 行为规则，影响决策
+    // - preference: 用户偏好，影响回复/推荐
+    // - experience: 历史经验总结，可迁移
+    // - observation: 临时观察
+    // - log: 调试/记录，可清理
+    todoList(chatId: string, options?: { includeExpired?: boolean; includeArchived?: boolean }): Array<{
         key: string;
         content: string;
+        type?: string;
         dueAt: string | null;
         createdAt: string;
         updatedAt: string;
         expired: boolean;
     }>;
-
+    
+    policyList(chatId: string): Array<{
+    key: string;
+    content: string;
+    enabled: boolean;
+    createdAt: string;
+    updatedAt: string;
+   }>;
+   
     /** 获取指定 binding/chat 的 todo */
     todoGet(chatId: string, key: string): {
         key: string;
         content: string;
+        type?: string;
         dueAt: string | null;
         createdAt: string;
         updatedAt: string;
         expired: boolean;
     } | null;
 
-    /** 新增或更新指定 binding/chat 的 todo */
-    todoUpsert(chatId: string, key: string, content: string, dueAt?: string | null): {
+    /** 新增或更新指定 binding/chat 的 todo（必须提供 type） */
+    todoUpsert(chatId: string, key: string, type: string, content: string, dueAt?: string | null): {
         key: string;
         content: string;
+        type?: string;
         dueAt: string | null;
         createdAt: string;
         updatedAt: string;
@@ -899,4 +917,7 @@ export interface IMemoryStoreV2 {
 
     /** 关闭数据库连接 */
     close(): void;
+
+    /** 清理日志类型的 todo（按创建时间），返回删除数量 */
+    cleanupTodoLogs?(retentionDays?: number): number;
 }

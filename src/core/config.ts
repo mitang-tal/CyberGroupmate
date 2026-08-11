@@ -178,9 +178,9 @@ export interface TelegramConfig {
     humanizedDelay?: {
         /** 是否启用 */
         enabled: boolean;
-        /** 每个字符的延迟毫秒数（打字速度），默认 50 */
+        /** 每个字符的延迟毫秒数（打字速度），默认 200 */
         msPerChar: number;
-        /** 最小延迟 ms，默认 500 */
+        /** 最小延迟 ms，默认 1500 */
         minDelay: number;
         /** 最大延迟 ms，默认 5000 */
         maxDelay: number;
@@ -1402,8 +1402,9 @@ function parseHumanizedDelay(fileTG: Record<string, unknown>): TelegramConfig["h
     if (!raw || typeof raw !== "object") return undefined;
     return {
         enabled: raw.enabled !== false,
-        msPerChar: raw.ms_per_char != null ? num(raw.ms_per_char, 50) : 50,
-        minDelay: raw.min_delay != null ? num(raw.min_delay, 500) : 500,
+        // 调整默认为更自然的人类聊天速度：每字符 200ms，最小 1500ms，最大 5000ms
+        msPerChar: raw.ms_per_char != null ? num(raw.ms_per_char, 200) : 200,
+        minDelay: raw.min_delay != null ? num(raw.min_delay, 1500) : 1500,
         maxDelay: raw.max_delay != null ? num(raw.max_delay, 5000) : 5000,
     };
 }

@@ -358,6 +358,7 @@ async function main(): Promise<void> {
 
     const nc = new NotificationCenter(EVENTS_PATH);
     let shuttingDown = false;
+    const dmChatIds = new Set<string>();
     let sandboxDispatchApi: {
         taskToGroup: (chatId: string, taskSpec: any, options?: any) => Promise<unknown>;
         getTask: (taskId: string) => Promise<unknown>;
@@ -573,6 +574,13 @@ async function main(): Promise<void> {
     const restoredChatIds = subagentManager.restoreAll();
     if (restoredChatIds.length > 0) {
         log.info("已恢复 subagent sessions", { count: restoredChatIds.length, chatIds: restoredChatIds });
+    }
+    // 回复看门狗：启动时把已恢复的私聊预填进 dmChatIds（与运行时 onPush 收集保持一致）
+    for (const id of restoredChatIds) {
+        try {
+            const gm = memory.getGroupModel(getGroupModelKey(id));
+            if (gm?.isDirectMessage) dmChatIds.add(id);
+        } catch { /* 非关键路径 */ }
     }
     const q5 = new CallbackQueue();
     const globalState = new GlobalState({
@@ -833,6 +841,7 @@ async function main(): Promise<void> {
 
         // 紧急路径：DM / @mention / 文本提及 agent 名字 → 立即注入 Layer 0。
         const isDM = !!event.isDirectMessage;
+        if (isDM) dmChatIds.add(chatId);
         const isMention = !!event.mentionsAgent;
         // 文本提及检测：检查消息内容是否包含配置的 mention_keywords（agent 名字等）
         // 动态读取（支持热重载）
@@ -1460,7 +1469,23 @@ async function main(): Promise<void> {
         // ── Reminder 检查 ──
         const dueReminders = globalState.getDueReminders();
         for (const reminder of dueReminders) {
+            // Mark triggered early to avoid double-enqueue; actual execution guarded by executionStatus
             globalState.markReminderTriggered(reminder.id);
+
+            // Execution guard: 如果已在 RUNNING/COMPLETED，则跳过；否则原子地标记为 RUNNING
+            const current = globalState.getSchedulerEvents().find((e) => e.id === reminder.id && e.type === "reminder");
+            if (!current) continue;
+            if (current.executionStatus === "RUNNING" || current.executionStatus === "COMPLETED") {
+                log.info("Reminder 到期但已在运行或完成，跳过执行", { id: reminder.id, executionStatus: current.executionStatus });
+                continue;
+            }
+            // 将 executionStatus 置为 RUNNING 并持久化（避免重复执行）
+            try {
+                globalState.updateSchedulerEvent(reminder.id, { executionStatus: "RUNNING", lastExecutionAt: new Date().toISOString() });
+            } catch (err) {
+                log.warn("无法将 reminder 标记为 RUNNING，跳过", { id: reminder.id, error: String(err) });
+                continue;
+            }
 
             const wakeMatch = matchDelayWakeReminder(reminder, globalState.getWakeConditions());
             if (wakeMatch) {
@@ -1492,6 +1517,7 @@ async function main(): Promise<void> {
                         callback: reminderCallback,
                         bindingId: reminderBindingId,
                         data: reminder.data,
+                        triggerAt: reminder.triggerAt,
                     },
                 });
                 log.info("Reminder 到期 → Meta Layer1", {
@@ -1508,6 +1534,7 @@ async function main(): Promise<void> {
                 id: reminder.id,
                 type: "reminder",
                 description: reminder.description,
+                triggerAt: reminder.triggerAt,
             }];
             accumulator.ingest(1, createSchedulerItem(reminder.chatId, {
                 type: "reminder",
@@ -1576,6 +1603,7 @@ async function main(): Promise<void> {
                 id: evt.id,
                 type: "cron",
                 description: taskDesc,
+                triggerAt: evt.lastTriggeredAt,
             }];
             accumulator.ingest(1, createSchedulerItem(evt.chatId, {
                 type: "cron",
@@ -1586,7 +1614,116 @@ async function main(): Promise<void> {
             log.info("Cron 触发 → Layer1", { id: evt.id, name: evt.description, chatId: evt.chatId });
         }
     }, 30_000);
-    if (schedulerWatchdogInterval.unref) schedulerWatchdogInterval.unref();
+    // ─── 回复看门狗（reply-watchdog）───
+    // 独立于 Meta 的确定性兜底：确保「私聊用户消息」必有 subagent 回复，根治冷场。
+    // 动机：Meta 的派发决策依赖其 LLM 裁量（其自写规则/教训已多次证明不可靠）；
+    // 一旦 Meta 不派发 task，CodeActExecutor 不会被 enqueue，session-runner 不运行 → 用户侧冷场。
+    // 本看门狗在 Meta 之外用代码机械保证回复，对应米汤要求：
+    //   ① 私聊每条消息小H都必须回复，群聊不需每句；② 未唤醒/发送失败时及时重新派发。
+    const REPLY_WATCHDOG_INTERVAL_MS = 60_000;
+    const DM_STUCK_THRESHOLD_MS = 4 * 60_000;        // 私聊：最后用户消息超 4 分钟无回复则兜底（免费模型慢，给足余量）
+    const WATCHDOG_GLOBAL_COOLDOWN_MS = 60_000;       // 每 chat 两次派发最小间隔（含失败重试节奏）
+    const DISPATCH_DEDUP_WINDOW_MS = 15 * 60_000;     // 同一用户消息 15 分钟内不重复兜底派发
+
+    const lastDispatchAtByChat = new Map<string, number>();
+    const lastDispatchedUserMsgByChat = new Map<string, string>();
+
+    const replyWatchdogInterval = setInterval(async () => {
+        if (shuttingDown) return;
+        const now = Date.now();
+        const agentName = loadConfig().persona?.name ?? "赛博群友";
+
+        for (const chatId of dmChatIds) {
+            // 跳过被 attention 层 block 的 chat（避免对已静默的会话反复打扰）
+            if (accumulator.isBlocked(chatId)) continue;
+
+            // 1) 取最近消息，按时间排序找「最新一条」
+            let recent: Array<{ messageId: string; userId: string; displayName: string; timestamp: string; text?: string }>;
+            try {
+                recent = memory.getRecentMessages(chatId, 12) as any;
+            } catch {
+                continue;
+            }
+            if (!recent || recent.length === 0) continue;
+
+            const sorted = [...recent].sort(
+                (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+            );
+            const latest = sorted[sorted.length - 1];
+            if (!latest) continue;
+
+            // ── 身份判定（Telegram 语义，基于用户确认的数字 ID 规则）──
+            //   - 用户(米汤)消息的 user_id 是数字 ID，形如 "telegram:1316515250"
+            //     （chatId/userId 是 Telegram 中标识「谁」的权威字段，例如米汤=1316515250）；
+            //   - agent(小H)自己发出的消息 user_id 是 persona 名字（main.ts:638），不是数字 ID。
+            //   两者永不碰撞，故用「名字匹配=agent」「数字 ID=人类」双正向判定最稳，
+            //   避免将来某条消息身份字段异常时误判而错误补派。
+            const looksLikeNumericId = (s: string): boolean =>
+                /^(-?\w+:)?\d{6,}$/.test(s.trim());
+            const isFromAgent = (m: { userId?: string; displayName?: string }): boolean =>
+                String(m.userId ?? "") === agentName || String(m.displayName ?? "") === agentName;
+            const isFromHuman = (m: { userId?: string; displayName?: string }): boolean =>
+                looksLikeNumericId(String(m.userId ?? "")) || looksLikeNumericId(String(m.displayName ?? ""));
+
+            // 最新一条是 agent 自己发的 → 已回复，无需兜底
+            if (isFromAgent(latest)) continue;
+
+            // 最新一条是人类发的 → 视为用户未获回复（私聊只有两方）。
+            // 若既非 agent 也非人类（来源异常），保守跳过，绝不误派。
+            if (!isFromHuman(latest)) {
+                log.debug("REPLY-WATCHDOG 跳过无法识别来源的私聊消息", {
+                    chatId,
+                    userId: latest.userId,
+                    displayName: latest.displayName,
+                });
+                continue;
+            }
+
+            // 找最后一条「人类」消息（用于去重，避免对同一条消息反复派发）
+            const lastUserMsg = [...sorted].reverse().find((m) => !isFromAgent(m) && isFromHuman(m));
+            if (!lastUserMsg) continue;
+
+            const msgId = String(lastUserMsg.messageId);
+            const stuckMs = now - new Date(lastUserMsg.timestamp).getTime();
+
+            // 2) subagent 是否正在处理（正在生成回复则不抢派）
+            const sub = subagentManager.get(chatId);
+            const executor = sub?.codeActExecutor as import("./subagent/code-act-executor.js").CodeActExecutor | null | undefined;
+            const isProcessing = !!executor?.isProcessing();
+
+            // 3) 去重 + 冷却
+            const lastDispatchedAt = lastDispatchAtByChat.get(chatId) ?? 0;
+            const dispatchedRecently =
+                lastDispatchedUserMsgByChat.get(chatId) === msgId &&
+                (now - lastDispatchedAt) < DISPATCH_DEDUP_WINDOW_MS;
+            const globallyCooled = (now - lastDispatchedAt) >= WATCHDOG_GLOBAL_COOLDOWN_MS;
+
+            if (stuckMs >= DM_STUCK_THRESHOLD_MS && !isProcessing && !dispatchedRecently && globallyCooled) {
+                try {
+                    log.warn("REPLY-WATCHDOG 兜底派发", {
+                        chatId,
+                        stuckSec: Math.round(stuckMs / 1000),
+                        lastUserMsgId: msgId,
+                        reason: "私聊用户消息长时间无 subagent 回复（Meta 未派发 task）",
+                    });
+                    await sandboxDispatchApi?.taskToGroup(chatId, {
+                        contentDirection: "回复用户的最新消息（由回复看门狗兜底触发，此前 Meta 未及时派发 task）",
+                        toneGuidance: "自然、主动，不要机械复述或道歉式开头",
+                    });
+                    lastDispatchAtByChat.set(chatId, Date.now());
+                    lastDispatchedUserMsgByChat.set(chatId, msgId);
+                    globalState.addSessionDigest(
+                        `[REPLY-WATCHDOG] ${chatId}: 用户消息等待 ${Math.round(stuckMs / 1000)}s 无回复，已自动补派发小H`,
+                    );
+                } catch (err) {
+                    // 失败也记时间，但不写 dispatchedRecently → 下一个冷却周期会重试（覆盖 spec ②「发送失败及时重派」）
+                    lastDispatchAtByChat.set(chatId, Date.now());
+                    log.error("REPLY-WATCHDOG 派发失败", { chatId, error: String(err) });
+                }
+            }
+        }
+    }, REPLY_WATCHDOG_INTERVAL_MS);
+    if (replyWatchdogInterval.unref) replyWatchdogInterval.unref();
 
     // ─── Background Agent 定时做梦 ───
     let backgroundDreamingInterval: ReturnType<typeof setInterval> | null = null;
@@ -1710,8 +1847,10 @@ async function main(): Promise<void> {
         clearInterval(topicCleanupInterval);
         clearInterval(reflectionInterval);
         clearInterval(schedulerWatchdogInterval);
+        // 合并说明：upstream 的 backfill 清理与本地 stashed 的 replyWatchdog 清理是两组不同定时器，均需在关闭时清理。
         for (const timer of backfillTimers) clearTimeout(timer);
         backfillCoordinator?.dispose();
+        clearInterval(replyWatchdogInterval);
         if (backgroundDreamingInterval) clearInterval(backgroundDreamingInterval);
 
         // 停止 Background Agent harness

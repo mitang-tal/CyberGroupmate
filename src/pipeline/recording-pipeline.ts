@@ -240,11 +240,16 @@ export class RecordingPipeline extends EventEmitter {
 
         log.info("flush 开始", { messageCount: messages.length, remaining: this.buffer.length, clusterOnly });
         this.emit("flush:start", messages.length);
-
+        // 合并说明：upstream 的 hadError（flush 失败时决定是否重排 drain）与本地 stashed 的
+        // handledChatIds（失败回退时只回退未处理 chat，防双计）是两个不同声明，均保留。
         let hadError = false;
+        const handledChatIds = new Set<string>();
+
         try {
             // ─── Step 1: 话题聚类 ───
             const groupedByChat = this.groupByChat(messages);
+            // 已处理（成功完成或已回退）的 chatId；flush 失败时只回退未处理的 chat，
+            // 避免已成功写入的 chat 被下轮 flush 重复处理（incrementProfileStats 是增量累加，重跑会双计）
 
             for (const [chatId, chatMessages] of groupedByChat) {
                 const existingTopics = this.registry.getByChat(chatId);
@@ -260,6 +265,7 @@ export class RecordingPipeline extends EventEmitter {
                         chatId,
                         messageCount: chatMessages.length,
                     });
+                    // Miu review 决定：改用 upstream 的 fallbackClustering 立即兑底归类（不回写 buffer，避免 finally re-arm 导致同批消息循环重试的死亡螺旋）。
                     clustering = this.fallbackClustering(chatMessages);
                 }
 
@@ -406,14 +412,16 @@ export class RecordingPipeline extends EventEmitter {
                     log.debug("Memory V2 写入（无 memory 实例，跳过）", { topicCount: updatedTopics.length });
                 }
 
+                handledChatIds.add(String(chatId));
                 this.emit("flush:complete", updatedTopics);
             }
         } catch (err) {
             hadError = true;
             log.error("flush 失败", { error: err instanceof Error ? err.message : String(err) });
             this.emit("flush:error", err);
-            // 把消息放回缓冲头部，避免丢失
-            this.buffer.unshift(...messages);
+            // 回退逻辑：只把未处理的 chat 消息放回缓冲头部，避免已成功写入的 chat 被下轮 flush 重复处理（双计）；
+            // 再叠加 buffer 总量封顶保护（防死亡螺旋）。
+            this.buffer.unshift(...messages.filter(m => !handledChatIds.has(String(m.chatId))));
             // 保底回退：buffer 总量封顶。持续失败时（非 LLM 错误，如落盘异常）unshift 会让 buffer 无限膨胀，
             // 批次越滚越大 → 更必然失败＝死亡螺旋。超出上限即丢弃最旧（含反复失败的批次），保留最新消息、自愈。
             if (this.buffer.length > this.maxBufferSize) {

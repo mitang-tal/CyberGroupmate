@@ -200,7 +200,11 @@ export class ContextEngine {
                 const result = provider.diff!(data, committed?.data ?? null);
                 deltaData = result.delta;
                 deltaStats = result.stats;
-                changed = result.stats.added > 0;
+                changed =
+					changed =
+						(result.stats.added ?? 0) > 0 ||
+						(result.stats.updated ?? 0) > 0 ||
+						(result.stats.removed ?? 0) > 0;
                 break;
             }
             case "snapshot":

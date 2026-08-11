@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { ensureCompositeId, getGroupModelKey, getPlatform, isValidCompositeChatId } from "../core/chat-id.js";
+import type { PlatformName } from "../core/chat-id.js";
 import {
     assertEgressAllowed,
     isExplicitReadBlocked,
@@ -42,6 +43,8 @@ import { getPendingMessageSignal, SendInterruptedError, type InterruptedSendPayl
 const log = createLogger("sandbox-host-calls");
 
 const humanizedLastSendTimes = new Map<string, number>();
+// Per-chat send queue to ensure writes to the same chat are serialized.
+const chatSendQueues = new Map<string, Promise<unknown>>();
 
 export interface ManagedEnvPlan {
     hostVisible: Record<string, string>;
@@ -317,8 +320,9 @@ function getSendIntent(platform: string, method: string, args: unknown[]): (Inte
             }
             case "telegram.sendFile": {
                 const opts = args[2] as Record<string, unknown> | undefined;
-                const text = typeof opts?.caption === "string" ? opts.caption : `[file:${String(args[1] ?? "")}]`;
-                return { method, chatId, text, textLength: typeof opts?.caption === "string" ? opts.caption.length : 0 };
+                const caption = typeof opts?.caption === "string" ? opts.caption : undefined;
+                const text = caption ?? `[file:${String(args[1] ?? "")}]`;
+                return { method, chatId, text, textLength: caption ? caption.length : 0 };
             }
             case "telegram.sendSticker":
                 return { method, chatId, text: `[sticker:${String(args[1] ?? "")}]`, textLength: 0 };
@@ -376,14 +380,16 @@ function getSendIntent(platform: string, method: string, args: unknown[]): (Inte
             case "onebot.sendFile":
             case "qq.sendFile": {
                 const opts = args[2] as Record<string, unknown> | undefined;
-                const text = typeof opts?.caption === "string" ? opts.caption : `[file:${String(args[1] ?? "")}]`;
-                return { method, chatId, text, textLength: typeof opts?.caption === "string" ? opts.caption.length : 0 };
+                const caption = typeof opts?.caption === "string" ? opts.caption : undefined;
+                const text = caption ?? `[file:${String(args[1] ?? "")}]`;
+                return { method, chatId, text, textLength: caption ? caption.length : 0 };
             }
             case "onebot.sendSticker":
             case "qq.sendSticker": {
                 const opts = args[2] as Record<string, unknown> | undefined;
-                const text = typeof opts?.caption === "string" ? opts.caption : `[sticker:${String(args[1] ?? "")}]`;
-                return { method, chatId, text, textLength: typeof opts?.caption === "string" ? opts.caption.length : 0 };
+                const caption = typeof opts?.caption === "string" ? opts.caption : undefined;
+                const text = caption ?? `[sticker:${String(args[1] ?? "")}]`;
+                return { method, chatId, text, textLength: caption ? caption.length : 0 };
             }
             case "onebot.sendFace":
             case "qq.sendFace":
@@ -527,6 +533,46 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
                     );
                 }
             }
+            // Determine if this call targets a specific chat and should be serialized.
+            const intent = getSendIntent(adapter.platform, method, args);
+            if (intent) {
+                const targetComposite = ensureCompositeId(
+                adapter.platform as PlatformName, 
+                String(intent.chatId)
+                );
+                const prev = chatSendQueues.get(targetComposite) ?? Promise.resolve();
+                const op = prev.then(async () => {
+                    // For better UX, send typing indicator before humanized delay for Telegram
+                    if (adapter.platform === "telegram" && method !== "telegram.sendTyping") {
+                        try {
+                            // Call adapter directly to avoid re-entering host-call-handler queue
+                            await adapter.handleCall("telegram.sendTyping", [String(intent.chatId)]);
+                        } catch {
+                            // ignore any error from sendTyping
+                        }
+                    }
+                    // apply delay + interruption logic per original behavior
+                    await applyInterruptibleHumanizedDelay(adapter, method, args);
+                    // perform the actual adapter call
+                    return adapter.handleCall(method, args);
+                });
+                // keep queue alive even if rejected, and cleanup map entry when finished
+                let stored: Promise<unknown>;
+                stored = op
+                    .catch(() => undefined)
+                    .then((r) => {
+                        try {
+                            if (chatSendQueues.get(targetComposite) === stored) {
+                                chatSendQueues.delete(targetComposite);
+                            }
+                        } catch { /* ignore */ }
+                        return r;
+                    });
+                chatSendQueues.set(targetComposite, stored);
+                return op;
+            }
+
+            // Fallback: no specific chat target, behave as before
             await applyInterruptibleHumanizedDelay(adapter, method, args);
             return adapter.handleCall(method, args);
         }
@@ -558,6 +604,9 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
         }
 
         if (method === "cron.add") {
+            // Subagents must not create scheduler events. Meta is the single scheduler manager.
+            log.warn("Subagent attempted forbidden state mutation", { method, chatId });
+            throw new Error("cron.add is not permitted from sandbox. Submit follow-up to Meta instead.");
             const [name, cronExpr, taskDescription] = args as [string, string, string];
             if (!validateCronMinInterval(cronExpr, 60)) {
                 throw new Error("cron 最短触发间隔为 1 小时");
@@ -571,7 +620,7 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             }
             const duplicate = existing.find((event) => event.taskTemplate === taskDescription);
             if (duplicate) {
-                throw new Error(`已存在完全相同的 cron 任务描述: ${duplicate.id}`);
+                throw new Error(`已存在完全相同的 cron 任务描述: ${duplicate!.id}`);
             }
             const event = globalState.addCron("__meta__", name, cronExpr, taskDescription, {
                 bindingId: chatId,
@@ -581,6 +630,8 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             return { id: event.id, items: listSchedulerItems() };
         }
         if (method === "cron.remove") {
+            log.warn("Subagent attempted forbidden state mutation", { method, chatId });
+            throw new Error("cron.remove is not permitted from sandbox. Submit follow-up to Meta instead.");
             const id = String(args[0]);
             globalState.cancelSchedulerEvent(id);
             return;
@@ -597,6 +648,9 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
         }
 
         if (method === "runtime.remind") {
+            // Prevent Subagent from creating reminders. Meta must own scheduling.
+            log.warn("Subagent attempted forbidden state mutation", { method, chatId });
+            throw new Error("runtime.remind is not permitted from sandbox. Submit follow-up to Meta instead.");
             const [description, delayMinutes] = args as [string, number];
             if (typeof delayMinutes !== "number" || delayMinutes < 1) {
                 throw new Error("remind 最短 1 分钟");
@@ -613,7 +667,7 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             }
             const duplicate = existingReminders.find((event) => event.description === description);
             if (duplicate) {
-                throw new Error(`已存在完全相同的提醒描述: ${duplicate.id}`);
+                throw new Error(`已存在完全相同的提醒描述: ${duplicate!.id}`);
             }
             const triggerAt = new Date(Date.now() + delayMinutes * 60000).toISOString();
             const event = globalState.addReminder("__meta__", description, triggerAt, undefined, {
@@ -733,12 +787,14 @@ export function createSandboxHostCallHandler(chatId: string, deps: CreateSandbox
             return memory.todoGet(chatId, String(args[0]));
         }
         if (method === "todo.upsert") {
-            const [key, content, options] = args as [string, string, { dueAt?: string | number | Date | null; forever?: boolean } | undefined];
-            return memory.todoUpsert(chatId, key, content, resolveTodoDueAt(options));
+            // Sandbox-origin todo writes are not permitted. Subagents must report follow-up to Meta.
+            // Host-call-handler only serves sandbox host calls; to preserve Meta/Dashboard write capability
+            // we reject sandbox write attempts here.
+            throw new Error("todo.upsert is not permitted from sandbox. Submit follow-up to Meta instead.");
         }
         if (method === "todo.remove") {
-            memory.todoRemove(chatId, String(args[0]));
-            return;
+            // Prevent sandbox from deleting todos. Deletions must be performed via Meta/Dashboard.
+            throw new Error("todo.remove is not permitted from sandbox. Use Meta or Dashboard to remove todos.");
         }
 
         if (method === "vision.see") {

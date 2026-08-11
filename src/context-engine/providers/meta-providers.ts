@@ -42,9 +42,20 @@ interface MetaTodoItem {
     expired?: boolean;
 }
 
+interface MetaPolicyItem {
+    key: string;
+    content: string;
+    enabled?: boolean;
+}
+
 interface MetaTodosData {
     todos: MetaTodoItem[];
     removedTodos?: MetaTodoItem[];
+}
+
+interface MetaPoliciesData {
+    policies: MetaPolicyItem[];
+    removedPolicies?: MetaPolicyItem[];
 }
 
 interface MetaCallbacksData {
@@ -67,7 +78,14 @@ interface MetaAttendMetaData {
     directAddressReason?: string;
     callbackPotential?: number;
     urgentSignals?: string[];
-    schedulerTriggers?: Array<{ id: string; type: "reminder" | "cron" | "wake_condition"; description: string; bindingId?: string; callback?: string; data?: unknown }>;
+    schedulerTriggers?: Array<{ id: string; type: "reminder" | "cron" | "wake_condition"; description: string; bindingId?: string; callback?: string; data?: unknown; triggerAt?: string }>;
+    wakeConditions?: Array<{ 
+        id: string; 
+        description: string;
+        bindingId?: string;
+        callback?: string;
+        data?: unknown;
+    }>;
 }
 
 interface MetaTopicDigestData {
@@ -103,6 +121,13 @@ function stableStringList(values?: string[]): string {
 
 function getTodoIdentity(todo: MetaTodoItem): string {
     return `${todo.bindingId}::${todo.key}`;
+}
+
+function getPolicyIdentity(policy: {
+    key: string;
+    bindingId?: string;
+}) {
+    return `${policy.bindingId ?? ""}::${policy.key}`;
 }
 
 function getTodoSignature(todo: MetaTodoItem): string {
@@ -188,6 +213,8 @@ function formatTodoLine(item: MetaTodoItem): string {
     return `- [${item.bindingId}] ${item.key}: ${item.content}${item.dueAt ? ` (dueAt=${formatTsForPrompt(item.dueAt)})` : ""}${item.expired ? " (expired)" : ""}`;
 }
 
+// 合并说明：upstream 新增 formatSessionDigestLine（供 metaHistoricalProvider.render/renderDelta 使用），
+// 本地 stashed 新增 formatPolicyLine（供 metaPoliciesProvider.render/renderDelta 使用）——两个函数用途不同，均保留。
 function formatSessionDigestLine(item: MetaHistoricalData["sessionDigests"][number]): string {
     const sourceParts = [
         item.actorType,
@@ -203,6 +230,10 @@ function formatSessionDigestLine(item: MetaHistoricalData["sessionDigests"][numb
     ].filter(Boolean);
     const refText = refs.length > 0 ? ` (${refs.join(", ")})` : "";
     return `- [${formatTsForPrompt(item.createdAt)}]${source}${refText} ${item.content}`;
+}
+
+function formatPolicyLine(policy: MetaPolicyItem): string {
+    return `- ${policy.key}: ${policy.content}`;
 }
 
 function formatRemovedTodoLine(item: MetaTodoItem): string {
@@ -477,6 +508,139 @@ export const metaTodosProvider: SectionProvider<MetaTodosData> = {
     },
 };
 
+export const metaPoliciesProvider: SectionProvider<MetaPoliciesData> = {
+    schema: {
+        name: "meta.policies",
+        label: "Meta Policy",
+        source: "memory.policy",
+        cache: "delta",
+        history: "delta-only",
+    },
+
+    resolve(ctx) {
+        if (!Object.prototype.hasOwnProperty.call(ctx, "policies")) {
+            return null;
+        }
+
+        const policies = Array.isArray(ctx.policies)
+            ? ctx.policies as MetaPoliciesData["policies"]
+            : [];
+
+        return { policies };
+    },
+    
+    diff(current, committed): DiffResult<MetaPoliciesData> {
+    if (!committed) {
+        return {
+            full: current,
+            delta: current,
+            stats: {
+                total: current.policies.length,
+                added: current.policies.length,
+                updated: 0,
+                removed: 0,
+                unchanged: 0,
+            },
+        };
+    }
+
+
+    const committedMap = new Map(
+        committed.policies.map((policy) => [
+            policy.key,
+            policy,
+        ])
+    );
+
+
+    const currentMap = new Map(
+        current.policies.map((policy) => [
+            policy.key,
+            policy,
+        ])
+    );
+
+
+    const addedPolicies = current.policies.filter(
+        (policy) =>
+            !committedMap.has(policy.key)
+    );
+
+
+    const updatedPolicies = current.policies.filter(
+        (policy) => {
+            const old =
+                committedMap.get(policy.key);
+
+            if (!old) return false;
+
+            return (
+                old.content !== policy.content ||
+                old.enabled !== policy.enabled
+            );
+        }
+    );
+
+
+    const removedPolicies =
+        committed.policies.filter(
+            (policy) =>
+                !currentMap.has(policy.key)
+        );
+
+
+    return {
+        full: current,
+
+        delta: {
+            policies: [
+                ...addedPolicies,
+                ...updatedPolicies,
+            ],
+            removedPolicies,
+        } as MetaPoliciesData,
+
+        stats: {
+            total: current.policies.length,
+            added: addedPolicies.length,
+            updated: updatedPolicies.length,
+            removed: removedPolicies.length,
+            unchanged:
+                current.policies.length -
+                addedPolicies.length -
+                updatedPolicies.length,
+        },
+    };
+},
+    render(data) {
+        return [
+            "# Agent Policy",
+            ...(data.policies.length > 0
+                ? data.policies
+                    .filter((policy) => policy.enabled)
+                    .map(formatPolicyLine)
+                : ["(无)"]),
+        ].join("\n");
+    },
+
+    renderDelta(delta) {
+        const changed = delta.policies ?? [];
+        const removed = delta.removedPolicies ?? [];
+
+        if (changed.length === 0 && removed.length === 0) {
+            return "";
+        }
+
+        return [
+            "# Agent Policy 增量",
+            ...changed.map(formatPolicyLine),
+            ...removed.map(
+                (policy) => `- removed: ${policy.key}`
+            ),
+        ].join("\n");
+    },
+};
+
 export const metaCallbacksProvider: SectionProvider<MetaCallbacksData> = {
     schema: {
         name: "meta.callbacks",
@@ -589,6 +753,10 @@ export const metaAttendMetaProvider: SectionProvider<MetaAttendMetaData> = {
             schedulerTriggers: Array.isArray(ctx.schedulerTriggers)
                 ? ctx.schedulerTriggers as MetaAttendMetaData["schedulerTriggers"]
                 : undefined,
+                
+            wakeConditions: Array.isArray(ctx.wakeConditions)
+				? ctx.wakeConditions as MetaAttendMetaData["wakeConditions"]
+				: undefined,
         };
     },
     render(data) {
@@ -614,12 +782,25 @@ export const metaAttendMetaProvider: SectionProvider<MetaAttendMetaData> = {
             lines.push("- schedulerTriggers:");
             for (const trigger of data.schedulerTriggers) {
                 const binding = trigger.bindingId ? ` bindingId=${trigger.bindingId}` : "";
-                lines.push(`  - ${trigger.type}:${trigger.id}${binding} ${trigger.callback ?? trigger.description}`);
+                const triggerTime = trigger.triggerAt ? ` [${formatTsForPrompt(trigger.triggerAt)}]` : "";
+                lines.push(`  - ${trigger.type}:${trigger.id}${binding}${triggerTime} ${trigger.callback ?? trigger.description}`);
                 if (trigger.data !== undefined) {
                     lines.push(`    data=${JSON.stringify(trigger.data)}`);
                 }
             }
         }
+        
+        
+                if (data.wakeConditions?.length) {
+            lines.push("- wakeConditions:");
+            for (const condition of data.wakeConditions) {
+                lines.push(
+                    `  - ${condition.id}: ${condition.description}`
+                );
+            }
+        }
+        
+        
         return lines.join("\n");
     },
 };
@@ -955,6 +1136,7 @@ export function getMetaProviders(): SectionProvider[] {
     return [
         metaHistoricalProvider,
         metaTodosProvider,
+        metaPoliciesProvider,
         metaCallbacksProvider,
         metaAttendHeaderProvider,
         metaAttendMetaProvider,

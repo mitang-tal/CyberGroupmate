@@ -190,6 +190,21 @@ function formatSentMessageText(
 
 /** 默认最大交互轮次 */
 const DEFAULT_MAX_TURNS = 30;
+/**
+ * 轮次硬上限：防止 runtime.extendSteps 被模型反复调用导致 session 无限延长
+ */
+const HARD_MAX_TURNS = 50;
+/**
+ * 重复思考检测阈值：连续 N 轮内容一致则强制终止
+ */
+const LOOP_DETECT_THRESHOLD = 3;
+
+/**
+ * 无进展检测阈值：连续 N 轮「无代码执行 + 无消息发送 + 无 <end_task>」，
+ * 判定模型陷入"光想不干、还改写措辞"的空转，强制终止。
+ * 比 byte-identical 的 LOOP_DETECT 更能抓住每轮文字略有不同的空转。
+ */
+const NO_PROGRESS_THRESHOLD = 3;
 
 /** 代码执行输出最大字符数 */
 const MAX_OUTPUT_CHARS = 32768;
@@ -461,6 +476,9 @@ export async function runCodeActSession(
     const sessionId = ulid();
     const turns: SessionTurn[] = [];
     let effectiveMaxTurns = maxTurns;
+    const recentTurnSigs: string[] = [];
+    // 无进展计数：连续"无代码+无消息+无<end_task>"的轮次
+    let noProgressTurns = 0;
     let effectiveExecuteTimeout = executeTimeout;
 
     messages = messages.map((message) => typeof message.content === "string"
@@ -649,6 +667,25 @@ export async function runCodeActSession(
 
         // ─── 解析 response ───
         const { thinking, codeBlocks } = parseResponse(assistantText);
+        // 有代码块 → 本轮有进展，重置无进展计数
+        if (codeBlocks.length > 0) noProgressTurns = 0;
+        const turnSig = JSON.stringify({ t: thinking, c: codeBlocks.map((b) => b.code) });
+        recentTurnSigs.push(turnSig);
+        if (recentTurnSigs.length > LOOP_DETECT_THRESHOLD) recentTurnSigs.shift();
+        if (
+            recentTurnSigs.length === LOOP_DETECT_THRESHOLD &&
+            recentTurnSigs.every((s) => s === turnSig)
+        ) {
+            log.warn(`Turn ${turnNum}: 检测到重复思考（连续 ${LOOP_DETECT_THRESHOLD} 轮），强制终止`);
+            emitProgress({ turn: turnNum, phase: "end", isProcessing: false, endReason: "max_turns" });
+            return {
+                sessionId,
+                turns,
+                messages,
+                endReason: "max_turns",
+                error: "loop detected: repeated thinking (identical content for consecutive turns)",
+            };
+        }
 
         const turn: SessionTurn = {
             turn: turnNum,
@@ -705,12 +742,33 @@ export async function runCodeActSession(
 
             let textOnlyObs = "[你没有执行任何动作，也未成功发送任何信息。如需结束请输出 <end_task>]";
 
+            let turnSentCount = 0;
             if (sentMessageCollector) {
                 const turnSent = sentMessageCollector.drainTurn();
+                turnSentCount = turnSent.length;
                 const turnDupWarnings = sentMessageCollector.drainDuplicateWarnings();
                 const sentConfirmation = sentMessageCollector.formatAsObservation(turnSent, turnDupWarnings);
                 if (sentConfirmation) {
                     textOnlyObs += `\n\n${sentConfirmation}`;
+                }
+            }
+
+            // ─── 无进展检测：本轮无代码、无 <end_task>；若也没发出消息 → 计入无进展 ───
+            // 抓"光想不干、每轮 digest 还改写措辞"的空转（byte-identical 的 LOOP_DETECT 抓不住这种）
+            if (turnSentCount > 0) {
+                noProgressTurns = 0;
+            } else {
+                noProgressTurns++;
+                if (noProgressTurns >= NO_PROGRESS_THRESHOLD) {
+                    log.warn(`Turn ${turnNum}: 无进展空转（连续 ${noProgressTurns} 轮无代码/无消息/无<end_task>），强制终止 session`, { sessionId, turn: turnNum });
+                    emitProgress({ turn: turnNum, phase: "end", isProcessing: false, endReason: "max_turns" });
+                    return {
+                        sessionId,
+                        turns,
+                        messages,
+                        endReason: "max_turns",
+                        error: "loop detected: no progress (no code, no message, no end_task for consecutive turns)",
+                    };
                 }
             }
 
@@ -755,6 +813,8 @@ export async function runCodeActSession(
 
         // ─── 执行代码块 ───
         const { codeBlocks: finalCodeBlocks } = turn;
+        // 发射 executing 进度事件：进入代码执行阶段（供 executor 据此控制 typing——只在执行代码时发 typing，纯思考/空转不发）
+        emitProgress({ turn: turnNum, phase: "executing", codeBlocks: finalCodeBlocks, isProcessing: true });
         const outputParts: string[] = [];
         let executionHadRuntimeError = false;
         const runtimeErrorCodeParts: string[] = [];
@@ -962,11 +1022,14 @@ export async function runCodeActSession(
         const control = sandbox.consumeExecutionControl();
         if (control.extendSteps > 0) {
             const oldMaxTurns = effectiveMaxTurns;
-            effectiveMaxTurns += control.extendSteps;
+            // 硬上限保护：无论模型调用多少次 extendSteps，effectiveMaxTurns 都不超过 HARD_MAX_TURNS
+            // （HARD_MAX_TURNS 之前声明了却没接上，等于死代码；这里真正生效）
+            effectiveMaxTurns = Math.min(effectiveMaxTurns + control.extendSteps, HARD_MAX_TURNS);
             log.info(`Turn ${turnNum}: runtime.extendSteps 生效`, {
                 extendedBy: control.extendSteps,
                 from: oldMaxTurns,
                 to: effectiveMaxTurns,
+                hardCap: HARD_MAX_TURNS,
             });
         }
         if (control.timeoutMs != null) {

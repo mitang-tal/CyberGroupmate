@@ -63,6 +63,17 @@ import type {
 
 const log = createLogger("memory-v2");
 
+/**
+ * todo_items.type 含义说明：
+ * - task: 需要执行的任务，可能带有 due_at，影响调度/提醒逻辑。
+ * - policy: 长期行为规则，描述 agent 在交互或执行时应遵守的约束或禁忌。
+ * - preference: 用户长期偏好，影响回复风格或推荐结果（例如偏好短消息）。
+ * - experience: 从历史事件中抽取的可迁移经验或总结（例如某种方法曾经成功）。
+ * - observation: 临时观察或上下文记录，不应该长期影响决策。
+ * - log: 纯记录/调试信息，可定期清理。
+ */
+const TODO_ALLOWED_TYPES = ["task", "policy", "preference", "experience", "observation", "log"] as const;
+
 // ─── JSON 工具函数 ───
 
 function toJSON(value: unknown): string {
@@ -332,6 +343,78 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         } catch (err) {
             log.warn("vec0 虚拟表创建失败", { error: String(err) });
             this.sqliteVecAvailable = false;
+        }
+
+        // 本地 stashed 的 todo_items type 迁移（一次性，kv_store 标记去重）：原冲突块被 git 匹配进 if (mismatch) 分支内部
+        // （疑似 diff 错位；放分支内意味着只有维度变更时才执行，与「一次性迁移」语义矛盾），已移出到 initVecTables 末尾。
+        // 注意：initVecTables 仅在 sqlite-vec 可用时被调用，因此迁移只在 sqlite-vec 可用时执行（与本地旧行为一致）；
+        // 如需无条件执行可移到 initTables（依赖的 todo_items/kv_store 表已由 initTables 先建好）。
+        try {
+            const migrationChat = "__migration__";
+            const migrationKey = "todo_type_v1";
+            const existing = this.db.prepare(`SELECT value FROM kv_store WHERE chat_id = ? AND key = ?`).get(migrationChat, migrationKey) as { value?: string } | undefined;
+            if (!existing || existing.value !== "1") {
+                const total = (this.db.prepare(`SELECT COUNT(1) AS c FROM todo_items`).get() as { c: number }).c || 0;
+
+                const setTask1 = this.db.prepare(`
+                    UPDATE todo_items
+                    SET type = 'task'
+                    WHERE (type IS NULL OR type = 'observation')
+                      AND (content LIKE '%\"type\"%dispatch_tracking%' OR content LIKE '%dispatch_tracking%')
+                `).run().changes || 0;
+
+                const setPreference = this.db.prepare(`
+                    UPDATE todo_items
+                    SET type = 'preference'
+                    WHERE (type IS NULL OR type = 'observation')
+                      AND (
+                        content LIKE '%喜欢%' OR content LIKE '%不喜欢%' OR content LIKE '%希望%'
+                        OR content LIKE '%偏好%' OR content LIKE '%习惯%' OR content LIKE '%以后推荐%'
+                      )
+                `).run().changes || 0;
+
+                const setPolicy = this.db.prepare(`
+                    UPDATE todo_items
+                    SET type = 'policy'
+                    WHERE (type IS NULL OR type = 'observation')
+                      AND (
+                        content LIKE '%应该%' OR content LIKE '%必须%' OR content LIKE '%规则%'
+                        OR content LIKE '%避免%' OR content LIKE '%不要%' OR content LIKE '%以后遇到%'
+                      )
+                `).run().changes || 0;
+
+                const setExperience = this.db.prepare(`
+                    UPDATE todo_items
+                    SET type = 'experience'
+                    WHERE (type IS NULL OR type = 'observation')
+                      AND (
+                        content LIKE '%已完成%' OR content LIKE '%总结%' OR content LIKE '%成功%'
+                        OR content LIKE '%经过%'
+                      )
+                `).run().changes || 0;
+
+                const remaining = (this.db.prepare(`SELECT COUNT(1) AS c FROM todo_items WHERE type IS NULL OR type = 'observation'`).get() as { c: number }).c || 0;
+
+                log.info("todo_items migration summary", {
+                    total,
+                    setTaskFromJson: setTask1,
+                    setPreference,
+                    setPolicy,
+                    setExperience,
+                    remaining_observation_or_null: remaining,
+                });
+
+                const nowIso = new Date().toISOString();
+                this.db.prepare(`
+                    INSERT INTO kv_store (chat_id, key, value, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(chat_id, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                `).run(migrationChat, migrationKey, "1", nowIso, nowIso);
+            } else {
+                log.info("todo_items migration skipped: already applied");
+            }
+        } catch (err) {
+            log.warn("todo_items migration classification failed", { err });
         }
     }
 
@@ -612,6 +695,7 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         try { this.db.exec(`CREATE INDEX IF NOT EXISTS idx_facts_source_chat ON core_facts(source_chat_id)`); } catch { /* index */ }
         try { this.db.exec(`ALTER TABLE topics ADD COLUMN associated_memories TEXT DEFAULT '[]'`); } catch { /* 列已存在 */ }
         try { this.db.exec(`ALTER TABLE topics ADD COLUMN callback_potential INTEGER DEFAULT 0`); } catch { /* 列已存在 */ }
+        // (todo_items table created later in kv_store block)
 
         // ── KV Store 表 ──
         this.db.exec(`
@@ -626,19 +710,35 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             );
             CREATE INDEX IF NOT EXISTS idx_kv_expires ON kv_store(expires_at);
 
-            -- per-chat todo
+            -- per-chat todo (现在包含 type 与 archived_at，用于区分长期/短期/日志等)
             CREATE TABLE IF NOT EXISTS todo_items (
                 chat_id TEXT NOT NULL,
                 key TEXT NOT NULL,
+                type TEXT NOT NULL DEFAULT 'observation',
                 content TEXT NOT NULL,
                 due_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
+                archived_at TEXT,
                 PRIMARY KEY (chat_id, key)
             );
             CREATE INDEX IF NOT EXISTS idx_todo_chat_due ON todo_items(chat_id, due_at);
-        `);
+        
+			CREATE TABLE IF NOT EXISTS policy_items (
+				chat_id TEXT NOT NULL,
+				key TEXT NOT NULL,
+				content TEXT NOT NULL,
+				enabled INTEGER NOT NULL DEFAULT 1,
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL,
+				archived_at TEXT,
+				PRIMARY KEY (chat_id, key)
+			);
 
+		   CREATE INDEX IF NOT EXISTS idx_policy_chat_enabled 
+		   ON policy_items(chat_id, enabled);
+		   `);
+		   
         // 回填 person_identities.total_message_count（历史数据从 person_group_profiles 汇总）
         this.db.exec(`
             UPDATE person_identities
@@ -3587,9 +3687,10 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         return parsed.toISOString();
     }
 
-    todoList(chatId: string, options?: { includeExpired?: boolean }): Array<{
+    todoList(chatId: string, options?: { includeExpired?: boolean; includeArchived?: boolean }): Array<{
         key: string;
         content: string;
+        type?: string;
         dueAt: string | null;
         createdAt: string;
         updatedAt: string;
@@ -3597,25 +3698,29 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
     }> {
         const nowIso = new Date().toISOString();
         const rows = this.db.prepare(`
-            SELECT key, content, due_at, created_at, updated_at
+            SELECT key, type, content, due_at, created_at, updated_at, archived_at
             FROM todo_items
             WHERE chat_id = ?
+              AND (archived_at IS NULL OR ?)
             ORDER BY
                 CASE WHEN due_at IS NULL THEN 1 ELSE 0 END ASC,
                 due_at ASC,
                 updated_at DESC
-        `).all(chatId) as Array<{
+        `).all(chatId, options?.includeArchived ? 1 : 0) as Array<{
             key: string;
+            type: string | null;
             content: string;
             due_at: string | null;
             created_at: string;
             updated_at: string;
+            archived_at: string | null;
         }>;
 
         return rows
             .map((row) => ({
                 key: row.key,
                 content: row.content,
+                type: row.type ?? undefined,
                 dueAt: row.due_at,
                 createdAt: row.created_at,
                 updatedAt: row.updated_at,
@@ -3623,31 +3728,60 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
             }))
             .filter((row) => options?.includeExpired ? true : !row.expired);
     }
+    
+    policyList(chatId: string): Array<{ key: string; content: string; enabled: boolean; createdAt: string; updatedAt: string }> {
+    
+        const rows = this.db.prepare(`
+            SELECT key, content, enabled, created_at, updated_at
+            FROM policy_items
+            WHERE chat_id = ?
+              AND archived_at IS NULL
+            ORDER BY updated_at DESC
+        `).all(chatId) as Array<{
+            key: string;
+            content: string;
+            enabled: number;
+            created_at: string;
+            updated_at: string;
+        }>;
+
+        return rows.map((row) => ({
+            key: row.key,
+            content: row.content,
+            enabled: row.enabled !== 0,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+        }));
+    }
 
     todoGet(chatId: string, key: string): {
         key: string;
         content: string;
+        type?: string;
         dueAt: string | null;
         createdAt: string;
         updatedAt: string;
         expired: boolean;
     } | null {
         const row = this.db.prepare(`
-            SELECT key, content, due_at, created_at, updated_at
+            SELECT key, type, content, due_at, created_at, updated_at, archived_at
             FROM todo_items
             WHERE chat_id = ? AND key = ?
         `).get(chatId, key) as {
             key: string;
+            type: string | null;
             content: string;
             due_at: string | null;
             created_at: string;
             updated_at: string;
+            archived_at: string | null;
         } | undefined;
         if (!row) return null;
         const nowIso = new Date().toISOString();
         return {
             key: row.key,
             content: row.content,
+            type: row.type ?? undefined,
             dueAt: row.due_at,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
@@ -3655,29 +3789,111 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         };
     }
 
-    todoUpsert(chatId: string, key: string, content: string, dueAt?: string | null): {
+    policyGet(chatId: string, key: string): {
         key: string;
         content: string;
+        enabled: boolean;
+        createdAt: string;
+        updatedAt: string;
+    } | null {
+        const row = this.db.prepare(`
+            SELECT key, content, enabled, created_at, updated_at, archived_at
+            FROM policy_items
+			WHERE chat_id = ?
+			  AND key = ?
+			  AND archived_at IS NULL
+		`).get(chatId, key) as {
+            key: string;
+            content: string;
+            enabled: number;
+            created_at: string;
+            updated_at: string;
+            archived_at: string | null;
+        } | undefined;
+
+        if (!row) return null;
+
+        return {
+            key: row.key,
+            content: row.content,
+            enabled: row.enabled !== 0,
+            createdAt: row.created_at,
+            updatedAt: row.updated_at,
+        };
+    }
+
+    todoUpsert(chatId: string, key: string, type: string, content: string, dueAt?: string | null): {
+        key: string;
+        content: string;
+        type?: string;
         dueAt: string | null;
         createdAt: string;
         updatedAt: string;
         expired: boolean;
     } {
+        if (!type || typeof type !== "string") {
+            throw new Error("todoUpsert: missing required 'type' for todo item");
+        }
+        const allowed = ["task", "policy", "preference", "experience", "observation", "log"];
+        if (!allowed.includes(type)) {
+            throw new Error(`todoUpsert: invalid type '${type}', allowed=${allowed.join(",")}`);
+        }
+
         const normalizedDueAt = this.normalizeTodoDueAt(dueAt);
         const nowIso = new Date().toISOString();
         this.db.prepare(`
-            INSERT INTO todo_items (chat_id, key, content, due_at, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO todo_items (chat_id, key, type, content, due_at, created_at, updated_at, archived_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
             ON CONFLICT(chat_id, key) DO UPDATE SET
+                type = excluded.type,
                 content = excluded.content,
                 due_at = excluded.due_at,
                 updated_at = excluded.updated_at
-        `).run(chatId, key, content, normalizedDueAt, nowIso, nowIso);
+        `).run(chatId, key, type, content, normalizedDueAt, nowIso, nowIso);
         return this.todoGet(chatId, key)!;
     }
+    
+    policyUpsert(chatId: string, key: string, content: string, enabled = true): {
+    key: string;
+    content: string;
+    enabled: boolean;
+    createdAt: string;
+    updatedAt: string;
+} {
+    const nowIso = new Date().toISOString();
+
+    this.db.prepare(`
+        INSERT INTO policy_items (
+            chat_id,
+            key,
+            content,
+            enabled,
+            created_at,
+            updated_at,
+            archived_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, NULL)
+        ON CONFLICT(chat_id, key) DO UPDATE SET
+            content = excluded.content,
+            enabled = excluded.enabled,
+            updated_at = excluded.updated_at,
+            archived_at = NULL
+    `).run(
+        chatId,
+        key,
+        content,
+        enabled ? 1 : 0,
+        nowIso,
+        nowIso
+    );
+
+    return this.policyGet(chatId, key)!;
+}
 
     todoRemove(chatId: string, key: string): void {
-        this.db.prepare("DELETE FROM todo_items WHERE chat_id = ? AND key = ?").run(chatId, key);
+        // 不直接删除，默认归档以便后续分析和审计
+        const nowIso = new Date().toISOString();
+        this.db.prepare("UPDATE todo_items SET archived_at = ? WHERE chat_id = ? AND key = ?").run(nowIso, chatId, key);
     }
 
     // ─── 生命周期 ───
@@ -3686,6 +3902,34 @@ export class MemoryStoreV2 implements IMemoryStoreV2 {
         this.db.close();
         log.info("Memory V2 SQLite 已关闭");
     }
+
+    /** 清理 type='log' 的 todo 项，按创建时间早于 retentionDays 的记录会被删除，返回删除条目数 */
+    cleanupTodoLogs(retentionDays = 30): number {
+        try {
+            const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
+            const info = this.db.prepare("DELETE FROM todo_items WHERE type = 'log' AND created_at <= ?").run(cutoff);
+            log.info("cleanupTodoLogs removed", { retentionDays, changes: info.changes });
+            return info.changes as number;
+        } catch (err) {
+            log.warn("cleanupTodoLogs failed", { err });
+            return 0;
+        }
+    }
+    
+    policyRemove(chatId: string, key: string): void {
+    const nowIso = new Date().toISOString();
+
+    this.db.prepare(`
+        UPDATE policy_items
+        SET archived_at = ?
+        WHERE chat_id = ?
+          AND key = ?
+    `).run(
+        nowIso,
+        chatId,
+        key
+    );
+}
 
     // ─── 内部工具方法 ───
 

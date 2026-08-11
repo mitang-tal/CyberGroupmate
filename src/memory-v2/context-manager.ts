@@ -191,7 +191,8 @@ export function estimateMessagesTokens(messages: ChatMessage[]): number {
 // ─── Compaction 判断 ───
 
 /** 触发 compaction / 强制裁剪的窗口占用比例 */
-export const COMPACT_TRIGGER_RATIO = 0.85;
+// Miu review 决定：统一为 0.65（本地调低阈值，压缩更激进、token 占用更低），shouldCompact 与 forceTrim 共用。
+export const COMPACT_TRIGGER_RATIO = 0.65;
 
 /**
  * 根据 LLMConfig 计算有效上下文窗口。
@@ -220,7 +221,7 @@ function resolveEffectiveBudget(
 /**
  * 判断是否需要触发 compaction
  *
- * 触发条件：总 token 超过有效上下文窗口的 85%
+ * 触发条件：总 token 超过有效上下文窗口的 65%
  * 当传入 llmConfig 且其 maxContextTokens 已设置时，使用该值替代 budget 中的默认值。
  */
 export function shouldCompact(
@@ -234,6 +235,7 @@ export function shouldCompact(
 
     const effectiveWindow = resolveEffectiveWindow(effectiveBudget, llmConfig);
     const totalTokens = estimateMessagesTokens(messages);
+    // Miu review 决定：统一使用 COMPACT_TRIGGER_RATIO（已调为 0.65），与 forceTrim 保持一致。
     const threshold = effectiveWindow * COMPACT_TRIGGER_RATIO;
 
     log.debug("shouldCompact 检查", {

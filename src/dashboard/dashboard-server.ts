@@ -105,6 +105,7 @@ export class DashboardServer {
     }
 
     stop(): void {
+        this.bridge.dispose();
         this.wss.close();
         this.server.close();
     }

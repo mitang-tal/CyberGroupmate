@@ -14,7 +14,7 @@ let _globalTimezone: string | undefined;
  * @param tz - IANA 时区标识符，例如 "Asia/Shanghai"
  */
 export function setGlobalTimezone(tz: string | undefined): void {
-    _globalTimezone = tz;
+    _globalTimezone = tz ?? "Asia/Shanghai";
     if (tz) {
         process.env.TZ = tz;
     }

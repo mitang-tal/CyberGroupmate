@@ -221,6 +221,38 @@ export class MainAgentLoop {
                     });
                     this.enqueueDispatchSourceNotification(dispatchedTask, cb);
                 }
+
+                // 若存在与此回调对应的正在运行的 reminder（executionStatus=RUNNING），将其标记为 COMPLETED
+                try {
+                    const runningReminders = this.globalState.getSchedulerEvents().filter(e => e.type === "reminder" && e.executionStatus === "RUNNING");
+                    if (runningReminders.length > 0) {
+                        const nowMs = Date.now();
+                        // 优先匹配同 chatId 且最近标记为 RUNNING 的 reminder
+                        let candidate = runningReminders.find(r => r.chatId === cb.chatId);
+                        if (!candidate) {
+                            // 若未按 chatId 匹配，选择最近被标记为 RUNNING 的一个（防止误伤）
+                            candidate = runningReminders.sort((a, b) => {
+                                const ta = a.lastExecutionAt ? Date.parse(a.lastExecutionAt) : 0;
+                                const tb = b.lastExecutionAt ? Date.parse(b.lastExecutionAt) : 0;
+                                return tb - ta;
+                            })[0];
+                        }
+                        if (candidate && candidate.lastExecutionAt) {
+                            const ageMs = nowMs - Date.parse(candidate.lastExecutionAt);
+                            // 仅在最近 30 分钟内标记为 RUNNING 的 reminder 才考虑为当前回调的匹配项
+                            if (ageMs >= 0 && ageMs <= 30 * 60 * 1000) {
+                                const sentId = cb.sentMessages && cb.sentMessages.length > 0 ? cb.sentMessages[0].messageId : undefined;
+                                this.globalState.updateSchedulerEvent(candidate.id, {
+                                    executionStatus: "COMPLETED",
+                                    lastSentMessageId: sentId,
+                                });
+                                log.info("Scheduler reminder marked COMPLETED from callback", { reminderId: candidate.id, taskId: cb.taskId, sentMessageId: sentId });
+                            }
+                        }
+                    }
+                } catch (err) {
+                    log.warn("Failed to mark running reminder COMPLETED", { error: String(err), taskId: cb.taskId });
+                }
             }
 
             const isSubagentOriginDispatchCallback =
@@ -611,13 +643,25 @@ export class MainAgentLoop {
                 }
                 break;
             case "SCHEDULER":
-            case "WAKE_CONDITION":
             case "PROACTIVE_IDLE":
                 entry = subagent
                     ? subagent.buildQueueEntry("SCHEDULER_TRIGGER")
                     : createSyntheticMetaEntry(item);
-                entry.schedulerTriggers = item.source === "PROACTIVE_IDLE" ? [] : extractSchedulerTriggers(item.payload);
+                    
+                    
+                entry.schedulerTriggers = item.source === "PROACTIVE_IDLE" 
+                ? [] 
+                : extractSchedulerTriggers(item.payload);
                 break;
+            
+            case "WAKE_CONDITION":
+                entry = subagent
+					? subagent.buildQueueEntry("SCHEDULER_TRIGGER")
+					: createSyntheticMetaEntry(item);
+					
+				entry.wakeConditions = extractWakeConditions(item.payload);
+				break;	
+				
             case "BACKGROUND_AGENT":
                 entry = createSyntheticMetaEntry(item);
                 entry.schedulerTriggers = extractBackgroundAgentTriggers(item.payload);
@@ -758,7 +802,11 @@ function extractSchedulerTriggers(payload: unknown): NonNullable<AttentionQueueE
 
     if ("type" in payload && "id" in payload && "description" in payload) {
         const type = payload.type;
-        if ((type === "reminder" || type === "cron" || type === "wake_condition") && typeof payload.id === "string" && typeof payload.description === "string") {
+if (
+    (type === "reminder" || type === "cron") &&
+    typeof payload.id === "string" &&
+    typeof payload.description === "string"
+) {
             const record = payload as {
                 id: string;
                 type: "reminder" | "cron" | "wake_condition";
@@ -766,6 +814,7 @@ function extractSchedulerTriggers(payload: unknown): NonNullable<AttentionQueueE
                 bindingId?: unknown;
                 callback?: unknown;
                 data?: unknown;
+                triggerAt?: unknown;
             };
             const trigger: NonNullable<AttentionQueueEntry["schedulerTriggers"]>[number] = {
                 id: record.id,
@@ -781,7 +830,53 @@ function extractSchedulerTriggers(payload: unknown): NonNullable<AttentionQueueE
             if (record.data !== undefined) {
                 trigger.data = record.data;
             }
+            if (typeof record.triggerAt === "string") {
+                trigger.triggerAt = record.triggerAt;
+            }
             return [trigger];
+        }
+    }
+
+    return [];
+}
+
+function extractWakeConditions(payload: unknown): NonNullable<AttentionQueueEntry["wakeConditions"]> {
+    if (!payload || typeof payload !== "object") {
+        return [];
+    }
+
+    if ("type" in payload && "id" in payload && "description" in payload) {
+        if (
+            payload.type === "wake_condition" &&
+            typeof payload.id === "string" &&
+            typeof payload.description === "string"
+        ) {
+            const record = payload as {
+                id: string;
+                description: string;
+                bindingId?: unknown;
+                callback?: unknown;
+                data?: unknown;
+            };
+
+            const condition: NonNullable<AttentionQueueEntry["wakeConditions"]>[number] = {
+                id: record.id,
+                description: record.description,
+            };
+
+            if (typeof record.bindingId === "string") {
+                condition.bindingId = record.bindingId;
+            }
+
+            if (typeof record.callback === "string") {
+                condition.callback = record.callback;
+            }
+
+            if (record.data !== undefined) {
+                condition.data = record.data;
+            }
+
+            return [condition];
         }
     }
 

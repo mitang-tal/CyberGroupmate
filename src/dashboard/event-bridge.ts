@@ -178,8 +178,12 @@ export class EventBridge {
     private maxRecent = 200;
     /** LLM 日志专用缓冲（10000 条） */
     readonly llmLogBuffer = new LLMLogBuffer(10000);
+    // 合并说明：upstream 的 lastAdapterFingerprint（供 hookAdapterConnectionPolling 去重广播）
+    // 与本地 stashed 的 subagentScanTimer（供 hookRecordingPipelineEvents/dispose 使用）是两个不同字段，均保留。
     /** 上一次广播的 adapter 状态指纹（去重，避免每秒刷屏） */
     private lastAdapterFingerprint = "";
+    /** 定期扫描新 subagent 的定时器句柄（dispose 时清理，避免泄漏 + 阻止进程退出） */
+    private subagentScanTimer: ReturnType<typeof setInterval> | null = null;
 
     constructor(deps: DashboardDeps) {
         this.deps = deps;
@@ -426,11 +430,21 @@ export class EventBridge {
         }
 
         // 定期检查新加入的 subagent
-        setInterval(() => {
+        this.subagentScanTimer = setInterval(() => {
             for (const sub of this.deps.subagentManager.getAllSubagents()) {
                 hookSubagent(sub);
             }
         }, 10000);
+        // unref：不让这个定时器阻止进程优雅退出
+        this.subagentScanTimer.unref();
+    }
+
+    /** 清理定时器等资源（进程退出前调用） */
+    dispose(): void {
+        if (this.subagentScanTimer) {
+            clearInterval(this.subagentScanTimer);
+            this.subagentScanTimer = null;
+        }
     }
 
     /** 发送当前系统全状态快照 */

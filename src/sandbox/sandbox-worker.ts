@@ -597,8 +597,14 @@ async function executeCode(id: string, code: string, scopeId?: string): Promise<
         // 构造参数列表：固定参数 + 平台 API + 动态 Skill 参数
         // ctx 保留为纯用户 state bag（LLM 可跨 turn 存取任意属性）
         const sh = installShell();
+        // 合并说明：upstream 新增 privacy/emergency 参数 + 本地 stashed 把 todo 改为只读包装（仅暴露 get/list），两者兼容。
         const fixedArgNames = ["ctx", "runtime", "scene", "skills", "fs", "mcp", "cron", "todo", "vision", "memory", "privacy", "emergency", "dispatch", "shell", "telegram", "discord", "onebot", "qq"];
-        const fixedArgValues = [ctx, rt, scene, sk, filesystem, mcpBridge, tracker.wrap(cronModule as unknown as Record<string, unknown>), tracker.wrap(todoModule as unknown as Record<string, unknown>), tracker.wrap(visionModule as unknown as Record<string, unknown>), tracker.wrap(memoryModule as unknown as Record<string, unknown>), tracker.wrap(privacyModule as unknown as Record<string, unknown>), tracker.wrap(emergencyModule as unknown as Record<string, unknown>), tracker.wrap(dispatchModule as unknown as Record<string, unknown>), sh, tg, dc, ob, ob];
+        // Provide a read-only wrapper for todo to subagent sandboxes: only get/list are exposed.
+        const todoReadOnly = {
+            get: todoModule.get,
+            list: todoModule.list,
+        } as const;
+        const fixedArgValues = [ctx, rt, scene, sk, filesystem, mcpBridge, tracker.wrap(cronModule as unknown as Record<string, unknown>), tracker.wrap(todoReadOnly as unknown as Record<string, unknown>), tracker.wrap(visionModule as unknown as Record<string, unknown>), tracker.wrap(memoryModule as unknown as Record<string, unknown>), tracker.wrap(privacyModule as unknown as Record<string, unknown>), tracker.wrap(emergencyModule as unknown as Record<string, unknown>), tracker.wrap(dispatchModule as unknown as Record<string, unknown>), sh, tg, dc, ob, ob];
         const allArgNames = [...fixedArgNames, ...skillArgNames];
         const allArgValues = [...fixedArgValues, ...skillArgValues];
 
@@ -821,4 +827,10 @@ async function initWorker(): Promise<void> {
     });
 }
 
-initWorker();
+// 裸调用 async initWorker 会丢失 rejection；若 init 中途抛错，ready 信号不发 → host 卡满超时。
+// 改为捕获并退出，让 host 立即感知 worker 死亡而非等超时。
+void initWorker().catch((err: unknown) => {
+    const msg = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    process.stderr.write(`[sandbox-worker] initWorker 失败: ${msg}\n`);
+    process.exit(1);
+});

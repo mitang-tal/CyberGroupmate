@@ -120,6 +120,9 @@ export class GlobalState {
             data: options?.data,
             triggerAt,
             requestedBy,
+            // 默认 dedupKey 未设置；executionStatus 初始为 PENDING
+            dedupKey: options && (options as any).dedupKey ? (options as any).dedupKey : undefined,
+            executionStatus: "PENDING",
             createdAt: new Date().toISOString(),
             triggered: false,
         };

@@ -990,17 +990,34 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             const api = createTodoApi(deps.memory);
             const hasDueAt = Object.prototype.hasOwnProperty.call(body, "dueAt");
             const dueAt = hasDueAt ? body.dueAt : undefined;
-            const todoPatch: { bindingId: string; key: string; content: string; dueAt?: string | number | Date | null; forever?: boolean } = {
+            const todoPatch: { 
+              bindingId: string; 
+              key: string;
+              type?: string; 
+              content: string; 
+              dueAt?: string | number | Date | null; 
+              forever?: boolean 
+            } = {
                 bindingId,
                 key,
                 content,
             };
+            if (Object.prototype.hasOwnProperty.call(body, "type")) {
+				todoPatch.type = body.type;
+			}
             if (hasDueAt) todoPatch.dueAt = dueAt;
             if (Object.prototype.hasOwnProperty.call(body, "forever")) todoPatch.forever = body.forever === true;
 
             const item = oldKey
                 ? await api.update(oldKey, todoPatch, oldBindingId)
-                : await api.set({ bindingId, key, content, dueAt, forever: body.forever === true });
+                : await api.set({ 
+                    bindingId, 
+                    key, 
+                    type:body.type,
+                    content, 
+                    dueAt, 
+                    forever: body.forever === true 
+                  });
             if (!item) {
                 res.status(404).json({ error: "todo not found" });
                 return;
@@ -1064,6 +1081,21 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
     });
 
     // ─── Memory: Message Log CRUD ───
+    router.get("/memory/chats", (_req, res) => {
+    try {
+        const db = (deps.memory as any).db;
+        const rows = db.prepare(`
+            SELECT DISTINCT m.chat_id, COALESCE(g.chat_title, '') as chat_title
+            FROM message_log m
+            LEFT JOIN group_models g ON m.chat_id = g.chat_id
+            ORDER BY chat_title, m.chat_id
+        `).all();
+        res.json({ items: rows });
+    } catch (err) {
+        res.status(500).json({ error: String(err) });
+    }
+});
+
     router.get("/memory/messages", (req, res) => {
         try {
             const chatId = qs(req.query.chatId) || undefined;
@@ -2104,9 +2136,10 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
     });
 
     router.post("/restart", (_req, res) => {
-        log.info("收到重启请求，进程将在 1 秒后退出");
-        res.json({ ok: true, message: "进程将在 1 秒后退出，请确保有进程管理器（pm2/systemd）自动重启" });
-        setTimeout(() => process.exit(0), 1000);
+        log.info("收到重启请求，进程将在 1 秒后优雅退出");
+        res.json({ ok: true, message: "进程将在 1 秒后优雅退出，请确保有进程管理器（pm2/systemd）自动重启" });
+        // 触发 graceful shutdown（与 SIGINT/SIGTERM 同路径），避免直接 process.exit 跳过 DB flush / recording pipeline / sandbox 清理
+        setTimeout(() => process.kill(process.pid, "SIGTERM"), 1000);
     });
 
     // ─── MCP Server 管理 ───

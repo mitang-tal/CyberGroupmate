@@ -20,7 +20,8 @@ import type {
 import type { FactSearchResult, InteractionSearchResult, MemoryStoreV2, RecentMessageEntry } from "../memory-v2/index.js";
 import { SandboxPool } from "../sandbox/sandbox-pool.js";
 import { NotificationCenter } from "../event/notification-center.js";
-import { runCodeActSession, SentMessageCollector, type SessionResult, type SentMessageRecord } from "../sandbox/session-runner.js";
+// 合并说明：upstream 新增 gatePrivacyMarkSensitive + 本地 stashed 新增 codeActEvents，均被文件内使用，两个 import 取并集。
+import { runCodeActSession, SentMessageCollector, codeActEvents, type SessionResult, type SentMessageRecord } from "../sandbox/session-runner.js";
 import { loadModuleRegistry, lookupFullDocs, generateBriefOverview, gatePrivacyMarkSensitive, mergeModuleRegistries, type ModuleEntry } from "../sandbox/modules/module-registry.js";
 import { getMcpModuleEntries } from "../sandbox/modules/mcp-bridge/index.js";
 import { parseAllSkillDocs } from "../sandbox/skill-loader.js";
@@ -265,9 +266,10 @@ export function loadApiTypeDefs(platform: string = "telegram", allowedModules?: 
                     }
                 }
 
-                // 按平台过滤模块 + 按 allowMarkSensitive 剔除 privacy.markSensitive
+                // 合并说明：upstream 的 gatePrivacyMarkSensitive（按 allowMarkSensitive 剔除 privacy.markSensitive）
+                // 与本地 stashed 的 meta-only 过滤（Subagent 不应看到 access === 'meta-only' 的模块）是两个不同过滤维度，叠加保留。
                 const filteredRegistry = gatePrivacyMarkSensitive(
-                    registry.filter(mod => !excludedModules.has(mod.name)),
+                    registry.filter(mod => !excludedModules.has(mod.name) && mod.access !== "meta-only"),
                     allowMarkSensitive,
                 );
 
@@ -350,7 +352,7 @@ export interface CodeActExecutorConfig {
 
 const DEFAULT_EXECUTOR_CONFIG: CodeActExecutorConfig = {
     maxExecutionTimeMs: 60_000,
-    maxSessionMessages: 100,
+    maxSessionMessages: 40,
     maxTurns: 30,
 };
 
@@ -568,12 +570,14 @@ export class CodeActExecutor {
 
     private buildSessionHistoryMessages(isContinuation: boolean): ChatMessage[] {
         const latestTaskPromptIndex = isContinuation ? findLatestExecutorTaskPromptIndex(this.session) : -1;
-        return this.session.map((msg, index) => ({
-            role: msg.role,
-            content: sanitizePromptTimestamps(
-                msg.role === "user" && isExecutorTaskPrompt(msg.content) && index !== latestTaskPromptIndex
-                    ? collapseExecutorTaskPrompt(msg.content)
-                    : msg.content,
+        return this.session
+             .filter(msg => msg.role === "user" || msg.role === "assistant")
+             .map((msg, index) => ({
+                 role: msg.role,
+                 content: sanitizePromptTimestamps(
+                     msg.role === "user" && isExecutorTaskPrompt(msg.content) && index !== latestTaskPromptIndex
+                         ? collapseExecutorTaskPrompt(msg.content)
+                         : msg.content,
             ),
             ...(index === this.session.length - 1 ? { cacheBreakpoint: true } : {}),
         }));
@@ -767,7 +771,9 @@ export class CodeActExecutor {
             platform,
             ...(task.useSkills ?? []),
         ]);
-        const todoItems = this.memory ? this.memory.todoList(this.chatId) : [];
+        const todoItemsAll = this.memory ? this.memory.todoList(this.chatId) : [];
+        // 子 agent 执行上下文只关心待办任务（task）
+        const todoItems = todoItemsAll.filter(t => (t.type ?? "") === "task");
         const systemVars = {
             personaName: this.personaName,
             personaDescription: this.personaDescription,
@@ -927,17 +933,31 @@ export class CodeActExecutor {
         };
         sandbox.on("notify", notifyListener);
 
-        // ═══ Typing 状态指示 ═══
-        // Telegram typing 状态约 5 秒后过期，用 4 秒间隔保持活跃
+        // ═══ Typing 状态指示（只在执行代码时发，纯思考/空转不发）═══
+        // 订阅 session-runner 进度事件：executing（跑代码，如 fetch/查东西）→ 开 typing 间隔；
+        // observation/end（代码跑完 / session 结束）→ 关 typing。
+        // 这样"查东西"时显示"正在输入"作为处理信号，纯思考/卡顿空转时不显示。
         let typingTimer: ReturnType<typeof setInterval> | null = null;
-        if (this.sendTypingFn) {
+        const stopTyping = () => {
+            if (typingTimer) { clearInterval(typingTimer); typingTimer = null; }
+        };
+        const startTyping = () => {
+            if (!this.sendTypingFn || typingTimer) return;
             const doTyping = () => {
                 this.sendTypingFn!(this.chatId).catch(err => {
                     log.debug("sendTyping failed", { chatId: this.chatId, error: String(err) });
                 });
             };
-            doTyping(); // 立即发送一次
+            doTyping();
             typingTimer = setInterval(doTyping, 4000);
+        };
+        const progressListener = (ev: { chatId: string; phase: string }) => {
+            if (ev.chatId !== this.chatId) return;
+            if (ev.phase === "executing") startTyping();
+            else if (ev.phase === "observation" || ev.phase === "end") stopTyping();
+        };
+        if (this.sendTypingFn) {
+            codeActEvents.on("codeact:progress", progressListener);
         }
 
         log.info("executeWithSandbox: 开始 CodeAct session", {
@@ -970,18 +990,22 @@ export class CodeActExecutor {
                 (() => {
                     const registry = getModuleRegistryCache();
                     if (registry.length === 0) return undefined;
+                    // 对于 Subagent 的运行时文档注入，也应屏蔽 meta-only 模块，
+                    // 以保证注入文档与实际注入的 runtime bindings 保持一致。
+                    const filtered = registry.filter(m => m.access !== "meta-only");
                     return {
-                        getPrefixMap: () => buildPrefixMap(getModuleRegistryCache()),
+                        getPrefixMap: () => buildPrefixMap(filtered),
                         lookupDocs: (calledMethods: string[]) =>
-                            lookupFullDocs(getModuleRegistryCache(), calledMethods),
+                            lookupFullDocs(filtered, calledMethods),
                     };
                 })(),
                 renderResult?.manifest,
             );
         } finally {
             unregisterPendingSignal();
-            // 停止 typing 指示
-            if (typingTimer) clearInterval(typingTimer);
+            // 停止 typing 指示 + 移除进度事件监听
+            stopTyping();
+            codeActEvents.off("codeact:progress", progressListener);
             // 清理监听器，释放 sandbox
             sandbox.removeListener("notify", notifyListener);
             this.sandboxPool!.release(this.chatId);
@@ -992,16 +1016,37 @@ export class CodeActExecutor {
         // ═══ Fix 2: 保存本次 session 的完整对话到 this.session ═══
         // 跳过 system prompt（this.session 不需要重复存系统 prompt）
         // 跳过已有的历史消息（只保存新产生的对话）
-        const historyOffset = 1 + this.session.length; // 1 for system prompt + existing history
-        const newMessages = sessionResult.messages.slice(historyOffset);
+        
+         
+        const newMessages = sessionResult.messages.slice(messages.length);
+        
         for (const msg of newMessages) {
+            if (
+        msg.role !== "user" &&
+        msg.role !== "assistant"
+    ) {
+        continue;
+    }
+
+
+		    if (
+			typeof msg.content === "string" &&
+		   (
+            msg.content.includes("[Execution Output]") ||
+            msg.content.includes("[Observation]") ||
+            msg.content.includes("[Runtime") ||
+            msg.content.includes("[SESSION_HISTORY_COMPACT]")
+		   )
+    ) {
+           continue;
+    }
             this.session.push({
-                role: msg.role as "system" | "user" | "assistant",
+                role: msg.role as "user" | "assistant",
                 content: sanitizePromptTimestamps(msg.content),
                 timestamp: new Date().toISOString(),
             });
         }
-
+			
         // 提交 ContextEngine 状态（标记当前数据已被 LLM 看过）
         if (renderResult) {
             this.contextEngine.commit(renderResult.tree);
@@ -1388,7 +1433,7 @@ export class CodeActExecutor {
     private async refreshTaskMessages(task: CodeActReplyTask): Promise<void> {
         if (!this.memory) return;
         try {
-            const freshMessages = this.memory.getRecentMessages(this.chatId, 20);
+            const freshMessages = this.memory.getRecentMessages(this.chatId, 12);
             if (freshMessages.length === 0) return;
 
             const msgIdToName = new Map<string, string>();

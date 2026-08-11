@@ -4,7 +4,7 @@ import { shortUuid } from "../../core/ids.js";
 import { runParallelGrounding } from "../../main-agent/grounding-util.js";
 import type { AttentionAccumulator } from "../../accumulator/attention-accumulator.js";
 import { CodeActExecutor } from "../../subagent/code-act-executor.js";
-import type { ActiveUserProfile, GroupContextPackage, CodeActReplyTask, DispatchedSubagentTaskRecord } from "../../subagent/types.js";
+import type { ActiveUserProfile, GroupContextPackage, CodeActReplyTask, DispatchedSubagentTaskRecord, AdditionalMemoryContext } from "../../subagent/types.js";
 import type { MemoryStoreV2 } from "../../memory-v2/index.js";
 import type { GlobalState } from "../../main-agent/global-state.js";
 import type { SubagentManager } from "../../subagent/subagent-manager.js";
@@ -76,7 +76,7 @@ type SubagentLike = {
     codeActExecutor?: unknown;
 };
 
-type SubagentManagerReader = Pick<SubagentManager, "getOrCreate" | "getSessionFilePath">;
+type SubagentManagerReader = Pick<SubagentManager, "get" | "getOrCreate" | "getSessionFilePath">;
 
 export interface DispatchApiDeps {
     subagentManager: SubagentManagerReader;
@@ -109,7 +109,8 @@ export function createDispatchApi(deps: DispatchApiDeps) {
         taskToGroup: async (chatId: string, taskSpec: DispatchTaskSpec, options?: DispatchTaskOptions): Promise<DispatchTaskResult> => {
             assertNoLegacyContext(taskSpec);
             const source = normalizeDispatchSource(options?.source);
-            const subagent = deps.subagentManager.getOrCreate(chatId) as SubagentLike;
+            const subagent = deps.subagentManager.get(chatId) as SubagentLike | undefined;
+    if (!subagent) throw new Error(`chatId ${chatId} 未注册，请从已有会话中选择`);
             const executor = await ensureExecutor(subagent, chatId, deps);
             const taskId = deps.taskIdFactory?.() ?? shortUuid();
             const groundingContext = await maybeRunGrounding(deps, taskSpec.contentDirection);
@@ -121,6 +122,22 @@ export function createDispatchApi(deps: DispatchApiDeps) {
                 deps.getActiveUserProfilesForChat?.(chatId),
                 deps,
             );
+
+            // ─── 预取相关记忆（修复 memoryContext 断路）───
+            let memoryContext: AdditionalMemoryContext | null = null;
+            try {
+                const query = taskSpec.contentDirection.slice(0, 200);
+                const [facts, topics, interactions] = await Promise.all([
+                    deps.memory.searchFacts(query, { limit: 5 }),
+                    deps.memory.searchTopics(query, { chatId, limit: 5 }),
+                    deps.memory.getRecentInteractions(chatId, undefined, 5),
+                ]);
+                if (facts.length > 0 || topics.length > 0 || interactions.length > 0) {
+                    memoryContext = { facts, topics, interactions };
+                }
+            } catch {
+                // 记忆预取失败不阻塞任务
+            }
 
             const task: CodeActReplyTask = {
                 type: "CODEACT_REPLY",
@@ -138,6 +155,7 @@ export function createDispatchApi(deps: DispatchApiDeps) {
                 replyMode: "SINGLE",
                 useSkills: taskSpec.useSkills,
                 createdAt: new Date().toISOString(),
+                memoryContext,
             };
 
             deps.globalState?.recordDispatchedSubagentTask?.({
@@ -374,7 +392,8 @@ function recordDispatchTracking(
         createdAt: now.toISOString(),
     });
 
-    deps.memory.todoUpsert(chatId, trackingKey, todoContent, triggerAt);
+    // dispatch_tracking 归类为 task（与 todo_items type 迁移规则一致）
+    deps.memory.todoUpsert(chatId, trackingKey, "task", todoContent, triggerAt);
 
     let reminderId: string | undefined;
     if (triggerAt) {

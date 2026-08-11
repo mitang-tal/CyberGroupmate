@@ -41,7 +41,7 @@ const META_HISTORY_SECTION_ALLOWLIST = new Set([
 export interface MetaSessionHandlerDeps {
     getPersona: () => { name?: string; description?: string } | undefined;
     globalState: Pick<GlobalState, "getSessionDigests" | "getMetaSessionHistory" | "appendMetaSessionHistory">;
-    memory: Pick<IMemoryStoreV2, "getGroupModel" | "getProfilesForChat" | "getPersonIdentity" | "getTopicById" | "todoList" | "getRecentMessages">
+    memory: Pick<IMemoryStoreV2, "getGroupModel" | "getProfilesForChat" | "getPersonIdentity" | "getTopicById" | "todoList" | "getRecentMessages" |"policyList">
         & Partial<Pick<IMemoryStoreV2, "getStickerDescription">>;
     sandbox: MetaSandbox;
     setActiveUserProfilesForDispatch?: (profilesByChatId: Map<string, ActiveUserProfile[]>) => void;
@@ -196,6 +196,7 @@ async function buildMetaMessages(
         sessionDigests: deps.globalState.getSessionDigests(),
         sessionDigestLimit: isProactiveIdle ? 30 : undefined,
         todos: buildGlobalTodos(deps.memory),
+        policies: buildGlobalPolicies(deps.memory),
         callbacks,
     });
     renderTrees.push(globalRender.tree);
@@ -419,6 +420,7 @@ async function buildMetaResolveContext(
         callbackPotential: entry.callbackPotential,
         urgentSignals: entry.urgentSignals,
         schedulerTriggers: entry.schedulerTriggers,
+        wakeConditions: entry.wakeConditions,
         topicDigests,
         recentMessages: recentMessageContext.messages,
         fallbackToRecentMessages: recentMessageContext.fallbackToRecent,
@@ -459,7 +461,7 @@ function buildRecentMessageContext(
     }
 
     try {
-        const recent = memory.getRecentMessages(entry.chatId, 20);
+        const recent = memory.getRecentMessages(entry.chatId, 12);
         if (recent.length > 0) {
             return {
                 messages: enrichAttentionRecentMessages(memory, entry.chatId, [...recent].reverse().map((message) => ({
@@ -724,11 +726,30 @@ function buildGlobalTodos(
     memory: Pick<IMemoryStoreV2, "todoList">,
 ): Array<{ key: string; content: string; bindingId: string; dueAt?: string | null; expired?: boolean }> {
     return memory.todoList("meta", { includeExpired: false })
+        .filter(t => ["policy", "preference", "experience"].includes(t.type ?? ""))
         .map((todo) => ({
             key: todo.key,
             content: todo.content,
             bindingId: "meta",
             dueAt: todo.dueAt,
             expired: todo.expired,
+        }));
+}
+
+export function buildGlobalPolicies(
+    memory: Pick<IMemoryStoreV2, "policyList">,
+): Array<{
+    key: string;
+    content: string;
+    bindingId: string;
+    enabled: boolean;
+}> {
+    return memory.policyList("meta")
+        .filter((policy) => policy.enabled)
+        .map((policy) => ({
+            key: policy.key,
+            content: policy.content,
+            bindingId: "meta",
+            enabled: policy.enabled,
         }));
 }

@@ -60,18 +60,28 @@ export function createReminderApi(globalState: SchedulerState) {
             const callback = requireCallback(input.callback);
             const name = normalizeName(input.name, callback);
             const triggerAt = resolveTriggerAt(input);
-            const event = globalState.addReminder(
-                "__meta__",
-                callback,
-                triggerAt,
-                "scheduler-api",
-                {
-                    bindingId,
-                    name,
+            // 计算 dedupKey：基于 bindingId+callback+triggerAt+name
+            const dedupKey = `${bindingId}::${callback}::${triggerAt}::${name}`;
+            // 若已存在相同 dedupKey 的 reminder，返回已有的 reminderId
+            const existing = globalState.getSchedulerEvents()
+                .find(e => e.type === "reminder" && (e as any).dedupKey === dedupKey);
+            let event = existing as SchedulerEvent | undefined;
+            if (!event) {
+                event = globalState.addReminder(
+                    "__meta__",
                     callback,
-                    data: input.data,
-                },
-            );
+                    triggerAt,
+                    "scheduler-api",
+                    {
+                        bindingId,
+                        name,
+                        callback,
+                        data: input.data,
+                        // pass dedupKey through options using any
+                        dedupKey,
+                    } as any,
+                );
+            }
             return normalizeEvent(event);
         },
         update: async (id: string, input: ReminderUpdateInput) => {

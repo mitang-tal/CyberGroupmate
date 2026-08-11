@@ -13,6 +13,8 @@ export interface TodoSetInput {
     key: string;
     content: string;
     bindingId: string;
+    /** todo 类型：task/policy/preference/experience/observation/log（不传默认 task；todoUpsert 内做白名单校验） */
+    type?: string;
     dueAt?: string | number | Date | null;
     forever?: boolean;
 }
@@ -21,6 +23,8 @@ export interface TodoUpdateInput {
     key?: string;
     content?: string;
     bindingId?: string;
+    /** todo 类型（不传则保留原类型） */
+    type?: string;
     dueAt?: string | number | Date | null;
     forever?: boolean;
 }
@@ -50,7 +54,7 @@ export function createTodoApi(memory: TodoMemory) {
             const content = requireNonEmpty(input.content, "content");
             return {
                 bindingId,
-                ...memory.todoUpsert(bindingId, key, content, resolveTodoDueAt(input)),
+                ...memory.todoUpsert(bindingId, key, input.type ?? "task", content, resolveTodoDueAt(input)),
             };
         },
         update: async (key: string, input: TodoUpdateInput, bindingId: string) => {
@@ -69,6 +73,7 @@ export function createTodoApi(memory: TodoMemory) {
                 ? requireNonEmpty(input.content, "content")
                 : existing.content;
             const nextDueAt = resolveTodoDueAt(input);
+            const nextType = input.type ?? existing.type ?? "task";
 
             if (nextBindingId !== currentBindingId || nextKey !== currentKey) {
                 memory.todoRemove(currentBindingId, currentKey);
@@ -76,7 +81,7 @@ export function createTodoApi(memory: TodoMemory) {
 
             return {
                 bindingId: nextBindingId,
-                ...memory.todoUpsert(nextBindingId, nextKey, nextContent, nextDueAt),
+                ...memory.todoUpsert(nextBindingId, nextKey, nextType, nextContent, nextDueAt),
             };
         },
         delete: async (key: string, bindingId = "meta") => {

@@ -11,6 +11,8 @@ interface MetaTodoSetInput {
     key: string;
     content: string;
     bindingId: string;
+    /** todo 类型：task/policy/preference/experience/observation/log（不传默认 task） */
+    type?: string;
     /** Unix epoch milliseconds. Omit for the default 30-day rolling expiry. */
     dueAt?: number;
     /** Explicitly make this todo permanent. */
@@ -21,6 +23,8 @@ interface MetaTodoUpdateInput {
     key?: string;
     content?: string;
     bindingId?: string;
+    /** todo 类型（不传则保留原类型） */
+    type?: string;
     /** Unix epoch milliseconds. Omit for the default 30-day rolling expiry. */
     dueAt?: number;
     /** Explicitly make this todo permanent. */
@@ -36,6 +40,8 @@ interface MetaTodoItem {
     bindingId: string;
     key: string;
     content: string;
+    /** todo 类型 */
+    type?: string;
     /** Unix epoch milliseconds. */
     dueAt?: number | null;
     /** Unix epoch milliseconds. */

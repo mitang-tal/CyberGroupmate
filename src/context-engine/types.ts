@@ -51,8 +51,12 @@ export interface SectionSchema {
 export interface DeltaStats {
     /** 当前总数据项数 */
     total: number;
+    /** 修改的数据项数 */
+    updated?: number;
     /** 新增的数据项数 */
     added: number;
+     /** 删除的数据项数 */
+    removed?: number;
     /** 未变化的数据项数 */
     unchanged: number;
 }

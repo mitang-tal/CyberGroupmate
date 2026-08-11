@@ -14,6 +14,7 @@ import { createMemoryApi } from "./memory.js";
 import { createPrivacyApi } from "./privacy.js";
 import { createCronApi, createReminderApi } from "./scheduler.js";
 import { createTodoApi } from "./todo.js";
+import { createPolicyApi } from "./policy.js";
 
 // ── 隐私模型说明 ──
 // Meta 是「只调度、不亲自动手」的可信编排者，要服务某个会话就必须读到它的内容——因此 Meta 的「读」
@@ -31,6 +32,7 @@ export { createDispatchApi } from "./dispatch.js";
 export { createMemoryApi } from "./memory.js";
 export { createCronApi, createReminderApi } from "./scheduler.js";
 export { createTodoApi } from "./todo.js";
+export { createPolicyApi } from "./policy.js";
 
 export interface BuildMetaApiContextDeps extends Omit<DispatchApiDeps, "subagentManager" | "accumulator" | "memory" | "groundingConfig"> {
     memory: MemoryStoreV2;
@@ -80,6 +82,7 @@ export function buildMetaApiContext(deps: BuildMetaApiContextDeps) {
             getActiveUserProfilesForChat: deps.getActiveUserProfilesForChat,
         }),
         todo: createTodoApi(deps.memory),
+        policy: createPolicyApi(deps.memory),
         remind: createReminderApi(deps.globalState),
         cron: createCronApi(deps.globalState),
     };
