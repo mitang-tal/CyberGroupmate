@@ -11,7 +11,7 @@
  */
 
 import { NotificationCenter, type NotificationEvent } from "./event/notification-center.js";
-import { llmEvents, type LLMResponseEvent } from "./core/llm.js";
+import { llmEvents, callLLMWithFallback, type LLMResponseEvent } from "./core/llm.js";
 import { ensureCompositeId, getRawId, getPlatform, getGroupModelKey } from "./core/chat-id.js";
 import { SandboxPool } from "./sandbox/sandbox-pool.js";
 import type { ShellWakeEvent } from "./sandbox/sandbox.js";
@@ -618,7 +618,13 @@ async function main(): Promise<void> {
 	const ecosystemGovernance = new EcosystemGovernance(new SqliteGovernanceV2Store(join(DATA_DIR, "governance.db")));
 	const ecosystemGovernor = new EcosystemGovernor(ecosystemGovernance);
 
-	const conflictResolver = new ConflictResolver();
+	// 8.3 真实 LLM 仲裁：复用 llm_routing.meta profile（平票且 complexContext 时经 LLM 提供建议，1000ms 硬超时）
+	const metaProfiles = resolveComponentProfiles("meta", appConfig);
+	const conflictResolver = new ConflictResolver({
+	    callLLM: async (messages, options) =>
+	        callLLMWithFallback(messages, metaProfiles, { ...options, caller: "conflict-arbitration" }),
+	    llmConfig: metaProfiles[0],
+	});
 	// 8.2 C2：Agent 侧真实异步竞标。bidProvider 为每个 eligible Agent 组价，
 	// 竞标窗口超时从 Gov2 negotiationTimeoutMs 读取（可热更新）。
 	const negotiationEngine = new NegotiationEngine({

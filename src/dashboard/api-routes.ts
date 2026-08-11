@@ -2777,7 +2777,7 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
     const conflictResolver = deps.conflictResolver;
 
     if (conflictResolver) {
-        router.post("/conflict/resolve", (req, res) => {
+        router.post("/conflict/resolve", async (req, res) => {
             const caseData = (req.body || {}) as any;
             if (!caseData.resourceId || !caseData.conflictType || !Array.isArray(caseData.proposals) || caseData.proposals.length === 0) {
                 res.status(400).json({ error: "resourceId, conflictType, and proposals[] required" });
@@ -2791,18 +2791,20 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
                 createdAtMs: Date.now(),
                 complexContext: caseData.complexContext === true,
             };
-            const verdict = conflictResolver.resolve(conflictCase);
+            // 8.3：async（真实 LLM 仲裁路径，含 1000ms 硬超时）
+            const verdict = await conflictResolver.resolve(conflictCase);
             bridge.broadcast({ type: "conflict:resolved", timestamp: new Date().toISOString(), data: verdict });
             res.json(verdict);
         });
 
-        router.post("/conflict/resolve-batch", (req, res) => {
+        router.post("/conflict/resolve-batch", async (req, res) => {
             const { cases } = (req.body || {}) as any;
             if (!Array.isArray(cases) || cases.length === 0) {
                 res.status(400).json({ error: "cases[] required" });
                 return;
             }
-            const results = conflictResolver.resolveBatch(cases);
+            // 8.3：async（真实 LLM 仲裁路径）
+            const results = await conflictResolver.resolveBatch(cases);
             for (const v of results) {
                 bridge.broadcast({ type: "conflict:resolved", timestamp: new Date().toISOString(), data: v });
             }

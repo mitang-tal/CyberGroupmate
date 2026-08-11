@@ -7,10 +7,17 @@
  * 3. Tier: meta_council > primary_worker > fallback_worker
  * 4. Timestamp: 先提交者胜出
  * 5. LLM Fallback: 仅当 complexContext=true 且前 4 步仍平票时，允许 1 次 LLM 建议（1000ms 硬超时）
+ *
+ * 8.3：真实 LLM 仲裁。构造注入 { callLLM, llmConfig }；未注入或超时/失败/解析失败
+ * 一律返回 null → 走确定性兑底，保证零活锁。
  */
 
 import crypto from "node:crypto";
 import { ConflictCase, Proposal, ArbitrationVerdict, AgentTier } from "./types";
+import type { ChatMessage, LLMResponse } from "../core/llm/types.js";
+import type { LLMConfig } from "../core/config.js";
+import type { LLMCallOptions } from "../core/llm.js";
+import { callLLM as coreCallLLM } from "../core/llm.js";
 
 const TIER_ORDER: Record<AgentTier, number> = {
     meta_council: 0,
@@ -20,13 +27,28 @@ const TIER_ORDER: Record<AgentTier, number> = {
 
 const LLM_TIMEOUT_MS = 1000;
 
+/** 8.3 真实 LLM 仲裁依赖（均可选；缺省时 LLM 路径退化为确定性兑底） */
+export interface ConflictLLMDeps {
+    /** LLM 调用函数（自带 profile/fallback 逻辑） */
+    callLLM?: (messages: ChatMessage[], options?: LLMCallOptions) => Promise<LLMResponse>;
+    /** LLM 配置（callLLM 未注入时用 core callLLM 直接调用） */
+    llmConfig?: LLMConfig;
+    /** 硬超时 ms，默认 1000 */
+    llmTimeoutMs?: number;
+}
+
 export class ConflictResolver {
     private history: ArbitrationVerdict[] = [];
+    private llmDeps: ConflictLLMDeps;
+
+    constructor(llmDeps: ConflictLLMDeps = {}) {
+        this.llmDeps = llmDeps;
+    }
 
     /**
-     * 解决冲突：输入 ConflictCase，输出 ArbitrationVerdict
+     * 解决冲突：输入 ConflictCase，输出 ArbitrationVerdict（8.3：async，含真实 LLM 路径）
      */
-    resolve(conflictCase: ConflictCase): ArbitrationVerdict {
+    async resolve(conflictCase: ConflictCase): Promise<ArbitrationVerdict> {
         const proposals = [...conflictCase.proposals];
         if (proposals.length === 0) {
             throw new Error("Cannot resolve conflict: no proposals provided.");
@@ -83,7 +105,7 @@ export class ConflictResolver {
 
         // ─── Rule 5: LLM Fallback (仅当 complexContext=true 且前 4 步仍平票) ───
         if (conflictCase.complexContext) {
-            const llmResult = this.tryLlmFallback(byTime);
+            const llmResult = await this.tryLlmFallback(conflictCase, byTime);
             if (llmResult) {
                 const verdict = this.createVerdict(conflictCase, llmResult, "llm_fallback",
                     `All deterministic tie-breakers failed (${byTime.length} proposals tied). LLM suggestion applied.`);
@@ -100,10 +122,14 @@ export class ConflictResolver {
     }
 
     /**
-     * 批量解决冲突（原子操作）
+     * 批量解决冲突（8.3：async，顺序遍历，每个 case 独立 LLM 超时）
      */
-    resolveBatch(cases: ConflictCase[]): ArbitrationVerdict[] {
-        return cases.map((c) => this.resolve(c));
+    async resolveBatch(cases: ConflictCase[]): Promise<ArbitrationVerdict[]> {
+        const results: ArbitrationVerdict[] = [];
+        for (const c of cases) {
+            results.push(await this.resolve(c));
+        }
+        return results;
     }
 
     /**
@@ -151,16 +177,72 @@ export class ConflictResolver {
     }
 
     /**
-     * LLM Fallback 的模拟实现
-     * 实际场景中会调用 LLM，但带 1000ms 硬超时
+     * 8.3 真实 LLM 仲裁：构造仲裁 prompt → Promise.race([callLLM, 硬超时])。
+     * 超时 / 调用失败 / 解析失败 → 返回 null（由调用方走确定性兑底，零活锁）。
      */
-    private tryLlmFallback(tiedProposals: Proposal[]): Proposal | null {
-        // 模拟 LLM 调用（带超时）
-        // 实际接入时：Promise.race([llmCall(), timeout(1000)])
-        // 超时返回 null → 自动触发确定性 fallback
+    private async tryLlmFallback(conflictCase: ConflictCase, tiedProposals: Proposal[]): Promise<Proposal | null> {
+        const { callLLM, llmConfig } = this.llmDeps;
+        if (!callLLM && !llmConfig) return null;
 
-        // 当前实现：随机选择平票中的第一个（模拟 LLM 无法在 1000ms 内响应）
-        // 这确保即使 LLM 超时，系统也不会死锁
-        return tiedProposals[0] ?? null;
+        const system = "You are a deterministic conflict arbiter in a multi-agent system. "
+            + "Pick the best proposal for the given conflict using your judgment. "
+            + 'Respond with ONLY a JSON object: {"winnerProposalId": "<proposalId>"}.';
+        const user = JSON.stringify({
+            conflictCase: {
+                conflictCaseId: conflictCase.conflictCaseId,
+                resourceId: conflictCase.resourceId,
+                conflictType: conflictCase.conflictType,
+            },
+            candidates: tiedProposals.map((p) => ({
+                proposalId: p.proposalId,
+                agentId: p.agentId,
+                agentName: p.agentName,
+                tier: p.tier,
+                actionType: p.actionType,
+                actionParams: p.actionParams,
+                trustScore: p.trustScore,
+                riskScore: p.riskScore,
+                submittedAtMs: p.submittedAtMs,
+            })),
+            instruction: 'Return {"winnerProposalId": "<proposalId>"} selecting one of the candidate proposalIds.',
+        });
+        const messages: ChatMessage[] = [
+            { role: "system", content: system },
+            { role: "user", content: user },
+        ];
+
+        try {
+            const result = await Promise.race([
+                callLLM
+                    ? callLLM(messages, { caller: "conflict-arbitration", maxTokens: 256, temperature: 0 })
+                    : coreCallLLM(messages, llmConfig!, { caller: "conflict-arbitration", maxTokens: 256, temperature: 0 }),
+                this.llmTimeout(),
+            ]);
+            if (!result) return null; // 硬超时
+            return this.parseLlmWinner(result.content, tiedProposals);
+        } catch {
+            return null; // 调用失败 / 解析失败 → 确定性兑底
+        }
+    }
+
+    private llmTimeout(): Promise<null> {
+        const ms = this.llmDeps.llmTimeoutMs ?? LLM_TIMEOUT_MS;
+        return new Promise((resolve) => {
+            const t = setTimeout(() => resolve(null), ms);
+            if (t.unref) t.unref();
+        });
+    }
+
+    private parseLlmWinner(content: string, tiedProposals: Proposal[]): Proposal | null {
+        if (!content) return null;
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) return null;
+        try {
+            const parsed = JSON.parse(jsonMatch[0]) as { winnerProposalId?: string; proposalId?: string; winner?: string };
+            const winnerId = parsed.winnerProposalId ?? parsed.proposalId ?? parsed.winner;
+            return tiedProposals.find((p) => p.proposalId === winnerId) ?? null;
+        } catch {
+            return null;
+        }
     }
 }
