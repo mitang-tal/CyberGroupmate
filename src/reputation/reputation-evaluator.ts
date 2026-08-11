@@ -144,7 +144,17 @@ export class ReputationEvaluator {
         const results: AgentReputation[] = [];
         for (const agent of getAgentIds()) {
             const existing = this.store.getByAgentId(agent.agentId);
-            if (!existing) continue;
+            // 无声誉记录的新 agent：以空执行历史评估 → 中性声誉（normal/prior），而非跳过
+            if (!existing) {
+                results.push(this.evaluate({
+                    agentId: agent.agentId,
+                    agentName: agent.name,
+                    capabilityExecutions: [],
+                    recentAlerts: 0,
+                    recentFailures: 0,
+                }));
+                continue;
+            }
             const timestampBase = existing.lastEvaluatedAtMs;
             const input: ReputationEvaluationInput = {
                 agentId: agent.agentId,

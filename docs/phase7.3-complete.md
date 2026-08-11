@@ -47,7 +47,7 @@ Execution Record(5.1)/Trace(5.3)/Alert(5.5)/Experience(7.1)
 ## API
 
 - `POST /api/reputation/evaluate` — 单 Agent 评估
-- `POST /api/reputation/evaluate-all` — 全量评估（当前实现按空 agent 列表返回 count=0，待接离线源）
+- `POST /api/reputation/evaluate-all` — 全量评估（离线源：CapabilityRegistry 完整 agent 枚举，含无声誉记录新 agent 的中性评估，返回 `{count, results}`）
 - `GET /api/reputation/agents` — 全量画像
 - `GET /api/reputation/agent/:agentId` — 单 Agent 路由权重（`getDispatchWeight`）
 
@@ -59,7 +59,7 @@ Execution Record(5.1)/Trace(5.3)/Alert(5.5)/Experience(7.1)
 
 ## 未实现
 
-- `evaluate-all` 接入真实 agent 列表来源（当前透传空数组）。
+- `evaluate-all` 的 CapabilityRegistry 动态注册缺口——当前仅 3 个静态核心 agent 被注册，动态 subagent 未注册进 registry（枚举完整性受限）。
 - 任务难度修正 / 学习率（重复犯错率）维度——设计稿预留。
 
 ## 回滚指南

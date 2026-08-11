@@ -8,6 +8,7 @@
  * 4. #22 滞回窗：阈值边缘抖动不翻转信任状态
  * 5. #23 probation shadow：进入 probation 记录观察日志
  * 6. 冷启动中性声誉 / untrusted 路由权重为 0
+ * 7. evaluateAll 覆盖无声誉记录新 agent（CapabilityRegistry 离线源 + 中性记录）
  */
 import { ReputationEvaluator } from "../src/reputation/reputation-evaluator.js";
 import type {
@@ -238,6 +239,45 @@ async function main(): Promise<void> {
         ev2.evaluate(makeInput("a1", Array.from({ length: 10 }, () => ({ success: false })), 10));
         const w = ev2.getDispatchWeight("a1");
         check("untrusted 路由权重归零", w.trustScore === 0 && w.trustState === "untrusted", JSON.stringify(w));
+    }
+
+    // ─── [7] evaluateAll 覆盖无声誉记录的新 agent（方案 B：CapabilityRegistry 离线源 + 中性记录） ───
+    console.log("\n[7] evaluateAll 枚举含无声誉记录新 agent");
+    {
+        const { CapabilityRegistry } = await import("../src/capability-registry/capability-registry.js");
+        const registry = new CapabilityRegistry();
+        const existing = registry.register({ name: "existing-agent", capabilities: [] }); // 已有声誉记录
+        const brandNew = registry.register({ name: "brand-new", capabilities: [] });       // 无声誉记录
+
+        const store = new MemStore();
+        const ev = new ReputationEvaluator(store);
+        // 用 registry 的 agentId 造一条已有记录（与端点数据源同 id 空间）
+        ev.evaluate({
+            agentId: existing.agentId,
+            agentName: "existing-agent",
+            capabilityExecutions: Array.from({ length: 2 }, () => ({
+                capabilityId: "cap-a", capabilityName: "cap-a", success: true, latencyMs: 500, timestampMs: Date.now(),
+            })),
+            recentAlerts: 0,
+        });
+
+        // 与 api-routes.ts evaluate-all 端点相同的数据源表达式（registry.listAgents → evaluateAll）
+        const agents = registry.listAgents().map((a) => ({ agentId: a.agentId, name: a.name }));
+        const results = ev.evaluateAll(() => agents);
+        const byId = new Map(results.map((r) => [r.agentId, r]));
+        const newRep = byId.get(brandNew.agentId);
+
+        check("无声誉记录的新 agent 被 evaluateAll 评估（不再跳过）", newRep !== undefined,
+            `results=${results.map((r) => r.agentId).join(",")}`);
+        check("新 agent 产出中性声誉 normal / 0.5",
+            newRep?.trustState === "normal" && newRep?.trustScore === 0.5,
+            newRep ? `${newRep.trustState} ${newRep.trustScore}` : "未产出");
+        check("已有记录 agent 也在结果中", byId.has(existing.agentId), String(byId.size));
+        check("store 已 upsert 新 agent 的中性记录", store.listAll().length === 2, String(store.listAll().length));
+
+        // 清理 registry 心跳 timer，避免脚本结束被挂住
+        registry.unregister(existing.agentId);
+        registry.unregister(brandNew.agentId);
     }
 
     console.log(`\n结果: ${pass} passed, ${fail} failed`);

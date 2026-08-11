@@ -921,8 +921,13 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         });
 
         router.post("/reputation/evaluate-all", (_req, res) => {
-            const results = rev.evaluateAll(() => []);
-            res.json({ count: results.length });
+            // 离线源：CapabilityRegistry 完整 agent 枚举（照 evolution-analyzer 的 listAgents 模式），
+            // 含无声誉记录的新 agent（evaluateAll 内部以空历史评估出中性记录）；
+            // registry 缺失时退回 store 中已有声誉记录的 agent
+            const agents = cr?.listAgents().map((a) => ({ agentId: a.agentId, name: a.name }))
+                ?? rev.listAll().map((r) => ({ agentId: r.agentId, name: r.agentName }));
+            const results = rev.evaluateAll(() => agents);
+            res.json({ count: results.length, results });
         });
 
         // #23 probation shadow 观察日志
