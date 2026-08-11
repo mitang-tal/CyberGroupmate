@@ -114,3 +114,49 @@ export function validateCronMinInterval(cronExpr: string, minIntervalMinutes: nu
     // 其他情况（固定小时+固定分钟）→ 至少间隔 1 小时
     return 60 >= minIntervalMinutes;
 }
+
+/**
+ * 计算 cron 表达式下一次触发时间（本地时区，匹配语义与 matchesCron 一致）。
+ * 先检查 fromDate 所在分钟是否已命中（当前触发窗口），未命中则逐日扫描日期级约束，
+ * 命中日内再扫描 小时×分钟 组合，返回严格晚于 fromDate 的首个触发点。
+ *
+ * @param cronExpr - 5 字段 cron 表达式，如 "0 9 * * *"
+ * @param fromDate - 起始时间，默认当前时间
+ * @param maxLookaheadMs - 最大向后扫描窗口，默认 366 天；窗口内无命中返回 null
+ * @returns 下一次触发时间，无命中或表达式非法时返回 null
+ */
+export function nextCronTime(cronExpr: string, fromDate: Date = new Date(), maxLookaheadMs = 366 * 24 * 3600_000): Date | null {
+    const parts = cronExpr.trim().split(/\s+/);
+    if (parts.length !== 5) return null;
+    const [minuteField, hourField, domField, monthField, dowField] = parts;
+
+    // 起始定位到 fromDate 所在分钟整
+    const cursor = new Date(fromDate.getTime());
+    cursor.setSeconds(0, 0);
+    const endTime = fromDate.getTime() + maxLookaheadMs;
+
+    // 当前分钟已命中 → 属于本轮触发窗口（cron 自检按分钟去重后即触发）
+    if (matchesCron(cronExpr, cursor)) return cursor;
+
+    // 逐日扫描：日期级约束命中后，再在该日内扫描 小时×分钟
+    cursor.setDate(cursor.getDate() + 1);
+    while (cursor.getTime() <= endTime) {
+        const dayOk =
+            matchField(monthField, cursor.getMonth() + 1, 1, 12) &&
+            matchField(domField, cursor.getDate(), 1, 31) &&
+            matchField(dowField, cursor.getDay(), 0, 7);
+        if (dayOk) {
+            for (let h = 0; h < 24; h++) {
+                if (!matchField(hourField, h, 0, 23)) continue;
+                for (let m = 0; m < 60; m++) {
+                    if (!matchField(minuteField, m, 0, 59)) continue;
+                    const candidate = new Date(cursor);
+                    candidate.setHours(h, m, 0, 0);
+                    if (candidate.getTime() > fromDate.getTime()) return candidate;
+                }
+            }
+        }
+        cursor.setDate(cursor.getDate() + 1);
+    }
+    return null;
+}

@@ -13,6 +13,7 @@
     "test:sandbox": "tsx --test tests/*sandbox*.test.ts",
     "cli": "tsx src/cli.ts",
     "tg-convert": "tsx src/tools/tg-to-jsonl.ts",
+    "seed:experience": "tsx scripts/seed-failure-experience.ts",
     "dashboard:dev": "cd src/dashboard/ui && pnpm run dev",
     "dashboard:build": "cd src/dashboard/ui && pnpm run build",
     "gen:module-docs": "tsx src/tools/generate-module-docs.ts",

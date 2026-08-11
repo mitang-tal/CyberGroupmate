@@ -29,6 +29,7 @@ export class EvolutionAnalyzer {
     private autoRunTimer: ReturnType<typeof setInterval> | null = null;
     private autoRunSchedule = "";
     private autoRunLastFiredKey = "";
+    private lastAnalysisAtMs = 0;
 
     constructor(
         reputationEvaluator: ReputationEvaluator,
@@ -85,6 +86,31 @@ export class EvolutionAnalyzer {
         return this.autoRunTimer !== null;
     }
 
+    /** 当前 cron 调度表达式（未启用时为空字符串） */
+    getAutoRunSchedule(): string {
+        return this.autoRunSchedule;
+    }
+
+    /** 最近一次全量演化分析时间（未跑过返回 0） */
+    getLastAnalysisAtMs(): number {
+        return this.lastAnalysisAtMs;
+    }
+
+    /**
+     * 可演化分析的 Agent 数量：候选池（与 analyzeAll 一致，CapabilityRegistry 枚举）中
+     * 具备声誉数据（capabilityScores 非空，即 analyzeAgent 的准入条件）的 Agent 个数。
+     * registry 缺失时退回声誉库中已有记录的 Agent。
+     */
+    countEligibleAgents(): number {
+        const agents = this.defaultAgentIds();
+        const reps = this.reputationEvaluator.listAll();
+        if (agents.length === 0) {
+            return reps.filter((r) => r.capabilityScores.length > 0).length;
+        }
+        const repById = new Map(reps.map((r) => [r.agentId, r]));
+        return agents.filter((a) => (repById.get(a.agentId)?.capabilityScores.length ?? 0) > 0).length;
+    }
+
     /** Gov2 热更新：演化冷却窗口天数 */
     setCoolingDays(days: number): void {
         if (typeof days === "number" && days > 0) this.coolingDays = days;
@@ -104,6 +130,7 @@ export class EvolutionAnalyzer {
             }
         }
 
+        this.lastAnalysisAtMs = Date.now();
         return proposals;
     }
 

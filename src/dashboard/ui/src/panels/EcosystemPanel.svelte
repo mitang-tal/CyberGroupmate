@@ -24,6 +24,7 @@
 
   // ─── Agent Evolution ───
   let evolutionProposals = [];
+  let evolutionStatus = null;
   let evolutionLoading = false;
 
   // ─── Governance v2 ───
@@ -174,6 +175,7 @@
     evolutionLoading = true;
     try {
       evolutionProposals = (await api('/evolution/proposals')) || [];
+      evolutionStatus = (await api('/evolution/status')) || null;
     } catch (err) {
       console.error('Evolution load error:', err);
     } finally {
@@ -491,6 +493,11 @@
         <h3 class="card-title text-sm">Agent 演化提案
           {#if evolutionLoading}<span class="loading loading-spinner loading-xs ml-1"></span>{/if}
         </h3>
+        <div class="flex flex-wrap gap-x-6 gap-y-1 text-xs opacity-80 mb-2">
+          <span>cron 下次触发: <b>{fmtDate(evolutionStatus?.nextRunAtMs, '未配置')}</b></span>
+          <span>上次分析: <b>{fmtDate(evolutionStatus?.lastAnalysisAtMs, '从未')}</b></span>
+          <span>eligible agents: <b>{evolutionStatus?.eligibleAgentCount ?? '-'}</b></span>
+        </div>
         {#if evolutionProposals.length}
           <div class="overflow-x-auto">
             <table class="table table-xs">

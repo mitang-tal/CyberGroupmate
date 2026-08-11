@@ -16,6 +16,7 @@ import { createLogger } from "../core/logger.js";
 import { loadConfig, validateConfig, saveConfig } from "../core/config.js";
 import { DEFAULT_BANNED_WORDS } from "../core/banned-words.js";
 import { rateLimiter } from "../core/llm-rate-limiter.js";
+import { nextCronTime } from "../core/cron-matcher.js";
 import { discoverSkills } from "../sandbox/skill-loader.js";
 import {
     listAllPrompts,
@@ -2909,6 +2910,17 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
 
         router.get("/evolution/cooling/:agentId", (req, res) => {
             res.json(ev.getCoolingStatus(req.params.agentId));
+        });
+
+        router.get("/evolution/status", (_req, res) => {
+            const schedule = ev.getAutoRunSchedule();
+            const nextRunAtMs = schedule ? (nextCronTime(schedule)?.getTime() ?? null) : null;
+            res.json({
+                schedule,
+                nextRunAtMs,
+                lastAnalysisAtMs: ev.getLastAnalysisAtMs(),
+                eligibleAgentCount: ev.countEligibleAgents(),
+            });
         });
     }
 
