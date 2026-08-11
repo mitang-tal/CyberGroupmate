@@ -32,6 +32,7 @@ import type { ReputationEvaluator } from "../reputation/reputation-evaluator.js"
 import type { MetaSelfTestEngine } from "../meta-test/meta-self-test-engine.js";
 import type { EcosystemGovernor } from "../ecosystem/ecosystem-governor.js";
 import type { FederationStore } from "../ecosystem/federation-store.js";
+import type { FederationSync } from "../ecosystem/federation-sync.js";
 import type { ConflictResolver } from "../conflict/conflict-resolver.js";
 import type { NegotiationEngine } from "../negotiation/negotiation-engine.js";
 import type { EvolutionAnalyzer } from "../evolution/evolution-analyzer.js";
@@ -91,6 +92,8 @@ export interface DashboardDeps {
     ecosystemGovernor?: EcosystemGovernor;
     /** 经验联邦服务 */
     federationStore?: FederationStore;
+    /** 经验联邦跨进程同步（含 promote 写锁） */
+    federationSync?: FederationSync;
     /** 冲突仲裁器 */
     conflictResolver?: ConflictResolver;
     /** 协商引擎 */

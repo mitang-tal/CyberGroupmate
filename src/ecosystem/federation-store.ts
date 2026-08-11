@@ -118,6 +118,15 @@ export class FederationStore {
         }).filter((e) => e.federationStatus === "candidate");
     }
 
+    /**
+     * 全网读取接口：给 Dispatcher/Replan 拉取全局 federated 经验。
+     * 单机多进程共享同一 SQLite（WAL）时直接读共享库，无需锁。
+     * @param agentId 保留参数（未来按 Agent 权限/画像过滤），当前 federated 全网可读
+     */
+    getSharedFederatedItems(_agentId?: string): ExperienceItem[] {
+        return this.getFederatedItems();
+    }
+
     // ─── Private: Sandbox Replay Validation ───
 
     private runSandboxValidation(experience: ExperienceItem): { passed: boolean; score: number; reason: string } {

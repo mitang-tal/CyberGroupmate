@@ -2754,7 +2754,8 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
         router.post("/federation/promote", (req, res) => {
             const { experienceId, agentId } = (req.body || {}) as any;
             if (!experienceId) { res.status(400).json({ error: "experienceId required" }); return; }
-            const result = fed.promote(experienceId, agentId);
+            // 8.1 跨进程复制：写路径走 FederationSync（BEGIN IMMEDIATE 事务锁）
+            const result = (deps.federationSync ?? fed).promote(experienceId, agentId);
             bridge.broadcast({ type: "federation:promoted", timestamp: new Date().toISOString(), data: result });
             res.json(result);
         });

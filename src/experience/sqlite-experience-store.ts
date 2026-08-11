@@ -9,6 +9,8 @@ export class SqliteExperienceStore implements ExperienceStore {
     constructor(dbPath: string) {
         this.db = new Database(dbPath);
         this.db.pragma("journal_mode = WAL");
+        // 跨进程写竞争等待（配合 withTransaction 的 BEGIN IMMEDIATE）
+        this.db.pragma("busy_timeout = 5000");
         this.initTables();
     }
 
@@ -130,19 +132,47 @@ export class SqliteExperienceStore implements ExperienceStore {
         );
     }
 
+    /**
+     * 跨进程写锁：BEGIN IMMEDIATE 事务串行化写路径（配合 WAL + busy_timeout）。
+     * fn 抛错时回滚；锁竞争由 SQLite 文件锁 + busy_timeout 兑底。
+     */
+    withTransaction<T>(fn: () => T): T {
+        // 嵌套调用：已在事务中则直接执行，随外层事务一起提交/回滚
+        if (this.db.inTransaction) return fn();
+        this.db.exec("BEGIN IMMEDIATE");
+        try {
+            const result = fn();
+            this.db.exec("COMMIT");
+            return result;
+        } catch (err) {
+            this.db.exec("ROLLBACK");
+            throw err;
+        }
+    }
+
+    private updateExperienceTx: ((experienceId: string, updates: Partial<ExperienceItem>) => void) | null = null;
+
     updateExperience(experienceId: string, updates: Partial<ExperienceItem>): void {
-        const sets: string[] = [];
-        const params: unknown[] = [];
+        // 应用层锁：事务包裹（含 federationStatus 字段更新），避免 last-write-wins 半程状态
+        // 懒初始化：db 在构造函数中赋值，类字段初始化器在构造前执行会引用未初始化的 db
+        if (!this.updateExperienceTx) {
+            this.updateExperienceTx = this.db.transaction((id: string, u: Partial<ExperienceItem>) => {
+                const sets: string[] = [];
+                const params: unknown[] = [];
 
-        if (updates.confidence !== undefined) { sets.push("confidence = ?"); params.push(updates.confidence); }
-        if (updates.frequency !== undefined) { sets.push("frequency = ?"); params.push(updates.frequency); }
-        if (updates.status !== undefined) { sets.push("status = ?"); params.push(updates.status); }
-        if (updates.expiresAtMs !== undefined) { sets.push("expires_at_ms = ?"); params.push(updates.expiresAtMs); }
-        sets.push("updated_at_ms = ?"); params.push(Date.now());
+                if (u.confidence !== undefined) { sets.push("confidence = ?"); params.push(u.confidence); }
+                if (u.frequency !== undefined) { sets.push("frequency = ?"); params.push(u.frequency); }
+                if (u.status !== undefined) { sets.push("status = ?"); params.push(u.status); }
+                if (u.expiresAtMs !== undefined) { sets.push("expires_at_ms = ?"); params.push(u.expiresAtMs); }
+                if (u.federationStatus !== undefined) { sets.push("federation_status = ?"); params.push(u.federationStatus); }
+                sets.push("updated_at_ms = ?"); params.push(Date.now());
 
-        if (sets.length === 0) return;
-        params.push(experienceId);
-        this.db.prepare(`UPDATE experience_items SET ${sets.join(", ")} WHERE experience_id = ?`).run(...params);
+                if (sets.length === 0) return;
+                params.push(id);
+                this.db.prepare(`UPDATE experience_items SET ${sets.join(", ")} WHERE experience_id = ?`).run(...params);
+            });
+        }
+        this.updateExperienceTx(experienceId, updates);
     }
 
     getExperience(experienceId: string): ExperienceItem | undefined {

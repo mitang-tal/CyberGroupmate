@@ -609,6 +609,7 @@ async function main(): Promise<void> {
 	// ─── Phase 8: Ecosystem（生态中心） ───
 	const { EcosystemGovernor } = await import("./ecosystem/ecosystem-governor.js");
 	const { FederationStore } = await import("./ecosystem/federation-store.js");
+	const { FederationSync } = await import("./ecosystem/federation-sync.js");
 	const { ConflictResolver } = await import("./conflict/conflict-resolver.js");
 	const { NegotiationEngine } = await import("./negotiation/negotiation-engine.js");
 	const { EvolutionAnalyzer } = await import("./evolution/evolution-analyzer.js");
@@ -648,6 +649,8 @@ async function main(): Promise<void> {
 	    evolutionAnalyzer: { setCoolingDays: (days: number) => evolutionAnalyzer.setCoolingDays(days) },
 	});
 	const federationStore = new FederationStore(experienceStore, ecosystemGovernor, simulationEngine);
+	// 8.1 跨进程复制：单机多进程共享同一 SQLite，promote 写路径加 BEGIN IMMEDIATE 应用层锁
+	const federationSync = new FederationSync(federationStore, experienceStore);
 
 	// ═══ 8.5a↔7.4 C3：自检 critical → EcosystemGovernor kill-switch（完成生态自愈响应链）═══
 	// 消费 Phase 7.4 #28 的 system.meta_health_alert 事件，经 Gov2 唯一事实源广播冻结
@@ -1453,6 +1456,7 @@ async function main(): Promise<void> {
                 metaSelfTestEngine,
                 ecosystemGovernor,
                 federationStore,
+                federationSync,
                 conflictResolver,
                 negotiationEngine,
                 evolutionAnalyzer,
