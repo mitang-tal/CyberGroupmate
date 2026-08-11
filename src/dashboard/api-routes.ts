@@ -2755,6 +2755,7 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             const { experienceId, agentId } = (req.body || {}) as any;
             if (!experienceId) { res.status(400).json({ error: "experienceId required" }); return; }
             const result = fed.promote(experienceId, agentId);
+            bridge.broadcast({ type: "federation:promoted", timestamp: new Date().toISOString(), data: result });
             res.json(result);
         });
 
@@ -2790,6 +2791,7 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
                 complexContext: caseData.complexContext === true,
             };
             const verdict = conflictResolver.resolve(conflictCase);
+            bridge.broadcast({ type: "conflict:resolved", timestamp: new Date().toISOString(), data: verdict });
             res.json(verdict);
         });
 
@@ -2800,6 +2802,9 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
                 return;
             }
             const results = conflictResolver.resolveBatch(cases);
+            for (const v of results) {
+                bridge.broadcast({ type: "conflict:resolved", timestamp: new Date().toISOString(), data: v });
+            }
             res.json(results);
         });
 
@@ -2829,7 +2834,9 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
                 publishedAtMs: Date.now(),
                 bidDeadlineMs: 500,
             };
+            bridge.broadcast({ type: "negotiation:published", timestamp: new Date().toISOString(), data: proposal });
             const award = await ne.runNegotiation(proposal);
+            bridge.broadcast({ type: "negotiation:awarded", timestamp: new Date().toISOString(), data: award });
             res.json(award);
         });
 
@@ -2893,6 +2900,7 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             if (!proposalId) { res.status(400).json({ error: "proposalId required" }); return; }
             const proposal = ev.approveProposal(proposalId);
             if (!proposal) { res.status(404).json({ error: "proposal not found or not pending" }); return; }
+            bridge.broadcast({ type: "evolution:approved", timestamp: new Date().toISOString(), data: proposal });
             res.json({ proposal });
         });
 
@@ -2901,6 +2909,7 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
             if (!proposalId) { res.status(400).json({ error: "proposalId required" }); return; }
             const proposal = ev.rejectProposal(proposalId);
             if (!proposal) { res.status(404).json({ error: "proposal not found or not pending" }); return; }
+            bridge.broadcast({ type: "evolution:rejected", timestamp: new Date().toISOString(), data: proposal });
             res.json({ proposal });
         });
 
@@ -2944,7 +2953,9 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
                 return;
             }
             const snapshot = eg2.setKillSwitch(active, origin || "dashboard", reason || "manual kill-switch toggle");
-            res.json({ ok: true, snapshot, current: eg2.getCurrent() });
+            const current = eg2.getCurrent();
+            bridge.broadcast({ type: "governance-v2:kill-switch", timestamp: new Date().toISOString(), data: { active, snapshot, current } });
+            res.json({ ok: true, snapshot, current });
         });
 
         router.post("/governance-v2/update", (req, res) => {
@@ -2954,7 +2965,9 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
                 return;
             }
             const snapshot = eg2.update(values, origin, reason);
-            res.json({ snapshot, current: eg2.getCurrent() });
+            const current = eg2.getCurrent();
+            bridge.broadcast({ type: "governance-v2:updated", timestamp: new Date().toISOString(), data: { snapshot, current } });
+            res.json({ snapshot, current });
         });
 
         router.get("/governance-v2/snapshots", (_req, res) => {
@@ -2972,7 +2985,9 @@ export function createApiRouter(deps: DashboardDeps, bridge: EventBridge): Route
                 res.status(400).json({ error: "target version not found or already current" });
                 return;
             }
-            res.json({ snapshot, current: eg2.getCurrent() });
+            const current = eg2.getCurrent();
+            bridge.broadcast({ type: "governance-v2:rolled-back", timestamp: new Date().toISOString(), data: { snapshot, current } });
+            res.json({ snapshot, current });
         });
 
         router.get("/governance-v2/audit-log", (_req, res) => {

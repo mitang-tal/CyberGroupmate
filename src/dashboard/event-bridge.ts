@@ -438,6 +438,46 @@ export class EventBridge {
         }
     }
 
+    /**
+     * Phase 8.0 实时推送：生态数据源（联邦 / 竞标 / 仲裁 / 演化 / 治理 v2）。
+     * 新连接快照附带，后续变更走 ecosystem:* 增量事件。
+     */
+    private buildEcosystemSnapshot(): Record<string, unknown> {
+        const governor = this.deps.ecosystemGovernor;
+        const federation = this.deps.federationStore;
+        const negotiation = this.deps.negotiationEngine;
+        const conflict = this.deps.conflictResolver;
+        const evolution = this.deps.evolutionAnalyzer;
+        const governanceV2 = this.deps.ecosystemGovernance;
+        const safe = <T>(fn: () => T, fallback: T): T => {
+            try { return fn(); } catch (err) {
+                log.warn("ecosystem snapshot error", { error: String(err) });
+                return fallback;
+            }
+        };
+        return {
+            governor: governor ? {
+                killSwitch: safe(() => governor.isKillSwitchActive(), false),
+                rateLimit: safe(() => governor.getRateLimit(), 0),
+                quarantineCategories: safe(() => governor.getQuarantineCategories(), []),
+            } : null,
+            federation: federation ? {
+                items: safe(() => federation.getFederatedItems(), []),
+                quarantined: safe(() => federation.getQuarantinedItems(), []),
+                candidates: safe(() => federation.getCandidateItems(), []),
+            } : null,
+            negotiation: negotiation ? safe(() => negotiation.getStats(), null) : null,
+            conflict: conflict ? {
+                stats: safe(() => conflict.getStats(), null),
+                recent: safe(() => conflict.getHistory(10), []),
+            } : null,
+            evolution: evolution ? {
+                pending: safe(() => evolution.getProposals("pending_approval"), []),
+            } : null,
+            governanceV2: governanceV2 ? safe(() => governanceV2.getCurrent(), null) : null,
+        };
+    }
+
     buildSnapshot(): Record<string, unknown> {
         const { subagentManager, accumulator, q5, mainLoop, globalState, sandboxPool } = this.deps;
 
@@ -495,6 +535,7 @@ export class EventBridge {
                 tickCount: mainLoop.getTickCount(),
             },
             tokenPricing: this.deps.tokenStats.getPricing() ?? {},
+            ecosystem: this.buildEcosystemSnapshot(),
         };
     }
 }

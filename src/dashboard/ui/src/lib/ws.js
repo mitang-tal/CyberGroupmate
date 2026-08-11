@@ -14,6 +14,15 @@ import { get } from 'svelte/store';
 
 let ws = null;
 
+/** 生态实时事件订阅者（8.0：ecosystem:* 增量事件透传给面板） */
+const ecosystemListeners = new Set();
+
+/** 订阅生态事件（federation/negotiation/conflict/evolution/governance-v2），返回取消订阅函数 */
+export function onEcosystemEvent(cb) {
+  ecosystemListeners.add(cb);
+  return () => ecosystemListeners.delete(cb);
+}
+
 export function connectWS() {
   const token = getToken();
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -88,6 +97,18 @@ function handleEvent(event) {
     case 'recording:flush-error':
     case 'recording:topics-signaled':
       handleRecordingEvent({ ...event.data, _type: event.type, _timestamp: event.timestamp });
+      break;
+    case 'federation:promoted':
+    case 'negotiation:published':
+    case 'negotiation:awarded':
+    case 'negotiation:withdrawn':
+    case 'conflict:resolved':
+    case 'evolution:approved':
+    case 'evolution:rejected':
+    case 'governance-v2:updated':
+    case 'governance-v2:rolled-back':
+    case 'governance-v2:kill-switch':
+      ecosystemListeners.forEach(cb => { try { cb(event); } catch { /* ignore */ } });
       break;
   }
 }

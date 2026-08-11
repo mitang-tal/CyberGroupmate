@@ -1,7 +1,8 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { api } from '../lib/api.js';
   import { termZh } from '../lib/i18n.js';
+  import { onEcosystemEvent } from '../lib/ws.js';
 
   // ─── Ecosystem Governance ───
   let egStatus = null;
@@ -59,9 +60,44 @@
     { id: 'governance-v2', label: '治理 v2' },
   ];
 
+  let unsubEcosystem = null;
+
   onMount(() => {
     refreshAll();
+    // Phase 8.0 实时推送：订阅生态增量事件，变更自动触发局部刷新
+    unsubEcosystem = onEcosystemEvent(handleEcosystemEvent);
   });
+
+  onDestroy(() => {
+    if (unsubEcosystem) unsubEcosystem();
+  });
+
+  /** 8.0 实时推送：ecosystem:* 事件 → 对应局部刷新 */
+  function handleEcosystemEvent(ev) {
+    switch (ev.type) {
+      case 'federation:promoted':
+        refreshFederation();
+        break;
+      case 'negotiation:published':
+      case 'negotiation:awarded':
+      case 'negotiation:withdrawn':
+        refreshNegotiation();
+        break;
+      case 'conflict:resolved':
+        refreshConflict();
+        break;
+      case 'evolution:approved':
+      case 'evolution:rejected':
+        refreshEvolution();
+        break;
+      case 'governance-v2:updated':
+      case 'governance-v2:rolled-back':
+      case 'governance-v2:kill-switch':
+        refreshGovernance();
+        refreshGovernanceV2();
+        break;
+    }
+  }
 
   async function refreshAll() {
     await Promise.all([
